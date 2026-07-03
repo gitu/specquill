@@ -1,0 +1,39 @@
+# dev config: local fixture origins (create with `make dev-fixture`), auth relaxed
+listen: ":8643"
+data_dir: ./data/runtime
+base_url: http://localhost:8643
+
+repos:
+  - id: trading-specs
+    mode: writable
+    remote: ./data/origin/trading-specs.git
+    default_branch: main
+  - id: regulations
+    mode: readonly
+    remote: ./data/origin/regulations.git
+    sync_interval: 1m
+
+git:
+  committer_name: reqbase
+  committer_email: reqbase@dev.local
+
+auth:
+  oidc:
+    enabled: false                 # dev: dex via docker-compose.dev.yml exercises OIDC
+  local:
+    enabled: true
+  dev_user:                        # only honored with the -dev flag
+    name: Flo Dev
+    email: flo@dev.local
+
+session:
+  ttl: 10m
+  cookie_secure: false             # plain http in dev
+
+# dev copilot: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
+# or to a cloud provider — see reqbase.example.yml)
+ai:
+  enabled: true
+  base_url: http://127.0.0.1:11434/v1
+  model: qwen2.5:7b                  # main tier: chat + draft edits
+  quick_model: qwen2.5:7b            # fast one-shot tier: commit messages

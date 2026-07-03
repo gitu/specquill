@@ -1,0 +1,7 @@
+%% reporting.mermaid — embedded in specs/txn-report.md
+flowchart LR
+  A[Trade Capture] --> B[Enrichment]
+  B --> C{Valid?}
+  C -->|yes| D[ARM Submission]
+  C -->|no| E[Exceptions queue]
+  E -.-> F[[REQ-051 · Exception Handling]]

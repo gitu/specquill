@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: vet
+        run: go vet ./...
+        working-directory: server
+      - name: test
+        run: go test ./...
+        working-directory: server
+
+  web:
+    name: Web build + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: install
+        run: npm ci
+        working-directory: web
+      - name: build (tsc + vite)
+        run: npm run build
+        working-directory: web
+      - name: unit tests
+        run: npx vitest run
+        working-directory: web
+      # Playwright e2e needs a running dev server + fixtures — run locally
+      # (`make e2e`), not in CI, for now.

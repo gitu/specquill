@@ -1,0 +1,39 @@
+{
+  "$comment": "Property schema for the reqbase Properties panel. Edit labels/types/colors/order here.",
+  "colors": {
+    "green": "var(--data)",
+    "amber": "var(--reg)",
+    "blue": "var(--prod)",
+    "violet": "var(--ai)",
+    "slate": "var(--text-2)"
+  },
+  "order": [
+    "id", "type", "authority", "jurisdiction",
+    "status", "priority", "business_value", "coverage",
+    "owner", "value_statement",
+    "drivers", "implements", "maps_to", "verifies", "drives", "diagrams",
+    "anchors", "source_system", "target_model", "updated"
+  ],
+  "fields": {
+    "id": { "label": "ID", "type": "code" },
+    "type": { "label": "Type", "type": "tag" },
+    "authority": { "label": "Authority", "type": "tag" },
+    "jurisdiction": { "label": "Jurisdiction", "type": "tag" },
+    "status": { "label": "Status", "type": "enum", "values": { "draft": "slate", "in_review": "amber", "approved": "green", "active": "green", "deprecated": "slate", "triage": "amber" } },
+    "priority": { "label": "Priority", "type": "enum", "values": { "must": "amber", "should": "blue", "could": "slate" } },
+    "business_value": { "label": "Business value", "type": "enum", "values": { "high": "green", "medium": "blue", "low": "slate" } },
+    "coverage": { "label": "Coverage", "type": "percent" },
+    "owner": { "label": "Owner", "type": "user" },
+    "value_statement": { "label": "Value statement", "type": "text" },
+    "drivers": { "label": "Drivers", "type": "links" },
+    "implements": { "label": "Implements", "type": "links" },
+    "maps_to": { "label": "Maps to", "type": "links" },
+    "verifies": { "label": "Verified by", "type": "code" },
+    "drives": { "label": "Drives", "type": "links" },
+    "diagrams": { "label": "Diagrams", "type": "links" },
+    "anchors": { "label": "Anchors", "type": "code" },
+    "source_system": { "label": "Source system", "type": "tag" },
+    "target_model": { "label": "Target model", "type": "code" },
+    "updated": { "label": "Updated", "type": "date" }
+  }
+}

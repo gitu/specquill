@@ -1,0 +1,13 @@
+# Dev IdP for exercising the OIDC flow locally:
+#   docker compose -f docker-compose.dev.yml up -d
+# then point reqbase.dev.yml at issuer http://127.0.0.1:5556/dex with
+# client_id reqbase / secret in REQBASE_OIDC_SECRET=dev-secret and log in as
+# admin@example.com / password.
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    command: ["dex", "serve", "/etc/dex/config.yml"]
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./scripts/dex-config.yml:/etc/dex/config.yml:ro

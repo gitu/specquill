@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reqbase — trading-specs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --bg:#eef0f3;--surface:#ffffff;--surface-2:#f7f8fa;--panel:#f4f6f8;--rail:#e9ebef;
+    --border:#e2e6eb;--border-2:#d3d9e0;--text:#1a1e24;--text-2:#5a616b;--text-3:#8b929c;
+    --reg:#b06f16;--reg-bg:#fbf0da;--reg-line:#e6cf9c;
+    --prod:#2563c9;--prod-bg:#e5edfb;--prod-line:#bcd2f4;
+    --data:#12876a;--data-bg:#daf0e8;--data-line:#a7ddce;
+    --ai:#6a4fc4;--ai-bg:#ece7fa;--ai-line:#cfc3f2;
+    --add:#12874f;--add-bg:#e4f4ea;--del-bg:#fbe7e7;--del:#c0392b;
+    --shadow:0 1px 2px rgba(20,25,35,.06),0 4px 14px rgba(20,25,35,.05);
+    --shadow-lg:0 8px 30px rgba(20,25,35,.14);
+  }
+  body[data-theme="dark"]{
+    --bg:#0e1013;--surface:#16191e;--surface-2:#1b1f26;--panel:#131519;--rail:#101216;
+    --border:#262b33;--border-2:#333a44;--text:#e7eaee;--text-2:#a1a9b4;--text-3:#6b727d;
+    --reg:#e0a94a;--reg-bg:#2c2412;--reg-line:#4d3f1c;
+    --prod:#6ea3f5;--prod-bg:#152438;--prod-line:#274063;
+    --data:#4fcda6;--data-bg:#0f2a22;--data-line:#1d4a3c;
+    --ai:#a690f2;--ai-bg:#211c34;--ai-line:#39305a;
+    --add:#4cc98a;--add-bg:#11291d;--del-bg:#2e1516;--del:#e2726b;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.35);
+    --shadow-lg:0 8px 30px rgba(0,0,0,.5);
+  }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:6px;border:3px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:var(--text-3);background-clip:padding-box}
+  @keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+  @keyframes pulse{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.25)}}
+  .mrow:hover{background:var(--surface-2)}
+  /* rendered-markdown typography (scoped to file-rendered docs) */
+  #reqbase-doc{font-size:15px;line-height:1.72;color:var(--text)}
+  #reqbase-doc>*:first-child{margin-top:0}
+  #reqbase-doc h1{font-size:27px;font-weight:700;letter-spacing:-.5px;margin:24px 0 6px;line-height:1.15}
+  #reqbase-doc h2{font-size:18px;font-weight:700;margin:28px 0 8px}
+  #reqbase-doc h3{font-size:15px;font-weight:700;margin:20px 0 6px}
+  #reqbase-doc p{margin:12px 0}
+  #reqbase-doc ul,#reqbase-doc ol{margin:12px 0;padding-left:22px}
+  #reqbase-doc li{margin:5px 0}
+  #reqbase-doc a{color:var(--prod);text-decoration:none;border-bottom:1px solid transparent}
+  #reqbase-doc a:hover{border-bottom-color:var(--prod)}
+  #reqbase-doc blockquote{margin:18px 0;padding:12px 16px;border-left:3px solid var(--prod);background:var(--surface-2);border-radius:0 9px 9px 0;color:var(--text)}
+  #reqbase-doc blockquote p{margin:0}
+  #reqbase-doc code{font-family:'IBM Plex Mono',monospace;font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+  #reqbase-doc pre{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;overflow:auto}
+  #reqbase-doc pre code{background:none;padding:0;font-size:12px}
+  #reqbase-doc table{border-collapse:separate;border-spacing:0;width:100%;margin:16px 0;font-size:12.5px;font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  #reqbase-doc thead th{background:var(--surface-2);text-align:left;font-weight:600;color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:.3px;padding:9px 13px;border-bottom:1px solid var(--border)}
+  #reqbase-doc td{padding:10px 13px;border-bottom:1px solid var(--border)}
+  #reqbase-doc tbody tr:last-child td{border-bottom:none}
+  #reqbase-doc img{max-width:100%}
+  #reqbase-doc input[type=checkbox]{margin-right:7px;accent-color:var(--data)}
+  #reqbase-doc hr{border:none;border-top:1px solid var(--border);margin:22px 0}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

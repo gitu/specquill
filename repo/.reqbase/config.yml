@@ -1,0 +1,44 @@
+# reqbase workspace config
+version: 1
+workspace: trading-specs
+default_branch: main
+
+# view shown when opening the workspace (users can override in Settings)
+ui:
+  default_view: editor
+
+# id scheme
+id_pattern: "REQ-\\d{3}"
+
+# drivers of requirements — regulatory is only one of several
+drivers:
+  regulatory: { label: "Regulatory", icon: "⚖", color: "#b06f16" }
+  product:    { label: "Product",    icon: "◆", color: "#2563c9" }
+  technical:  { label: "Technical",  icon: "⚙", color: "#5a616b" }
+
+statuses: [draft, in_review, approved, deprecated]
+
+# typed links used to compute traceability (graph + matrix)
+link_types:
+  drives:       { from: [regulation, change], to: requirement }
+  implements:   { from: requirement,          to: spec }
+  maps_to:      { from: spec,                  to: data_field }
+  verifies:     { from: test,                  to: requirement }
+  traces_from:  { from: any,                   to: any }
+
+paths:
+  regulations:  regulations/
+  requirements: requirements/
+  specs:        specs/
+  mappings:     data-mappings/
+  diagrams:     diagrams/
+  changes:      changes/
+
+# AI copilot grounding sources (RAG over repos + docs)
+ai:
+  model: reqbase-copilot
+  grounding:
+    - repo:trading-specs
+    - repo:trading-platform
+    - docs/confluence/regulatory
+  capabilities: [summarize_change, assess_impact, suggest_mapping, draft_edit, answer]

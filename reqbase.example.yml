@@ -1,0 +1,49 @@
+# reqbase server configuration (copy to reqbase.yml and adjust)
+
+listen: ":8080"
+data_dir: /var/lib/reqbase        # bare clones, worktrees, reqbase.db
+base_url: https://reqbase.example.com
+
+repos:
+  # exactly one writable repo is the editing workspace
+  - id: trading-specs
+    mode: writable
+    remote: https://github.com/acme/trading-specs.git
+    default_branch: main
+    token_env: REQBASE_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
+
+  # any number of read-only input repos (fetched, never written)
+  - id: regulations
+    mode: readonly
+    remote: https://github.com/acme/regulations.git
+    sync_interval: 5m
+
+git:
+  committer_name: reqbase            # service identity — recorded as a Co-authored-by
+  committer_email: reqbase@example.com   # trailer; the user is author AND committer
+
+auth:
+  oidc:
+    enabled: true
+    issuer: https://login.example.com
+    client_id: reqbase
+    client_secret_env: REQBASE_OIDC_SECRET
+    scopes: [openid, profile, email]
+  local:
+    enabled: true                    # fallback login page; add users with `reqbased user add`
+
+session:
+  ttl: 10m
+  cookie_secure: true
+
+# Copilot: any OpenAI-compatible chat-completions endpoint.
+ai:
+  enabled: true
+  # OpenAI:  https://api.openai.com/v1                                model: gpt-4o-mini
+  # Gemini:  https://generativelanguage.googleapis.com/v1beta/openai  model: gemini-2.0-flash
+  # Ollama:  http://127.0.0.1:11434/v1                                model: llama3.1 (no key)
+  base_url: https://api.openai.com/v1
+  model: gpt-4o                      # main tier (thinking-class): chat + draft edits
+  quick_model: gpt-4o-mini           # fast one-shot tier: commit messages, titles
+  api_key_env: REQBASE_AI_KEY
+

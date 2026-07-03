@@ -1,0 +1,120 @@
+name: Docker
+
+# Build the image ONCE here, push to ghcr.io, then hand off to a deploy-only
+# Cloud Build trigger (no rebuild on the Google side — it pulls this exact
+# image through an Artifact Registry remote-repo proxy of ghcr.io and rolls
+# it out to Cloud Run). Same pattern as pert.li; see DEPLOY.md.
+#   push main → staging trigger (_VERSION_GATE=off, always deploys)
+#   tag v*    → prod trigger    (_VERSION_GATE=on, from-main + newest only)
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build + push ghcr.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # `git describe --tags` needs history + tags, not just HEAD
+          fetch-depth: 0
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io paths must be lowercase; github.repository preserves casing
+      - name: Compute image name
+        id: img
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            # Full 40-char commit SHA, no prefix — the deploy-only Cloud Build
+            # trigger is run with `--sha=<commit>` and pulls exactly this tag
+            # via ${COMMIT_SHA}.
+            type=sha,prefix=,format=long
+          labels: |
+            org.opencontainers.image.title=reqbase
+            org.opencontainers.image.description=Git-native requirements engineering — markdown specs, traceability, PRs, real-time co-editing
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache,mode=max
+
+  deploy:
+    name: deploy (Cloud Build)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skipped until the GCP side is wired up (DEPLOY.md one-time setup sets
+    # this repo variable) — lets the image build run before any cloud exists.
+    if: vars.CLOUD_BUILD_REGION != ''
+    permissions:
+      id-token: write
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # Run the deploy-only trigger pinned to THIS commit. The triggers are
+      # manual-invocation (never auto-fire on push), so this is the single,
+      # ordered deploy path — no race with the image push above.
+      - name: Trigger Cloud Run deploy
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            case "${{ github.ref_name }}" in
+              v*) TRIGGER="${{ vars.CLOUD_BUILD_PROD_TRIGGER }}" ;;
+              *)  echo "Tag '${{ github.ref_name }}' is not a v* release tag — image pushed, no deploy."; exit 0 ;;
+            esac
+          else
+            TRIGGER="${{ vars.CLOUD_BUILD_STAGING_TRIGGER }}"
+          fi
+          echo "Running Cloud Build trigger '$TRIGGER' at ${{ github.sha }}"
+          gcloud builds triggers run "$TRIGGER" \
+            --sha="${{ github.sha }}" \
+            --region="${{ vars.CLOUD_BUILD_REGION }}"

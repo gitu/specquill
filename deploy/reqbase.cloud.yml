@@ -1,0 +1,44 @@
+# Cloud Run runtime config — baked into the image by the Dockerfile
+# (→ /etc/reqbase/reqbase.yml). NO SECRETS IN THIS FILE: every credential is
+# referenced by env-var NAME only and injected at deploy time from Secret
+# Manager (cloudbuild.yaml --set-secrets). Edit + commit to change; the next
+# push to main rolls it out to staging.
+
+listen: ":8080"                    # Cloud Run's default $PORT
+data_dir: /var/lib/reqbase         # ephemeral on Cloud Run — see DEPLOY.md
+base_url: https://reqbase.example.com   # the Cloud Run URL / mapped domain
+
+repos:
+  # exactly one writable repo is the editing workspace
+  - id: workspace
+    mode: writable
+    remote: https://github.com/OWNER/SPECS-REPO.git
+    default_branch: main
+    token_env: REQBASE_TOKEN       # push/fetch token, from Secret Manager
+
+git:
+  # service identity — recorded as a Co-authored-by trailer; the logged-in
+  # user is author AND committer on every commit and merge
+  committer_name: reqbase
+  committer_email: reqbase@example.com
+
+auth:
+  oidc:
+    enabled: true
+    issuer: https://login.example.com
+    client_id: reqbase
+    client_secret_env: REQBASE_OIDC_SECRET
+    scopes: [openid, profile, email]
+  local:
+    enabled: false                 # no local fallback logins in the cloud
+
+session:
+  ttl: 10m
+  cookie_secure: true
+
+ai:
+  enabled: true
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-2.5-pro            # main tier (thinking-class): chat + draft edits
+  quick_model: gemini-2.5-flash    # fast one-shot tier: commit messages
+  api_key_env: REQBASE_AI_KEY
