@@ -108,7 +108,7 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *gitx.Re
 		jsonError(w, http.StatusConflict, "could not find a free filename for "+base+ext)
 		return
 	}
-	s.publish("save", repo.Cfg.ID, branch)
+	s.publish("save", repo.Key(), branch)
 	jsonOK(w, map[string]string{"path": rel, "sha": sha})
 }
 
@@ -118,7 +118,7 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *gitx.Re
 func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
 	p := r.PathValue("path")
 	branch := r.URL.Query().Get("branch")
-	if s.hub.RoomActive(repo.Cfg.ID, repo.ResolveRef(branch), p) {
+	if s.hub.RoomActive(repo.Key(), repo.ResolveRef(branch), p) {
 		jsonError2(w, http.StatusConflict, "a live co-editing session owns this file", "room_active")
 		return
 	}
@@ -136,6 +136,6 @@ func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *gitx.Repo)
 		gitFail(w, err)
 		return
 	}
-	s.publish("save", repo.Cfg.ID, branch)
+	s.publish("save", repo.Key(), branch)
 	jsonOK(w, map[string]string{"sha": sha})
 }

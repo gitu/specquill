@@ -23,6 +23,12 @@ func testServer(t *testing.T) http.Handler { return testServerWith(t, false) }
 func testServerProtected(t *testing.T) http.Handler { return testServerWith(t, true) }
 
 func testServerWith(t *testing.T, protectMain bool) http.Handler {
+	h, _, _ := testServerFull(t, protectMain)
+	return h
+}
+
+// testServerFull also exposes the store + git manager for tenancy tests.
+func testServerFull(t *testing.T, protectMain bool) (http.Handler, *store.Store, *gitx.Manager) {
 	t.Helper()
 	tmp := t.TempDir()
 	// minimal fixture repo
@@ -47,6 +53,11 @@ func testServerWith(t *testing.T, protectMain bool) http.Handler {
 		cfg.Repos[0].ProtectedBranches = []string{"main"}
 	}
 	st := store.OpenTest(t)
+	// serve() mirrors the YAML repos into the default tenant at boot; the
+	// tenancy layer auto-enrolls users into it on first request
+	if _, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace"); err != nil {
+		t.Fatal(err)
+	}
 	hash, _ := auth.HashPassword("hunter2secret")
 	if err := st.AddLocalUser("flo", "Flo Test", "flo@test.local", hash); err != nil {
 		t.Fatal(err)
@@ -62,7 +73,7 @@ func testServerWith(t *testing.T, protectMain bool) http.Handler {
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
 		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
-	})
+	}), st, git
 }
 
 func TestAPIRequiresAuth(t *testing.T) {

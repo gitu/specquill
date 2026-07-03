@@ -21,6 +21,9 @@ from the code.
   (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
   `reqbase.dev.yml`). Go tests need it too (they skip without it; isolation is
   a throwaway schema per test via `store.OpenTest`). Neon in production.
+- Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
+  (tenancy foundation, docs/multi-tenancy.md); the canonical repo key in DB
+  rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
 - Full state reset: `pkill -x reqbased; rm -rf data/runtime && ./scripts/dev-fixture.sh`
   — the fixture script also drops+recreates the postgres schema; `rm -rf
   data/runtime` alone does NOT clear sessions/PRs anymore.

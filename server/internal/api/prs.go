@@ -59,7 +59,7 @@ func (s *Server) prByNumber(w http.ResponseWriter, r *http.Request, repo *gitx.R
 		jsonError(w, http.StatusBadRequest, "bad PR number")
 		return nil
 	}
-	pr, err := s.store.PRByNumber(repo.Cfg.ID, n)
+	pr, err := s.store.PRByNumber(repo.Key(), n)
 	if errors.Is(err, store.ErrNotFound) {
 		jsonError(w, http.StatusNotFound, "PR not found")
 		return nil
@@ -77,7 +77,7 @@ func (s *Server) listPRs(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 	if state == "" {
 		state = "open"
 	}
-	prs, err := s.store.ListPRs(repo.Cfg.ID, state)
+	prs, err := s.store.ListPRs(repo.Key(), state)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -124,12 +124,12 @@ func (s *Server) createPR(w http.ResponseWriter, r *http.Request, repo *gitx.Rep
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "uncommitted changes on " + body.Source, "code": "dirty", "dirty": st.Dirty})
 		return
 	}
-	if existing, err := s.store.OpenPRForBranch(repo.Cfg.ID, body.Source); err == nil {
+	if existing, err := s.store.OpenPRForBranch(repo.Key(), body.Source); err == nil {
 		jsonError(w, http.StatusConflict, "open PR #"+strconv.Itoa(existing.Number)+" already exists for "+body.Source)
 		return
 	}
 	u := auth.UserFrom(r.Context())
-	pr, err := s.store.CreatePR(repo.Cfg.ID, body.Title, body.Body, body.Source, body.Target, u.ID)
+	pr, err := s.store.CreatePR(repo.Key(), body.Title, body.Body, body.Source, body.Target, u.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -275,12 +275,12 @@ func (s *Server) mergePR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 	}
 	// a merged personal workspace resets onto the new default-branch head so
 	// it stays perpetually reusable (its worktree is clean — PRs require it)
-	if _, err := s.store.WorkspaceOwner(repo.Cfg.ID, pr.SourceBranch); err == nil {
+	if _, err := s.store.WorkspaceOwner(repo.Key(), pr.SourceBranch); err == nil {
 		if err := repo.ResetBranchFF(pr.SourceBranch, sha); err != nil {
 			log.Printf("workspace reset %s after merge: %v", pr.SourceBranch, err)
 		}
 	}
-	s.publish("merge", repo.Cfg.ID, pr.TargetBranch)
+	s.publish("merge", repo.Key(), pr.TargetBranch)
 	jsonOK(w, map[string]string{"mergedCommit": sha})
 }
 

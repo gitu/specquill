@@ -9,7 +9,7 @@ import (
 // protect marks main as protected on the writable fixture repo.
 func protect(t *testing.T, m *Manager) *Repo {
 	t.Helper()
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	repo.Cfg.ProtectedBranches = []string{"main"}
 	return repo
 }
@@ -126,7 +126,7 @@ func TestEnsureWorkspaceRejectsProtectedName(t *testing.T) {
 
 func TestPullFastForwardAndRefusals(t *testing.T) {
 	m, origin := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 
 	// advance origin directly (another clone pushes)
 	tmp := t.TempDir()
@@ -168,7 +168,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 
 func TestDiffWorktreeIncludesUntracked(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	if _, err := repo.SaveFile("main", "specs/new-doc.md", "# New\n\nline two\n", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDiffWorktreeIncludesUntracked(t *testing.T) {
 
 func TestStatusBehindDefault(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_ = repo.CreateBranch("feature/bd", "main")
 	_, _ = repo.SaveFile("main", "notes.txt", "move main\n", mustSha(t, repo, "main", "notes.txt"))
 	if _, err := repo.Commit("main", "advance", "J", "j@t", nil); err != nil {
@@ -213,7 +213,7 @@ func TestStatusBehindDefault(t *testing.T) {
 
 func TestFileAtIgnoresWorktree(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_, _ = repo.SaveFile("main", "notes.txt", "uncommitted\n", mustSha(t, repo, "main", "notes.txt"))
 	head, _, err := repo.FileAt("main", "notes.txt")
 	if err != nil {

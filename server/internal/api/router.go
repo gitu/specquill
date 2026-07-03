@@ -105,12 +105,11 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	return logMiddleware(csrfGuard(mux))
 }
 
-// repoH resolves the {repo} path segment before calling the handler.
+// repoH resolves the {repo} path segment within the request's tenant.
 func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *gitx.Repo)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := s.git.Repo(r.PathValue("repo"))
+		repo, ok := s.tenantRepo(w, r)
 		if !ok {
-			jsonError(w, http.StatusNotFound, "unknown repo")
 			return
 		}
 		h(w, r, repo)

@@ -44,10 +44,10 @@ func (s *Server) collabWS(w http.ResponseWriter, r *http.Request, repo *gitx.Rep
 	}
 	defer ws.CloseNow()
 	ws.SetReadLimit(4 << 20) // yjs snapshots of large docs
-	s.hub.Join(r.Context(), ws, repo.Cfg.ID, branch, path, u.ID, u.Name)
+	s.hub.Join(r.Context(), ws, repo.Key(), branch, path, u.ID, u.Name)
 }
 
 // GET /api/repos/{repo}/presence
 func (s *Server) getPresence(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
-	jsonOK(w, s.hub.Presence(repo.Cfg.ID))
+	jsonOK(w, s.hub.Presence(repo.Key()))
 }

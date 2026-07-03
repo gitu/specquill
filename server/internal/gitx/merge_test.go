@@ -7,7 +7,7 @@ import (
 
 func TestMergeCleanAndDiff(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	if err := repo.CreateBranch("feature/m", "main"); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestMergeCleanAndDiff(t *testing.T) {
 
 func TestMergeSquash(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_ = repo.CreateBranch("feature/sq", "main")
 	_, sha, _ := repo.File("feature/sq", "notes.txt")
 	_, _ = repo.SaveFile("feature/sq", "notes.txt", "one\n", sha)
@@ -85,7 +85,7 @@ func TestMergeSquash(t *testing.T) {
 
 func TestMergeConflictBlocked(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_ = repo.CreateBranch("feature/c", "main")
 	// conflicting edits to the same line on both branches
 	_, sha, _ := repo.File("feature/c", "notes.txt")
@@ -113,7 +113,7 @@ func TestMergeConflictBlocked(t *testing.T) {
 
 func TestMergeRefusedWhenTargetDirty(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_ = repo.CreateBranch("feature/d", "main")
 	_, sha, _ := repo.File("feature/d", "notes.txt")
 	_, _ = repo.SaveFile("feature/d", "notes.txt", "x\n", sha)

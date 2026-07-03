@@ -35,30 +35,30 @@ func workspaceSlug(u *store.User) string {
 // workspace branch and ensure it exists (fast-forwarding when safe).
 func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
 	u := auth.UserFrom(r.Context())
-	branch, err := s.store.WorkspaceBranch(repo.Cfg.ID, u.ID)
+	branch, err := s.store.WorkspaceBranch(repo.Key(), u.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if branch == "" {
 		branch = "ws/" + workspaceSlug(u)
-		if err := s.store.ClaimWorkspaceBranch(repo.Cfg.ID, branch, u.ID); err != nil {
+		if err := s.store.ClaimWorkspaceBranch(repo.Key(), branch, u.ID); err != nil {
 			// name taken by another user → deterministic suffix
 			branch = branch + "-" + strconv.FormatInt(u.ID, 10)
-			if err := s.store.ClaimWorkspaceBranch(repo.Cfg.ID, branch, u.ID); err != nil {
+			if err := s.store.ClaimWorkspaceBranch(repo.Key(), branch, u.ID); err != nil {
 				jsonError(w, http.StatusInternalServerError, "claim workspace: "+err.Error())
 				return
 			}
 		}
 	}
 	// a live co-editing room owns its file — never move the ref under it
-	noFF := len(s.hub.ActiveOnBranch(repo.Cfg.ID, branch)) > 0
+	noFF := len(s.hub.ActiveOnBranch(repo.Key(), branch)) > 0
 	ws, err := repo.EnsureWorkspace(branch, noFF)
 	if err != nil {
 		gitFail(w, err)
 		return
 	}
-	s.publish("workspace", repo.Cfg.ID, branch)
+	s.publish("workspace", repo.Key(), branch)
 	jsonOK(w, map[string]any{
 		"branch": ws.Branch, "created": ws.Created, "state": ws.State, "base": ws.Base,
 		// tells the client the ff was withheld, not impossible
@@ -70,7 +70,7 @@ func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *git
 func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
 	branch := r.URL.Query().Get("branch")
 	// never move a ref while a co-editing room is live on the branch
-	if paths := s.hub.ActiveOnBranch(repo.Cfg.ID, repo.ResolveRef(branch)); len(paths) > 0 {
+	if paths := s.hub.ActiveOnBranch(repo.Key(), repo.ResolveRef(branch)); len(paths) > 0 {
 		jsonError2(w, http.StatusConflict, "live co-editing session on "+strings.Join(paths, ", "), "room_active")
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *gitx.Rep
 		return
 	}
 	if updated {
-		s.publish("pull", repo.Cfg.ID, repo.ResolveRef(branch))
+		s.publish("pull", repo.Key(), repo.ResolveRef(branch))
 	}
 	jsonOK(w, map[string]any{"head": head, "updated": updated})
 }

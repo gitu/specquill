@@ -9,17 +9,27 @@ import (
 
 // credentialEnvArgs configures git to take credentials from the child-process
 // environment only — the token never appears on argv or in any config file.
+// The Manager.TokenFor hook (e.g. GitHub App installation tokens, per
+// tenant) takes precedence over the repo's token_env.
 func (r *Repo) credentialArgsEnv() (args []string, env []string) {
-	if r.Cfg.TokenEnv == "" {
-		return nil, nil
+	user, token := "", ""
+	if r.mgr != nil && r.mgr.TokenFor != nil {
+		if u, t, ok := r.mgr.TokenFor(r); ok {
+			user, token = u, t
+		}
 	}
-	token := os.Getenv(r.Cfg.TokenEnv)
+	if token == "" && r.Cfg.TokenEnv != "" {
+		token = os.Getenv(r.Cfg.TokenEnv)
+	}
 	if token == "" {
 		return nil, nil
 	}
 	helper := `!f(){ echo "username=${REQBASE_GIT_USER:-x-access-token}"; echo "password=${REQBASE_GIT_TOKEN}"; };f`
-	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper},
-		[]string{"REQBASE_GIT_TOKEN=" + token}
+	env = []string{"REQBASE_GIT_TOKEN=" + token}
+	if user != "" {
+		env = append(env, "REQBASE_GIT_USER="+user)
+	}
+	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, env
 }
 
 // Fetch updates remote-tracking state (writable) or heads (read-only).

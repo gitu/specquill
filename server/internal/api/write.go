@@ -31,7 +31,7 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if s.hub.RoomActive(repo.Cfg.ID, branch, r.PathValue("path")) {
+	if s.hub.RoomActive(repo.Key(), branch, r.PathValue("path")) {
 		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
 		return
 	}
@@ -44,12 +44,12 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 		gitFail(w, err)
 		return
 	}
-	s.publish("save", repo.Cfg.ID, repo.ResolveRef(r.URL.Query().Get("branch")))
+	s.publish("save", repo.Key(), repo.ResolveRef(r.URL.Query().Get("branch")))
 	jsonOK(w, map[string]string{"sha": sha})
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
-	if s.hub.RoomActive(repo.Cfg.ID, repo.ResolveRef(r.URL.Query().Get("branch")), r.PathValue("path")) {
+	if s.hub.RoomActive(repo.Key(), repo.ResolveRef(r.URL.Query().Get("branch")), r.PathValue("path")) {
 		jsonError2(w, http.StatusConflict, "file is being co-edited", "room_active")
 		return
 	}
@@ -83,9 +83,9 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *gitx.R
 
 	// commit barrier: live co-editing rooms flush their docs first, and every
 	// contributor besides the author lands as a Co-authored-by trailer
-	_ = s.hub.FlushBranch(r.Context(), repo.Cfg.ID, branch, body.Paths)
+	_ = s.hub.FlushBranch(r.Context(), repo.Key(), branch, body.Paths)
 	message := body.Message
-	if contributors, err := s.store.Contributors(repo.Cfg.ID, branch, body.Paths); err == nil {
+	if contributors, err := s.store.Contributors(repo.Key(), branch, body.Paths); err == nil {
 		trailers := ""
 		for _, c := range contributors {
 			if c.ID == u.ID {
@@ -103,8 +103,8 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *gitx.R
 		gitFail(w, err)
 		return
 	}
-	_ = s.store.ClearContributors(repo.Cfg.ID, branch, body.Paths)
-	s.publish("commit", repo.Cfg.ID, branch)
+	_ = s.store.ClearContributors(repo.Key(), branch, body.Paths)
+	s.publish("commit", repo.Key(), branch)
 	jsonOK(w, map[string]string{"commitSha": sha})
 }
 

@@ -74,9 +74,14 @@ func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {
 // GET /api/me
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFrom(r.Context())
+	ms, err := s.memberships(u) // auto-enrolls into the default tenant
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	jsonOK(w, map[string]any{
 		"id": u.ID, "name": u.Name, "email": u.Email, "provider": u.Provider,
-		"initials": initialsOf(u.Name),
+		"initials": initialsOf(u.Name), "tenants": ms,
 	})
 }
 

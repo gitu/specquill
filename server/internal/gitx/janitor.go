@@ -40,7 +40,7 @@ func (m *Manager) StartSyncLoops() {
 						log.Printf("sync %s: %v", r.Cfg.ID, err)
 						continue
 					}
-					m.notify("fetch", r.Cfg.ID, "")
+					m.notify("fetch", r.Key(), "")
 				}
 			}(r)
 		}

@@ -60,7 +60,7 @@ func setup(t *testing.T) *env {
 	if err := git.Init(); err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := git.Repo("w")
+	repo, _ := git.Repo("default/w")
 	_ = repo.CreateBranch("ws/a", "main")
 
 	st := store.OpenTest(t)
@@ -91,7 +91,7 @@ func setup(t *testing.T) *env {
 				userID = v
 			}
 		}
-		hub.Join(r.Context(), ws, "w", r.URL.Query().Get("branch"), r.PathValue("path"), userID, name)
+		hub.Join(r.Context(), ws, "default/w", r.URL.Query().Get("branch"), r.PathValue("path"), userID, name)
 	})
 	srv := httptest.NewServer(mux)
 	return &env{hub: hub, st: st, repo: repo, url: "ws" + strings.TrimPrefix(srv.URL, "http"),
@@ -263,7 +263,7 @@ func TestFlushWritesWorktreeAndRecordsContributors(t *testing.T) {
 		t.Fatalf("worktree flush missing: %v %q", err, content)
 	}
 	// contributor recorded (seed excluded, edit counted)
-	users, err := e.st.Contributors("w", "ws/a", nil)
+	users, err := e.st.Contributors("default/w", "ws/a", nil)
 	if err != nil || len(users) != 1 {
 		t.Fatalf("contributors: %v %v", err, users)
 	}
@@ -302,7 +302,7 @@ func TestCommitBarrierFlushesLeader(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := e.hub.FlushBranch(ctx, "w", "ws/a", nil); err != nil {
+	if err := e.hub.FlushBranch(ctx, "default/w", "ws/a", nil); err != nil {
 		t.Fatal(err)
 	}
 	content, _, _ := e.repo.File("ws/a", "doc.md")
@@ -323,7 +323,7 @@ func TestRestartReplayAfterCleanFlush(t *testing.T) {
 	// leave with everything flushed → clean end → log deleted
 	a.ws.Close(websocket.StatusNormalClosure, "bye")
 	time.Sleep(300 * time.Millisecond)
-	if _, err := e.st.CollabRoom("w", "ws/a", "doc.md"); err == nil {
+	if _, err := e.st.CollabRoom("default/w", "ws/a", "doc.md"); err == nil {
 		t.Fatal("clean room end should delete the persisted row")
 	}
 
@@ -346,7 +346,7 @@ func TestOrphanedRoomSurvivesAndReplays(t *testing.T) {
 	a.ws.Close(websocket.StatusNormalClosure, "crash-ish")
 	time.Sleep(300 * time.Millisecond)
 
-	rooms, err := e.st.OrphanedCollabRooms("w")
+	rooms, err := e.st.OrphanedCollabRooms("default/w")
 	if err != nil || len(rooms) != 1 {
 		t.Fatalf("expected orphaned room, got %v %v", rooms, err)
 	}
@@ -389,7 +389,7 @@ func TestCompactionNeverDropsUncovered(t *testing.T) {
 	a.send(t, encodeToken(FrameSnapshot, c.Token, []byte("SNAPSHOT")))
 	time.Sleep(700 * time.Millisecond)
 
-	updates, err := e.st.CollabUpdates("w", "ws/a", "doc.md")
+	updates, err := e.st.CollabUpdates("default/w", "ws/a", "doc.md")
 	if err != nil {
 		t.Fatal(err)
 	}

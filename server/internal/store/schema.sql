@@ -24,6 +24,37 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 
+-- tenancy (docs/multi-tenancy.md): tenant = GitHub App installation, or the
+-- built-in 'default' tenant mirroring the YAML repos list (self-hosting).
+-- The canonical repo key in all other tables is '<tenant_slug>/<repo_id>'.
+CREATE TABLE IF NOT EXISTS tenants (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  slug            TEXT UNIQUE NOT NULL,
+  provider        TEXT NOT NULL,          -- 'config' | 'github'
+  installation_id BIGINT,                 -- GitHub App installation (NULL for config)
+  display_name    TEXT NOT NULL DEFAULT '',
+  created_at      BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tenant_repos (
+  tenant_id      BIGINT NOT NULL REFERENCES tenants(id),
+  repo_id        TEXT NOT NULL,           -- short id, unique within the tenant
+  mode           TEXT NOT NULL,           -- writable | readonly
+  remote         TEXT NOT NULL,
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  gh_full_name   TEXT NOT NULL DEFAULT '',
+  created_at     BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, repo_id)
+);
+
+CREATE TABLE IF NOT EXISTS tenant_members (
+  tenant_id BIGINT NOT NULL REFERENCES tenants(id),
+  user_id   BIGINT NOT NULL REFERENCES users(id),
+  role      TEXT NOT NULL DEFAULT 'member',   -- admin | member | viewer
+  synced_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS prs (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   repo          TEXT NOT NULL,

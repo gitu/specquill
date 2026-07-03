@@ -15,8 +15,15 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
 	}
+	t, ok := s.tenant(w, r)
+	if !ok {
+		return
+	}
 	var out []repoInfo
 	for _, repo := range s.git.Repos() {
+		if repo.Tenant() != t.Slug {
+			continue
+		}
 		info := repoInfo{
 			ID:                repo.Cfg.ID,
 			Mode:              string(repo.Cfg.Mode),

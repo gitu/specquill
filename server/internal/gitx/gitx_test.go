@@ -61,7 +61,7 @@ func mustWrite(t *testing.T, path, content string) {
 
 func TestTreeAndFileReads(t *testing.T) {
 	m, _ := fixture(t)
-	for _, id := range []string{"w", "ro"} {
+	for _, id := range []string{"default/w", "default/ro"} {
 		repo, _ := m.Repo(id)
 		entries, err := repo.Tree("")
 		if err != nil {
@@ -82,7 +82,7 @@ func TestTreeAndFileReads(t *testing.T) {
 
 func TestSnapshot(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("ro")
+	repo, _ := m.Repo("default/ro")
 	files, err := repo.Snapshot("")
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestSnapshot(t *testing.T) {
 
 func TestWorktreeReflectsSavedChanges(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	wt, err := repo.Worktree("main")
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestWorktreeReflectsSavedChanges(t *testing.T) {
 		t.Fatalf("worktree read should see uncommitted save, got %q", content)
 	}
 	// the bare object db still has the committed version
-	ro, _ := m.Repo("ro")
+	ro, _ := m.Repo("default/ro")
 	content, _, _ = ro.File("main", "specs/a.md")
 	if strings.Contains(content, "A2") {
 		t.Fatal("readonly clone must not see the writable worktree state")
@@ -117,7 +117,7 @@ func TestWorktreeReflectsSavedChanges(t *testing.T) {
 
 func TestPathTraversalRejected(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	for _, p := range []string{"../etc/passwd", "/etc/passwd", "a/../../x", ".git/config"} {
 		if _, _, err := repo.File("", p); err == nil {
 			t.Fatalf("path %q should be rejected", p)
@@ -127,7 +127,7 @@ func TestPathTraversalRejected(t *testing.T) {
 
 func TestReadOnlyRefusesWorktree(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("ro")
+	repo, _ := m.Repo("default/ro")
 	if _, err := repo.Worktree("main"); err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("want read-only error, got %v", err)
 	}
@@ -135,7 +135,7 @@ func TestReadOnlyRefusesWorktree(t *testing.T) {
 
 func TestBranches(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	if err := repo.CreateBranch("feature/x", "main"); err != nil {
 		t.Fatal(err)
 	}

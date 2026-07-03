@@ -80,6 +80,22 @@ func serve(configPath string, dev bool) error {
 	}
 	defer release()
 
+	// mirror the YAML repos into the built-in default tenant's registry
+	// (docs/multi-tenancy.md — GitHub App installations add further tenants)
+	def, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	if err != nil {
+		return err
+	}
+	decls := make([]store.TenantRepo, 0, len(cfg.Repos))
+	for _, rc := range cfg.Repos {
+		decls = append(decls, store.TenantRepo{
+			RepoID: rc.ID, Mode: string(rc.Mode), Remote: rc.Remote, DefaultBranch: rc.DefaultBranch,
+		})
+	}
+	if err := st.SyncTenantRepos(def.ID, decls); err != nil {
+		return err
+	}
+
 	git, err := gitx.NewManager(cfg)
 	if err != nil {
 		return err

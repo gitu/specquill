@@ -17,10 +17,15 @@ import (
 type Manager struct {
 	dataDir   string
 	committer config.GitConfig
+	mu        sync.RWMutex // guards repos/order (AddRepo happens at runtime)
 	repos     map[string]*Repo
 	order     []string
-	// Notify, when set, receives coarse change hints (kind, repo, branch).
+	// Notify, when set, receives coarse change hints (kind, repoKey, branch).
 	Notify func(kind, repo, branch string)
+	// TokenFor, when set, supplies push/fetch credentials for a repo (e.g.
+	// GitHub App installation tokens) and takes precedence over token_env.
+	// Tokens still reach git via child-process env only.
+	TokenFor func(r *Repo) (username, token string, ok bool)
 }
 
 func (m *Manager) notify(kind, repo, branch string) {
@@ -31,8 +36,10 @@ func (m *Manager) notify(kind, repo, branch string) {
 
 type Repo struct {
 	Cfg       config.RepoConfig
-	gitDir    string // bare clone
-	wtRoot    string // worktrees live here, one dir per branch
+	key       string   // canonical "<tenant_slug>/<repo_id>" — store rows, room keys
+	mgr       *Manager // back-pointer: Notify + TokenFor hooks
+	gitDir    string   // bare clone
+	wtRoot    string   // worktrees live here, one dir per branch
 	committer config.GitConfig
 
 	mu        sync.Mutex // repo-level ops: fetch, push, branch create, merge, worktree add/remove
@@ -43,6 +50,10 @@ type Repo struct {
 	lastFetch  time.Time
 }
 
+// DefaultTenant is the built-in tenant that mirrors the YAML repos list
+// (self-hosting); GitHub App installations become further tenants.
+const DefaultTenant = "default"
+
 func NewManager(cfg *config.Config) (*Manager, error) {
 	m := &Manager{
 		dataDir:   cfg.DataDir,
@@ -50,40 +61,80 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		repos:     map[string]*Repo{},
 	}
 	for _, rc := range cfg.Repos {
-		r := &Repo{
-			Cfg:       rc,
-			gitDir:    filepath.Join(cfg.DataDir, "repos", rc.ID, "git"),
-			wtRoot:    filepath.Join(cfg.DataDir, "repos", rc.ID, "worktrees"),
-			committer: cfg.Git,
-			branchMu:  map[string]*sync.Mutex{},
-		}
-		m.repos[rc.ID] = r
-		m.order = append(m.order, rc.ID)
+		m.add(DefaultTenant, rc)
 	}
 	return m, nil
 }
 
+// add registers a repo under a tenant without cloning (see ensure/Init).
+func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
+	key := tenant + "/" + rc.ID
+	root := filepath.Join(m.dataDir, "tenants", tenant, rc.ID)
+	r := &Repo{
+		Cfg:       rc,
+		key:       key,
+		mgr:       m,
+		gitDir:    filepath.Join(root, "git"),
+		wtRoot:    filepath.Join(root, "worktrees"),
+		committer: m.committer,
+		branchMu:  map[string]*sync.Mutex{},
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.repos[key] = r
+	m.order = append(m.order, key)
+	return r
+}
+
+// AddRepo registers a tenant repo at runtime and clones it. Idempotent per
+// (tenant, id): an existing registration is returned as-is.
+func (m *Manager) AddRepo(tenant string, rc config.RepoConfig) (*Repo, error) {
+	if r, ok := m.Repo(tenant + "/" + rc.ID); ok {
+		return r, nil
+	}
+	r := m.add(tenant, rc)
+	if err := r.ensure(); err != nil {
+		return nil, fmt.Errorf("repo %s: %w", r.key, err)
+	}
+	return r, nil
+}
+
 // Init clones any missing repos and prunes stale worktrees. Call at startup.
 func (m *Manager) Init() error {
-	for _, id := range m.order {
-		if err := m.repos[id].ensure(); err != nil {
-			return fmt.Errorf("repo %s: %w", id, err)
+	for _, r := range m.Repos() {
+		if err := r.ensure(); err != nil {
+			return fmt.Errorf("repo %s: %w", r.key, err)
 		}
 	}
 	return nil
 }
 
-func (m *Manager) Repo(id string) (*Repo, bool) {
-	r, ok := m.repos[id]
+// Repo looks up by canonical key "<tenant_slug>/<repo_id>".
+func (m *Manager) Repo(key string) (*Repo, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.repos[key]
 	return r, ok
 }
 
 func (m *Manager) Repos() []*Repo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]*Repo, 0, len(m.order))
-	for _, id := range m.order {
-		out = append(out, m.repos[id])
+	for _, key := range m.order {
+		out = append(out, m.repos[key])
 	}
 	return out
+}
+
+// Key is the canonical repo identifier: "<tenant_slug>/<repo_id>". It is
+// what lands in store rows, collab room keys, and event payloads — never
+// the bare Cfg.ID, which is only unique within a tenant.
+func (r *Repo) Key() string { return r.key }
+
+// Tenant returns the owning tenant's slug.
+func (r *Repo) Tenant() string {
+	return strings.SplitN(r.key, "/", 2)[0]
 }
 
 func (r *Repo) Writable() bool { return r.Cfg.Mode == config.Writable }

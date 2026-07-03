@@ -7,7 +7,7 @@ import (
 
 func TestSaveStatusCommitCycle(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 
 	// clean at start
 	st, err := repo.Status("main")
@@ -85,7 +85,7 @@ func TestSaveStatusCommitCycle(t *testing.T) {
 
 func TestPushFetch(t *testing.T) {
 	m, origin := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	_, sha, _ := repo.File("main", "notes.txt")
 	if _, err := repo.SaveFile("main", "notes.txt", "hello world\n", sha); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestPushFetch(t *testing.T) {
 		t.Fatalf("want 0/0 after push, got %d/%d", st.Ahead, st.Behind)
 	}
 	// readonly clone sees it after fetch
-	ro, _ := m.Repo("ro")
+	ro, _ := m.Repo("default/ro")
 	if err := ro.Fetch(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestPushFetch(t *testing.T) {
 
 func TestDeleteFile(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("w")
+	repo, _ := m.Repo("default/w")
 	if err := repo.DeleteFile("main", "notes.txt"); err != nil {
 		t.Fatal(err)
 	}
