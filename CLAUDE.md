@@ -46,7 +46,7 @@ from the code.
 ## Domain model / invariants
 
 - **Protected main**: the default branch is never edited; the first edit
-  auto-creates/switches to the caller's `ws/<user>` branch (claimed in SQLite).
+  auto-creates/switches to the caller's `ws/<user>` branch (claimed in Postgres).
   Direct writes to protected branches 403 (`protected_branch`).
 - **Worktree = draft store**: saves are uncommitted changes on a per-branch
   worktree; explicit Commit turns them into history.
@@ -55,7 +55,7 @@ from the code.
   `Co-authored-by:` trailer, alongside trailers for collab contributors.
 - **CRDT co-editing**: markdown files in edit mode join a Yjs room per
   (branch, path). The server is a dumb relay (`internal/collab`) — opaque
-  update log in SQLite, replay to joiners, leader flushes serialized markdown
+  update log in Postgres, replay to joiners, leader flushes serialized markdown
   to the worktree. While a room is live it OWNS the file: direct PUTs 409
   (`room_active`), pulls/workspace-ffs on that branch are withheld.
 - **Byte fidelity**: untouched documents save byte-identical; only real user
