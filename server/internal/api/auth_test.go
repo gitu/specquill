@@ -46,11 +46,7 @@ func testServerWith(t *testing.T, protectMain bool) http.Handler {
 	if protectMain {
 		cfg.Repos[0].ProtectedBranches = []string{"main"}
 	}
-	st, err := store.Open(filepath.Join(tmp, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := store.OpenTest(t)
 	hash, _ := auth.HashPassword("hunter2secret")
 	if err := st.AddLocalUser("flo", "Flo Test", "flo@test.local", hash); err != nil {
 		t.Fatal(err)

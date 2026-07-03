@@ -9,6 +9,12 @@ ORIGIN=data/origin
 rm -rf "$ORIGIN"
 mkdir -p "$ORIGIN"
 
+# the store lives in the compose postgres — reset it alongside the fixtures
+# so sessions/PRs/collab logs don't reference vanished git state
+docker compose -f docker-compose.dev.yml up -d --wait postgres
+docker compose -f docker-compose.dev.yml exec -T postgres \
+  psql -q -U reqbase -d reqbase -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+
 fixture_env=(-c user.name=reqbase-fixture -c user.email=fixture@reqbase.local)
 
 make_bare() { # $1=name  $2=src-dir

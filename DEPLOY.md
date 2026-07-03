@@ -41,20 +41,21 @@ deploy cleanly.
   config: edit, commit, push (staging updates on the next main build).
   **Before the first deploy** fill in the real `base_url`, the writable repo
   `remote`, and the OIDC issuer.
-- **`--max-instances=1` is a hard requirement**, already set in
-  `cloudbuild.yaml`: SQLite and the in-process collab hub (Yjs relay rooms)
-  live in a single instance. Do not raise it.
-- **`data_dir` is ephemeral on Cloud Run.** Git content is safe — everything
-  committed is pushed to the real remote, and the bare clone + worktrees are
-  re-cloned on boot. What does NOT survive an instance replacement:
-  sessions (users re-login), **open in-app PRs, review comments, approvals**,
-  workspace-branch claims (re-claimed on next edit), and unflushed collab
-  room logs (uncommitted draft edits within the last debounce window).
-  `_MIN_INSTANCES=1` (the prod default here) keeps the instance warm so this
-  only happens on revision rollouts, not idle scale-downs. If PR/review
-  durability across deploys matters, the options are a persistent-disk host
-  (GCE VM / GKE with a PD) or a future non-SQLite store backend — SQLite on
-  GCS FUSE / NFS is not safe (locking).
+- **The store is Postgres — use Neon in production.** Users, sessions, PRs,
+  review comments, approvals, workspace-branch claims and the collab update
+  logs all live in the database referenced by the `REQBASE_DATABASE_URL`
+  secret (a Neon connection string, `sslmode=require`). All of that survives
+  instance replacement.
+- **`--max-instances=1` is still a hard requirement**, already set in
+  `cloudbuild.yaml`: the collab hub (Yjs relay rooms + websockets) is
+  in-process and the git worktrees are on local disk. Do not raise it.
+- **`data_dir` is ephemeral on Cloud Run — and that's now OK.** It holds only
+  the bare clones and worktrees, re-cloned from the real remote on boot.
+  Committed content is on the remote; roomed (co-editing) drafts replay from
+  the collab log in Postgres. The only thing an instance replacement can drop
+  is a plain uncommitted worktree draft (last autosave since the previous
+  commit) on a branch with no live room. `_MIN_INSTANCES=1` (the prod default
+  here) keeps the instance warm so that only happens on revision rollouts.
 - **This repo is private → the ghcr package is private**, so the AR remote
   proxy **needs upstream credentials** (step 2b is not optional, unlike a
   public repo).
@@ -108,12 +109,23 @@ deploy cleanly.
    echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create REQBASE_TOKEN --data-file=-
    echo -n '…oidc-client-secret…'         | gcloud secrets create REQBASE_OIDC_SECRET --data-file=-
    echo -n 'AIza…copilot-api-key…'        | gcloud secrets create REQBASE_AI_KEY --data-file=-
+   # Neon: project → connection string (pooled is fine; keep sslmode=require)
+   echo -n 'postgres://…@…neon.tech/reqbase?sslmode=require' | \
+     gcloud secrets create REQBASE_DATABASE_URL --data-file=-
    ```
 
-   **Staging gets its own set** (at minimum a distinct git token if staging
-   should write a different specs repo): create `REQBASE_TOKEN_STAGING` etc.
-   and point the staging trigger's `_TOKEN_SECRET`/… substitutions at them —
-   omitted overrides fall back to the prod defaults in `cloudbuild.yaml`.
+   **Staging gets its own set** — at minimum a distinct database so staging
+   never touches prod data (a [Neon branch](https://neon.com/docs/introduction/branching)
+   of the prod database is the cheap way to get one):
+
+   ```bash
+   echo -n 'postgres://…staging-branch…?sslmode=require' | \
+     gcloud secrets create REQBASE_DATABASE_URL_STAGING --data-file=-
+   ```
+
+   Point the staging trigger's `_DATABASE_URL_SECRET` (and `_TOKEN_SECRET`/…
+   if staging writes a different specs repo) at the staging entries — omitted
+   overrides fall back to the prod defaults in `cloudbuild.yaml`.
 
 4. **Create the deploy service account** (Cloud Build triggers here must run
    as an explicit SA):
@@ -172,12 +184,12 @@ deploy cleanly.
    REPO=projects/${PROJECT_ID}/locations/europe-west1/connections/<conn>/repositories/reqbase
    DEPLOYER_RES=projects/${PROJECT_ID}/serviceAccounts/${DEPLOYER}
 
-   # staging — run by GitHub on push to main
+   # staging — run by GitHub on push to main (own database, scale to zero)
    gcloud builds triggers create manual \
      --name=reqbase-deploy-staging --region=europe-west1 \
      --repository="$REPO" --branch=main --build-config=cloudbuild.yaml \
      --service-account="$DEPLOYER_RES" \
-     --substitutions=_SERVICE=reqbase-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/reqbase
+     --substitutions=_SERVICE=reqbase-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/reqbase,_DATABASE_URL_SECRET=REQBASE_DATABASE_URL_STAGING
 
    # prod — run by GitHub on a v* tag (cloudbuild.yaml defaults are prod)
    gcloud builds triggers create manual \
@@ -209,6 +221,7 @@ docker run --rm -p 8080:8080 \
   -e REQBASE_TOKEN='ghp_…' \
   -e REQBASE_OIDC_SECRET='…' \
   -e REQBASE_AI_KEY='…' \
+  -e REQBASE_DATABASE_URL='postgres://…?sslmode=require' \
   reqbase:local
 ```
 

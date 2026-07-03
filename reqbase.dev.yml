@@ -3,6 +3,10 @@ listen: ":8643"
 data_dir: ./data/runtime
 base_url: http://localhost:8643
 
+# store: the compose postgres (docker compose -f docker-compose.dev.yml up -d postgres)
+database:
+  url: postgres://reqbase:reqbase@127.0.0.1:5433/reqbase?sslmode=disable
+
 repos:
   - id: trading-specs
     mode: writable

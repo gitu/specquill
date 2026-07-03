@@ -7,14 +7,14 @@ import (
 // ---------------------------------------------------------------- rooms
 
 type CollabRoom struct {
-	Repo, Branch, Path                string
-	LastSeq, SeedSeq, FlushedSeq      int64
-	FlushedSha                        string
+	Repo, Branch, Path           string
+	LastSeq, SeedSeq, FlushedSeq int64
+	FlushedSha                   string
 }
 
 func (s *Store) CollabRoom(repo, branch, path string) (*CollabRoom, error) {
 	r := &CollabRoom{Repo: repo, Branch: branch, Path: path}
-	err := s.db.QueryRow(`SELECT last_seq, seed_seq, flushed_seq, flushed_sha FROM collab_rooms
+	err := s.queryRow(`SELECT last_seq, seed_seq, flushed_seq, flushed_sha FROM collab_rooms
 		WHERE repo = ? AND branch = ? AND path = ?`, repo, branch, path).
 		Scan(&r.LastSeq, &r.SeedSeq, &r.FlushedSeq, &r.FlushedSha)
 	if err != nil {
@@ -24,7 +24,7 @@ func (s *Store) CollabRoom(repo, branch, path string) (*CollabRoom, error) {
 }
 
 func (s *Store) UpsertCollabRoom(r *CollabRoom) error {
-	_, err := s.db.Exec(`INSERT INTO collab_rooms (repo, branch, path, last_seq, seed_seq, flushed_seq, flushed_sha, updated_at)
+	_, err := s.exec(`INSERT INTO collab_rooms (repo, branch, path, last_seq, seed_seq, flushed_seq, flushed_sha, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo, branch, path) DO UPDATE SET
 		  last_seq = excluded.last_seq, seed_seq = excluded.seed_seq,
@@ -35,16 +35,16 @@ func (s *Store) UpsertCollabRoom(r *CollabRoom) error {
 }
 
 func (s *Store) DeleteCollabRoom(repo, branch, path string) error {
-	if _, err := s.db.Exec("DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ?", repo, branch, path); err != nil {
+	if _, err := s.exec("DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ?", repo, branch, path); err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM collab_rooms WHERE repo = ? AND branch = ? AND path = ?", repo, branch, path)
+	_, err := s.exec("DELETE FROM collab_rooms WHERE repo = ? AND branch = ? AND path = ?", repo, branch, path)
 	return err
 }
 
 // OrphanedCollabRooms lists rooms whose log holds edits never flushed to git.
 func (s *Store) OrphanedCollabRooms(repo string) ([]CollabRoom, error) {
-	rows, err := s.db.Query(`SELECT branch, path, last_seq, seed_seq, flushed_seq, flushed_sha
+	rows, err := s.query(`SELECT branch, path, last_seq, seed_seq, flushed_seq, flushed_sha
 		FROM collab_rooms WHERE repo = ? AND last_seq > flushed_seq AND last_seq > seed_seq`, repo)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,8 @@ func (s *Store) AppendCollabUpdates(repo, branch, path string, firstSeq int64, p
 	}
 	defer tx.Rollback()
 	for i, p := range payloads {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)`,
+		if _, err := tx.Exec(rebind(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`),
 			repo, branch, path, firstSeq+int64(i), p); err != nil {
 			return err
 		}
@@ -79,7 +80,7 @@ func (s *Store) AppendCollabUpdates(repo, branch, path string, firstSeq int64, p
 }
 
 func (s *Store) CollabUpdates(repo, branch, path string) ([][]byte, error) {
-	rows, err := s.db.Query(`SELECT payload FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? ORDER BY seq`,
+	rows, err := s.query(`SELECT payload FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? ORDER BY seq`,
 		repo, branch, path)
 	if err != nil {
 		return nil, err
@@ -104,11 +105,12 @@ func (s *Store) CompactCollabLog(repo, branch, path string, covered int64, snaps
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? AND seq <= ?`,
+	if _, err := tx.Exec(rebind(`DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? AND seq <= ?`),
 		repo, branch, path, covered); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)`,
+	if _, err := tx.Exec(rebind(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`),
 		repo, branch, path, covered, snapshot); err != nil {
 		return err
 	}
@@ -118,7 +120,7 @@ func (s *Store) CompactCollabLog(repo, branch, path string, covered int64, snaps
 // ---------------------------------------------------------------- contributors
 
 func (s *Store) RecordContributor(repo, branch, path string, userID int64) error {
-	_, err := s.db.Exec(`INSERT INTO collab_contributors (repo, branch, path, user_id, updated_at) VALUES (?, ?, ?, ?, ?)
+	_, err := s.exec(`INSERT INTO collab_contributors (repo, branch, path, user_id, updated_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(repo, branch, path, user_id) DO UPDATE SET updated_at = excluded.updated_at`,
 		repo, branch, path, userID, time.Now().Unix())
 	return err
@@ -137,7 +139,7 @@ func (s *Store) Contributors(repo, branch string, paths []string) ([]User, error
 			args = append(args, p)
 		}
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +164,7 @@ func (s *Store) ClearContributors(repo, branch string, paths []string) error {
 			args = append(args, p)
 		}
 	}
-	_, err := s.db.Exec(q, args...)
+	_, err := s.exec(q, args...)
 	return err
 }
 

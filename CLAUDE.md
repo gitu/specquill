@@ -16,9 +16,14 @@ from the code.
   you MUST `cd server && go build -o reqbased ./cmd/reqbased` and restart, or
   the browser silently serves the stale build.
 - `pkill reqbased` matches the wrapper shell (exit 143) — use `pkill -x reqbased`.
-- Full state reset: `pkill -x reqbased; rm -rf data/runtime && ./scripts/dev-fixture.sh`.
-  SQLite (sessions, PRs, collab room logs) lives in `data/runtime/reqbase.db`;
-  bare fixture origins in `data/origin/`.
+- **The store is Postgres** (users, sessions, PRs, collab room logs), NOT in
+  `data/`: dev runs the compose container on **:5433**
+  (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
+  `reqbase.dev.yml`). Go tests need it too (they skip without it; isolation is
+  a throwaway schema per test via `store.OpenTest`). Neon in production.
+- Full state reset: `pkill -x reqbased; rm -rf data/runtime && ./scripts/dev-fixture.sh`
+  — the fixture script also drops+recreates the postgres schema; `rm -rf
+  data/runtime` alone does NOT clear sessions/PRs anymore.
 - Copilot in dev points at ollama `qwen2.5:7b` (`reqbase.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
   (it self-skips unless the configured model is `mock-1`).

@@ -1,8 +1,14 @@
 # reqbase server configuration (copy to reqbase.yml and adjust)
 
 listen: ":8080"
-data_dir: /var/lib/reqbase        # bare clones, worktrees, reqbase.db
+data_dir: /var/lib/reqbase        # bare clones + worktrees (content only)
 base_url: https://reqbase.example.com
+
+# Postgres store: users, sessions, PR review state, collab logs. The DSN
+# carries credentials, so production must pass it via env (works great with
+# a serverless Postgres like Neon).
+database:
+  url_env: REQBASE_DATABASE_URL   # e.g. postgres://…neon.tech/reqbase?sslmode=require
 
 repos:
   # exactly one writable repo is the editing workspace

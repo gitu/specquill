@@ -44,17 +44,22 @@ func (s *Store) CreatePR(repo, title, body, source, target string, authorID int6
 		return nil, err
 	}
 	defer tx.Rollback()
+	// serialize number assignment per repo — MAX()+1 under concurrency would
+	// otherwise race into the UNIQUE(repo, number) constraint
+	if _, err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext($1))", repo); err != nil {
+		return nil, err
+	}
 	var next int
-	if err := tx.QueryRow("SELECT COALESCE(MAX(number), 0) + 1 FROM prs WHERE repo = ?", repo).Scan(&next); err != nil {
+	if err := tx.QueryRow(rebind("SELECT COALESCE(MAX(number), 0) + 1 FROM prs WHERE repo = ?"), repo).Scan(&next); err != nil {
 		return nil, err
 	}
 	now := time.Now().Unix()
-	res, err := tx.Exec(`INSERT INTO prs (repo, number, title, body, source_branch, target_branch, author_id, state, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)`, repo, next, title, body, source, target, authorID, now)
+	var id int64
+	err = tx.QueryRow(rebind(`INSERT INTO prs (repo, number, title, body, source_branch, target_branch, author_id, state, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`), repo, next, title, body, source, target, authorID, now).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -87,7 +92,7 @@ func scanPR(row interface{ Scan(...any) error }) (*PR, error) {
 }
 
 func (s *Store) prBy(where string, args ...any) (*PR, error) {
-	return scanPR(s.db.QueryRow(prSelect+"WHERE "+where, args...))
+	return scanPR(s.queryRow(prSelect+"WHERE "+where, args...))
 }
 
 func (s *Store) ListPRs(repo, state string) ([]*PR, error) {
@@ -98,7 +103,7 @@ func (s *Store) ListPRs(repo, state string) ([]*PR, error) {
 		args = append(args, state)
 	}
 	q += " ORDER BY p.number DESC"
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +124,7 @@ func (s *Store) SetPRState(id int64, state, mergedCommit string) error {
 	if state == "merged" {
 		mergedAt = time.Now().Unix()
 	}
-	_, err := s.db.Exec("UPDATE prs SET state = ?, merged_commit = NULLIF(?, ''), merged_at = ? WHERE id = ?",
+	_, err := s.exec("UPDATE prs SET state = ?, merged_commit = NULLIF(?, ''), merged_at = ? WHERE id = ?",
 		state, mergedCommit, mergedAt, id)
 	return err
 }
@@ -127,17 +132,15 @@ func (s *Store) SetPRState(id int64, state, mergedCommit string) error {
 // ---------------------------------------------------------------- comments
 
 func (s *Store) AddComment(prID, authorID int64, filePath string, line int, anchoredCommit, body string) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO pr_comments (pr_id, author_id, file_path, line, anchored_commit, body, created_at)
-		VALUES (?, ?, NULLIF(?, ''), NULLIF(?, 0), NULLIF(?, ''), ?, ?)`,
-		prID, authorID, filePath, line, anchoredCommit, body, time.Now().Unix())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := s.queryRow(`INSERT INTO pr_comments (pr_id, author_id, file_path, line, anchored_commit, body, created_at)
+		VALUES (?, ?, NULLIF(?, ''), NULLIF(?, 0), NULLIF(?, ''), ?, ?) RETURNING id`,
+		prID, authorID, filePath, line, anchoredCommit, body, time.Now().Unix()).Scan(&id)
+	return id, err
 }
 
 func (s *Store) Comments(prID int64) ([]PRComment, error) {
-	rows, err := s.db.Query(`SELECT c.id, COALESCE(c.file_path,''), COALESCE(c.line,0), COALESCE(c.anchored_commit,''),
+	rows, err := s.query(`SELECT c.id, COALESCE(c.file_path,''), COALESCE(c.line,0), COALESCE(c.anchored_commit,''),
 		c.body, c.resolved, c.created_at, u.id, u.provider, u.name, u.email
 		FROM pr_comments c JOIN users u ON u.id = c.author_id WHERE c.pr_id = ? ORDER BY c.created_at`, prID)
 	if err != nil {
@@ -159,14 +162,14 @@ func (s *Store) Comments(prID int64) ([]PRComment, error) {
 // ---------------------------------------------------------------- approvals
 
 func (s *Store) Approve(prID, userID int64, commitSha string) error {
-	_, err := s.db.Exec(`INSERT INTO pr_approvals (pr_id, user_id, commit_sha, created_at) VALUES (?, ?, ?, ?)
+	_, err := s.exec(`INSERT INTO pr_approvals (pr_id, user_id, commit_sha, created_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(pr_id, user_id) DO UPDATE SET commit_sha = excluded.commit_sha, created_at = excluded.created_at`,
 		prID, userID, commitSha, time.Now().Unix())
 	return err
 }
 
 func (s *Store) Approvals(prID int64) ([]PRApproval, error) {
-	rows, err := s.db.Query(`SELECT a.commit_sha, a.created_at, u.id, u.provider, u.name, u.email
+	rows, err := s.query(`SELECT a.commit_sha, a.created_at, u.id, u.provider, u.name, u.email
 		FROM pr_approvals a JOIN users u ON u.id = a.user_id WHERE a.pr_id = ? ORDER BY a.created_at`, prID)
 	if err != nil {
 		return nil, err

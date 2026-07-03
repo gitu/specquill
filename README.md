@@ -19,9 +19,9 @@ server/           Go single binary (reqbased)
                     env-token push/fetch
   internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
                     opaque session cookies in SQLite
-  internal/store    SQLite (modernc, pure Go): users, sessions, PRs, comments,
-                    approvals, workspace claims, collab room logs — content
-                    never leaves git
+  internal/store    Postgres (pgx; Neon in prod): users, sessions, PRs,
+                    comments, approvals, workspace claims, collab room
+                    logs — content never leaves git
   internal/collab   real-time co-editing relay: the server is a dumb Yjs
                     update log (no server-side CRDT) — rooms per
                     (branch, path), seed handshake, replay to joiners,
@@ -109,6 +109,7 @@ Key properties:
 
 ```sh
 make dev-fixture        # local bare origins under data/origin/ from repo/
+                        # (also starts + resets the compose postgres, the store)
 make web server         # build SPA into the embed dir + build reqbased
 python3 scripts/mock-llm.py &          # keyless copilot provider for dev
 ./server/reqbased -config reqbase.dev.yml -dev
@@ -121,6 +122,7 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on :5173, proxying /ap
 
 ```sh
 cp reqbase.example.yml reqbase.yml     # point at your remotes, OIDC issuer, data dir
+export REQBASE_DATABASE_URL=…          # Postgres DSN (e.g. Neon), env only
 export REQBASE_TOKEN_TRADING=…         # git token, env only
 export REQBASE_OIDC_SECRET=…
 make build && ./server/reqbased -config reqbase.yml

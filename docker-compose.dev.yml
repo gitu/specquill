@@ -1,9 +1,28 @@
-# Dev IdP for exercising the OIDC flow locally:
+# Dev dependencies:
 #   docker compose -f docker-compose.dev.yml up -d
-# then point reqbase.dev.yml at issuer http://127.0.0.1:5556/dex with
-# client_id reqbase / secret in REQBASE_OIDC_SECRET=dev-secret and log in as
-# admin@example.com / password.
+#
+# postgres — the reqbase store (users, sessions, PRs, collab logs); matches
+#   the `database.url` in reqbase.dev.yml. Port 5433 to avoid a host postgres.
+# dex — IdP for exercising the OIDC flow locally: point reqbase.dev.yml at
+#   issuer http://127.0.0.1:5556/dex with client_id reqbase / secret in
+#   REQBASE_OIDC_SECRET=dev-secret and log in as admin@example.com / password.
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reqbase
+      POSTGRES_PASSWORD: reqbase
+      POSTGRES_DB: reqbase
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reqbase -d reqbase"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
   dex:
     image: ghcr.io/dexidp/dex:v2.41.1
     command: ["dex", "serve", "/etc/dex/config.yml"]
@@ -11,3 +30,6 @@ services:
       - "5556:5556"
     volumes:
       - ./scripts/dex-config.yml:/etc/dex/config.yml:ro
+
+volumes:
+  pg-data:

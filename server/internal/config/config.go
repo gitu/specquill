@@ -73,6 +73,30 @@ type SessionConfig struct {
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
 
+// DatabaseConfig locates the Postgres store (users, sessions, PR review
+// state, collab logs). Production configs must use url_env so the DSN —
+// which carries credentials — never lives in a file.
+type DatabaseConfig struct {
+	URL    string `yaml:"url"`     // local dev only (compose postgres, no secrets)
+	URLEnv string `yaml:"url_env"` // env var holding the DSN (e.g. a Neon URL)
+}
+
+// DSN resolves the connection string; the env var wins when set.
+func (d DatabaseConfig) DSN() (string, error) {
+	if d.URLEnv != "" {
+		if v := os.Getenv(d.URLEnv); v != "" {
+			return v, nil
+		}
+		if d.URL == "" {
+			return "", fmt.Errorf("database.url_env: %s is not set", d.URLEnv)
+		}
+	}
+	if d.URL != "" {
+		return d.URL, nil
+	}
+	return "", fmt.Errorf("database.url or database.url_env is required")
+}
+
 // AIConfig points the copilot at any OpenAI-compatible chat-completions API
 // (OpenAI, Gemini's /v1beta/openai endpoint, Azure, Ollama, …).
 type AIConfig struct {
@@ -86,14 +110,15 @@ type AIConfig struct {
 }
 
 type Config struct {
-	Listen  string        `yaml:"listen"`
-	DataDir string        `yaml:"data_dir"`
-	BaseURL string        `yaml:"base_url"`
-	Repos   []RepoConfig  `yaml:"repos"`
-	Git     GitConfig     `yaml:"git"`
-	Auth    AuthConfig    `yaml:"auth"`
-	Session SessionConfig `yaml:"session"`
-	AI      AIConfig      `yaml:"ai"`
+	Listen   string         `yaml:"listen"`
+	DataDir  string         `yaml:"data_dir"`
+	BaseURL  string         `yaml:"base_url"`
+	Database DatabaseConfig `yaml:"database"`
+	Repos    []RepoConfig   `yaml:"repos"`
+	Git      GitConfig      `yaml:"git"`
+	Auth     AuthConfig     `yaml:"auth"`
+	Session  SessionConfig  `yaml:"session"`
+	AI       AIConfig       `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -136,6 +161,9 @@ func (c *Config) validate() error {
 	}
 	if !c.Auth.OIDC.Enabled && !c.Auth.Local.Enabled {
 		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
+	}
+	if c.Database.URL == "" && c.Database.URLEnv == "" {
+		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")
 	}
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")

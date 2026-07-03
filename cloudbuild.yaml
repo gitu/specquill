@@ -40,6 +40,7 @@
 #   _TOKEN_SECRET        Secret Manager entry: git push/fetch token
 #   _OIDC_SECRET_NAME    Secret Manager entry: OIDC client secret
 #   _AI_KEY_SECRET       Secret Manager entry: copilot API key
+#   _DATABASE_URL_SECRET Secret Manager entry: Postgres DSN (Neon)
 #   _MIN_INSTANCES       0 = scale to zero (staging); 1 keeps state warm (prod)
 #   _VERSION_GATE        "on" (prod tag trigger) | "off" (staging). Default off.
 
@@ -51,6 +52,7 @@ substitutions:
   _TOKEN_SECRET: REQBASE_TOKEN
   _OIDC_SECRET_NAME: REQBASE_OIDC_SECRET
   _AI_KEY_SECRET: REQBASE_AI_KEY
+  _DATABASE_URL_SECRET: REQBASE_DATABASE_URL
   _MIN_INSTANCES: "1"
   _VERSION_GATE: "off"
 
@@ -167,4 +169,4 @@ steps:
           --timeout=3600 \
           --no-cpu-throttling \
           --set-env-vars="APP_VERSION=$$APP_VERSION" \
-          --set-secrets=REQBASE_TOKEN=${_TOKEN_SECRET}:latest,REQBASE_OIDC_SECRET=${_OIDC_SECRET_NAME}:latest,REQBASE_AI_KEY=${_AI_KEY_SECRET}:latest
+          --set-secrets=REQBASE_TOKEN=${_TOKEN_SECRET}:latest,REQBASE_OIDC_SECRET=${_OIDC_SECRET_NAME}:latest,REQBASE_AI_KEY=${_AI_KEY_SECRET}:latest,REQBASE_DATABASE_URL=${_DATABASE_URL_SECRET}:latest

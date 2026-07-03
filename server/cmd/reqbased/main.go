@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -54,7 +53,11 @@ func openStore(cfg *config.Config) (*store.Store, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
 	}
-	return store.Open(filepath.Join(cfg.DataDir, "reqbase.db"))
+	dsn, err := cfg.Database.DSN()
+	if err != nil {
+		return nil, err
+	}
+	return store.Open(dsn)
 }
 
 func serve(configPath string, dev bool) error {

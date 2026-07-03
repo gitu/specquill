@@ -5,8 +5,12 @@
 # push to main rolls it out to staging.
 
 listen: ":8080"                    # Cloud Run's default $PORT
-data_dir: /var/lib/reqbase         # ephemeral on Cloud Run — see DEPLOY.md
+data_dir: /var/lib/reqbase         # git clones/worktrees; ephemeral — see DEPLOY.md
 base_url: https://reqbase.example.com   # the Cloud Run URL / mapped domain
+
+# durable store (Neon): users, sessions, PRs, review state, collab logs
+database:
+  url_env: REQBASE_DATABASE_URL
 
 repos:
   # exactly one writable repo is the editing workspace

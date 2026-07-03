@@ -63,10 +63,7 @@ func setup(t *testing.T) *env {
 	repo, _ := git.Repo("w")
 	_ = repo.CreateBranch("ws/a", "main")
 
-	st, err := store.Open(filepath.Join(tmp, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := store.OpenTest(t)
 	// contributor lookups join the users table — seed the fixture identities
 	// (ids are deterministic: alice=1, bob=2)
 	if _, err := st.UpsertUser("local", "alice", "Alice A", "alice@t"); err != nil {
