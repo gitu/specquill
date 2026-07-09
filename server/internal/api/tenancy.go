@@ -50,6 +50,36 @@ func (s *Server) tenant(w http.ResponseWriter, r *http.Request) (*store.Tenant, 
 	}
 }
 
+// tenantQuiet resolves the request's tenant like tenant() but writes no error
+// response — for best-effort paths (grounding) where the caller already
+// resolved the tenant. Returns nil when resolution is ambiguous or fails.
+func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		return nil
+	}
+	want := r.Header.Get("X-SpecQuill-Tenant")
+	if want == "" {
+		want = r.URL.Query().Get("tenant")
+	}
+	ms, err := s.memberships(u)
+	if err != nil {
+		return nil
+	}
+	if want != "" {
+		for i := range ms {
+			if ms[i].Tenant.Slug == want {
+				return &ms[i].Tenant
+			}
+		}
+		return nil
+	}
+	if len(ms) == 1 {
+		return &ms[0].Tenant
+	}
+	return nil
+}
+
 // memberships returns the user's tenants, auto-enrolling first-time users
 // into the default config tenant when one exists.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {

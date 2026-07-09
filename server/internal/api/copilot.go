@@ -4,19 +4,62 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"specquill/server/internal/project"
 	"strings"
+	"sync"
 
 	"specquill/server/internal/ai"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/project"
 )
 
-// GET /api/copilot/info
+// GET /api/copilot/info?repo= — capability probe. When a project is resolvable
+// (explicit ?repo=, else the tenant's sole project) it also reports the grounded
+// reference sources feeding that project's copilot context.
 func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 	info := map[string]any{"enabled": s.ai != nil}
 	if s.ai != nil {
 		info["model"] = s.ai.Model()
+		if proj := s.copilotProject(r); proj != nil {
+			names := []string{}
+			for _, src := range s.groundingSources(r, proj) {
+				names = append(names, src.Name)
+			}
+			info["groundedSources"] = names
+		}
 	}
 	jsonOK(w, info)
+}
+
+// copilotProject resolves the project the info probe reports on: the ?repo=
+// project when given, otherwise the tenant's first project. Best-effort (nil on
+// any miss) — the info endpoint degrades to enabled/model only.
+func (s *Server) copilotProject(r *http.Request) *project.Project {
+	t := s.tenantQuiet(r)
+	if t == nil {
+		return nil
+	}
+	ps, err := s.store.TenantProjects(t.ID)
+	if err != nil || len(ps) == 0 {
+		return nil
+	}
+	target := ps[0]
+	if id := r.URL.Query().Get("repo"); id != "" {
+		found := false
+		for _, p := range ps {
+			if p.ProjectID == id {
+				target, found = p, true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	repo, ok := s.git.Repo(t.Slug + "/" + target.RepoID)
+	if !ok {
+		return nil
+	}
+	return project.New(repo, target.ProjectID, target.ContentRoot, false)
 }
 
 // POST /api/repos/{repo}/copilot/chat {messages, focusPath?, branch?} → SSE
@@ -46,8 +89,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request, repo *proje
 		gitFail(w, err)
 		return
 	}
+	refs := s.groundingSources(r, repo)
 
-	msgs := append([]ai.Message{{Role: "system", Content: ai.GroundingPrompt(files, body.FocusPath)}}, body.Messages...)
+	system := ai.GroundingPrompt(files, refs, body.FocusPath, s.ai.GroundingBudget())
+	msgs := append([]ai.Message{{Role: "system", Content: system}}, body.Messages...)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -166,6 +211,9 @@ func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request, repo *proj
 // applyEdit validates a search/replace against the *current* file state on the
 // branch and saves the result (uncommitted). allowed limits editable paths.
 func (s *Server) applyEdit(repo *project.Project, branch string, allowed map[string]string, e draftEdit) error {
+	if strings.HasPrefix(e.Path, "~") {
+		return fmt.Errorf("reference sources are read-only")
+	}
 	e.Path = normalizePath(e.Path, allowed)
 	if _, ok := allowed[e.Path]; !ok {
 		return fmt.Errorf("not in the impacted file set")
@@ -205,6 +253,134 @@ func normalizePath(p string, allowed map[string]string) string {
 		}
 	}
 	return p
+}
+
+// groundingSources resolves the copilot's grounded reference sources for a
+// project: its EFFECTIVE references (default-branch selection ∩ tenant grants)
+// with `grounding: true`, each read as a read-only snapshot of the granted
+// source's default branch (filtered to the reference's paths). This is the D5
+// trust boundary — selection is read from the default branch only and can never
+// reach an ungranted source. Best-effort: any failure yields no grounding.
+func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.GroundingSource {
+	t := s.tenantQuiet(r)
+	if t == nil {
+		return nil
+	}
+	granted, err := s.store.TenantGrantedSources(t.ID)
+	if err != nil || len(granted) == 0 {
+		return nil
+	}
+	kinds := map[string]string{}
+	for _, src := range granted {
+		kinds[src.Name] = src.Kind
+	}
+	// default branch only (D5): a feature branch cannot change the selection
+	yml, _, err := proj.FileAt(proj.Cfg.DefaultBranch, ".specquill/config.yml")
+	if err != nil {
+		return nil
+	}
+	cfg, err := project.ParseConfig(yml)
+	if err != nil {
+		return nil
+	}
+	refs, _ := project.EffectiveReferences(cfg, kinds)
+	var out []ai.GroundingSource
+	for _, ref := range refs {
+		if !ref.Grounding {
+			continue
+		}
+		repo, ok := s.git.Repo(t.Slug + "/" + ref.Source)
+		if !ok {
+			continue
+		}
+		snap := s.sourceSnapshot(t.Slug+"/"+ref.Source, repo)
+		if snap == nil {
+			continue
+		}
+		files := filterByPaths(snap, ref.Paths)
+		if len(files) == 0 {
+			continue
+		}
+		out = append(out, ai.GroundingSource{Name: ref.Source, Files: files})
+	}
+	return out
+}
+
+// sourceSnapshot returns a read-only snapshot of a source's default branch,
+// cached by (repo key, head SHA): the content only changes when the branch
+// moves, so a live room's keystrokes never re-snapshot an unchanged source.
+// Returns nil on any failure. The returned map must not be mutated (it is
+// shared) — callers filter into a fresh map.
+func (s *Server) sourceSnapshot(key string, repo *gitx.Repo) map[string]string {
+	sha, err := repo.Head(repo.Cfg.DefaultBranch)
+	if err != nil {
+		return nil
+	}
+	ck := key + "@" + sha
+	if files, ok := s.srcCache.get(ck); ok {
+		return files
+	}
+	files, err := repo.Snapshot(repo.Cfg.DefaultBranch)
+	if err != nil {
+		return nil
+	}
+	s.srcCache.put(ck, files)
+	return files
+}
+
+// srcCache is a bounded (FIFO-evicted) cache of source snapshots. Keys embed the
+// head SHA, so a moved branch is a cache miss rather than stale content.
+type srcCache struct {
+	mu    sync.Mutex
+	items map[string]map[string]string
+	order []string
+}
+
+const srcCacheMax = 16
+
+func newSrcCache() *srcCache { return &srcCache{items: map[string]map[string]string{}} }
+
+func (c *srcCache) get(key string) (map[string]string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.items[key]
+	return v, ok
+}
+
+func (c *srcCache) put(key string, files map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.items[key]; ok {
+		return
+	}
+	c.items[key] = files
+	c.order = append(c.order, key)
+	for len(c.order) > srcCacheMax {
+		delete(c.items, c.order[0])
+		c.order = c.order[1:]
+	}
+}
+
+// filterByPaths keeps only files under one of the given path prefixes; an empty
+// filter keeps everything (dropping sketch JSON and uploads either way).
+func filterByPaths(files map[string]string, prefixes []string) map[string]string {
+	out := make(map[string]string, len(files))
+	for p, c := range files {
+		if strings.HasSuffix(p, ".excalidraw") || strings.HasPrefix(p, "uploads/") {
+			continue
+		}
+		if len(prefixes) == 0 {
+			out[p] = c
+			continue
+		}
+		for _, pre := range prefixes {
+			if p == pre || strings.HasPrefix(p, strings.TrimSuffix(pre, "/")+"/") {
+				out[p] = c
+				break
+			}
+		}
+	}
+	return out
 }
 
 // soleProject resolves the tenant's first project — the legacy /api/copilot/*

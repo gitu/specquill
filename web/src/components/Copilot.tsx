@@ -19,7 +19,7 @@ export function Copilot() {
   const app = useApp();
   const qc = useQueryClient();
   const { pathname } = useLocation();
-  const info = useCopilotInfo();
+  const info = useCopilotInfo(app.repoId);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export function Copilot() {
     setBusy(true);
     setStreamText('');
     try {
-      const full = await streamChat({ messages, focusPath, branch: app.branch }, setStreamText);
+      const full = await streamChat(app.repoId, { messages, focusPath, branch: app.branch }, setStreamText);
       setEntries((es) => [...es, { kind: 'msg', msg: { role: 'assistant', content: full } }]);
     } catch (e) {
       setError(String((e as Error).message || e));
@@ -65,7 +65,7 @@ export function Copilot() {
         ...change.impMaps.map((m) => m.split('#')[0]),
         ...change.impReqs.map((r) => reqByName(app.model!, r)?.path).filter((p): p is string => !!p),
       ];
-      const result = await draftEdits({ changePath: change.path, files: [...new Set(files)] });
+      const result = await draftEdits(app.repoId, { changePath: change.path, files: [...new Set(files)] });
       setEntries((es) => [...es, { kind: 'draft', result }]);
       qc.invalidateQueries({ queryKey: ['branches'] });
     } catch (e) {
@@ -99,6 +99,9 @@ export function Copilot() {
           {focusPath && <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>@{focusPath.split('/').pop()}</span>}
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>repo:{app.repoId}</span>
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>{app.branch}</span>
+          {info.data?.groundedSources?.map((src) => (
+            <span key={src} title="Granted reference source in the copilot context" style={sx('padding:2px 7px;border-radius:5px;background:var(--reg-bg);border:1px solid var(--reg-line);color:var(--reg)')}>~{src}</span>
+          ))}
         </div>
 
         {change && (

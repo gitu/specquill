@@ -30,6 +30,7 @@ type Server struct {
 	bus      *events.Bus // nil-safe
 	hub      *collab.Hub
 	devUser  *store.User
+	srcCache *srcCache // grounding source snapshots, keyed by repo key + head SHA
 }
 
 type Options struct {
@@ -48,7 +49,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, srcCache: newSrcCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}

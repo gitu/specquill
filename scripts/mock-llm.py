@@ -48,10 +48,15 @@ class Handler(BaseHTTPRequestHandler):
         if 'Reply with ONLY a JSON object' in system:
             reply = DRAFT_REPLY
         else:
-            n_files = len(re.findall(r'^## \S+\.(?:md|ya?ml|json|mermaid)$', system, re.M))
+            # workspace files head `## <path>`; grounded reference files head
+            # `## ~<source>/<path>` — count them apart so the reply reflects what
+            # the server actually put in the prompt (grant-gated grounding, P4).
+            n_files = len(re.findall(r'^## (?!~)\S+\.(?:md|ya?ml|json|mermaid)$', system, re.M))
+            sources = sorted(set(re.findall(r'^# Reference source ~(\S+)', system, re.M)))
             focus = re.search(r'currently viewing: (\S+)', system)
             reply = (f"(mock) I am grounded on {n_files} workspace files"
                      + (f", focused on {focus.group(1)}" if focus else '')
+                     + (f", plus grounded sources: {', '.join(sources)}" if sources else '')
                      + f". You asked: “{user[:120]}” — in the demo workspace the "
                        "RTS 22 amendment drives REQ-042 and the drifted mapping is "
                        "trade.executionTimestamp (see data-mappings/trade.md).")
@@ -61,12 +66,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
-            for i in range(0, len(reply), 24):
-                chunk = json.dumps({'choices': [{'delta': {'content': reply[i:i + 24]}}]})
-                self._chunk(f"data: {chunk}\n\n")
-                time.sleep(0.01)
-            self._chunk("data: [DONE]\n\n")
-            self._chunk('')
+            try:
+                for i in range(0, len(reply), 24):
+                    chunk = json.dumps({'choices': [{'delta': {'content': reply[i:i + 24]}}]})
+                    self._chunk(f"data: {chunk}\n\n")
+                    time.sleep(0.01)
+                self._chunk("data: [DONE]\n\n")
+                self._chunk('')
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # client hung up mid-stream — not fatal to the server
         else:
             raw = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': reply}}]}).encode()
             self.send_response(200)

@@ -9,6 +9,8 @@ test('project switcher scopes the workspace to the selected project', async ({ p
   await page.goto('/#/editor');
   // default project is trading-specs
   await expect(page.locator('aside').getByText('TRADING-SPECS', { exact: true })).toBeVisible();
+  // the copilot advertises its granted grounding source (P4)
+  await expect(page.getByText('~regulations')).toBeVisible({ timeout: 10_000 });
 
   // switch to the SpecQuill product specs (monorepo subfolder project)
   await page.getByTitle('Project').selectOption('specquill-docs');
@@ -61,7 +63,8 @@ test('cross-repo reference renders as an external graph node', async ({ page }) 
 
   await page.goto('/#/graph');
   // the ~regulations link in specs/references.md becomes an external node…
-  await expect(page.getByText('~regulations')).toBeVisible({ timeout: 10_000 });
+  // (scoped to the graph canvas — the copilot panel also shows a ~regulations chip)
+  await expect(page.getByRole('main').getByText('~regulations')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('mifid-ii').first()).toBeVisible();
   // …connected by a dashed edge
   await expect(page.locator('svg path[stroke-dasharray]').first()).toBeVisible();

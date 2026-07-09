@@ -16,6 +16,9 @@ test('chat streams a grounded reply', async ({ page }) => {
   await expect(page.getByText('Which mapping drifted?')).toBeVisible();
   await expect(page.getByText(/grounded on \d+ workspace files/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('trade.executionTimestamp').last()).toBeVisible();
+  // the granted, selected reference source reached the system prompt (P4): the
+  // mock echoes the ~source headings it saw back into the reply.
+  await expect(page.getByText(/grounded sources: regulations/)).toBeVisible();
 });
 
 test('draft edits land on a copilot branch for review', async ({ page }) => {

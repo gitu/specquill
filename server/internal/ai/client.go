@@ -28,6 +28,7 @@ type Client struct {
 	model   string // main (thinking-class): chat, draft edits
 	quick   string // fast one-shot tier: commit messages, titles
 	key     string
+	budget  int // grounding system-prompt cap in bytes (0 = package default)
 	http    *http.Client
 }
 
@@ -45,12 +46,16 @@ func New(cfg config.AIConfig) *Client {
 		model:   cfg.Model,
 		quick:   quick,
 		key:     key,
+		budget:  cfg.GroundingBudget,
 		http:    &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
 func (c *Client) Model() string      { return c.model }
 func (c *Client) QuickModel() string { return c.quick }
+
+// GroundingBudget is the configured system-prompt cap in bytes (0 = default).
+func (c *Client) GroundingBudget() int { return c.budget }
 
 func (c *Client) request(ctx context.Context, body any) (*http.Response, error) {
 	raw, err := json.Marshal(body)

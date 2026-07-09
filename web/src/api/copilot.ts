@@ -3,23 +3,28 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
-export interface CopilotInfo { enabled: boolean; model?: string }
+export interface CopilotInfo { enabled: boolean; model?: string; groundedSources?: string[] }
 export interface DraftResult { branch: string; summary: string; applied: string[]; failures: string[] }
 
-export function useCopilotInfo() {
-  return useQuery({ queryKey: ['copilot-info'], queryFn: () => api<CopilotInfo>('/api/copilot/info'), staleTime: 300_000 });
+// info is per-project: grounded sources depend on the active project's
+// references. repoId scopes the probe; omit it to fall back to the sole project.
+export function useCopilotInfo(repoId?: string) {
+  const url = repoId ? `/api/copilot/info?repo=${encodeURIComponent(repoId)}` : '/api/copilot/info';
+  return useQuery({ queryKey: ['copilot-info', repoId ?? ''], queryFn: () => api<CopilotInfo>(url), staleTime: 300_000 });
 }
 
 /**
- * POST /api/copilot/chat and consume the SSE stream. onDelta fires per chunk;
- * resolves with the full reply text.
+ * POST the active project's copilot/chat and consume the SSE stream. onDelta
+ * fires per chunk; resolves with the full reply text. repoId targets the active
+ * project so grounding follows the project switcher (omit → sole-project alias).
  */
 export async function streamChat(
+  repoId: string | undefined,
   body: { messages: ChatMessage[]; focusPath?: string; branch?: string },
   onDelta: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await fetch('/api/copilot/chat', {
+  const res = await fetch(repoId ? `/api/repos/${encodeURIComponent(repoId)}/copilot/chat` : '/api/copilot/chat', {
     method: 'POST',
     headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -56,6 +61,7 @@ export async function streamChat(
   return full;
 }
 
-export function draftEdits(body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
-  return api<DraftResult>('/api/copilot/draft', { method: 'POST', body: JSON.stringify(body) });
+export function draftEdits(repoId: string | undefined, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
+  const url = repoId ? `/api/repos/${encodeURIComponent(repoId)}/copilot/draft` : '/api/copilot/draft';
+  return api<DraftResult>(url, { method: 'POST', body: JSON.stringify(body) });
 }
