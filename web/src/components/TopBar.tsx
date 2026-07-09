@@ -46,7 +46,7 @@ export function TopBar() {
         </button>
       )}
       <div style={sx('flex:none;display:flex;align-items:center;gap:8px')}>
-        <div style={sx('width:22px;height:22px;border-radius:6px;background:var(--text);color:var(--surface);display:flex;align-items:center;justify-content:center')}>
+        <div style={sx('width:22px;height:22px;border-radius:6px;background:var(--brand);color:var(--brand-fg);display:flex;align-items:center;justify-content:center')}>
           <IconQuill size={14} />
         </div>
         {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
@@ -59,7 +59,7 @@ export function TopBar() {
           style={sx('display:flex;align-items:center;gap:6px;padding:4px 9px;border:1px solid var(--border-2);border-radius:7px;cursor:pointer;background:var(--surface-2)')}
         >
           <IconBranch />
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:500")}>{app.branch}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500")}>{app.branch}</span>
           {app.isProtectedBranch && <span title="protected — edits move to your workspace" style={sx('display:inline-flex;color:var(--text-3)')}><IconLock /></span>}
           <span style={sx('color:var(--text-3)')}><IconChevD /></span>
         </div>
@@ -74,7 +74,7 @@ export function TopBar() {
                 onClick={() => { app.switchBranch(b.name); setOpen(false); }}
                 style={sx('display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:12.5px;' + (b.name === app.branch ? 'background:var(--surface-2);font-weight:600' : ''))}
               >
-                <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;flex:1")}>{b.name}</span>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;flex:1")}>{b.name}</span>
                 {app.protectedBranches.includes(b.name) && <span title="protected" style={sx('display:inline-flex;color:var(--text-3)')}><IconLock /></span>}
                 {b.isDefault && <span style={sx('font-size:10px;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 5px')}>default</span>}
               </div>
@@ -100,7 +100,7 @@ export function TopBar() {
           <IconSearch />
           <span style={sx('font-size:12.5px')}>Search requirements, specs, fields, changes…</span>
           <div style={sx('flex:1')} />
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
         </div>
       )}
       <div style={sx('flex:1')} />
@@ -109,7 +109,7 @@ export function TopBar() {
         <div
           title={sync.isPending ? 'syncing…' : `ahead ${ahead} / behind ${behind} — click to fetch${ahead > 0 ? ' + push' : ''}`}
           onClick={() => !sync.isPending && sync.mutate({ push: ahead > 0 })}
-          style={sx("display:flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-2);padding:4px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;" + (sync.isPending ? 'opacity:.5' : ''))}
+          style={sx("display:flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);padding:4px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;" + (sync.isPending ? 'opacity:.5' : ''))}
         >
           <IconUp />{ahead} <IconDown />{behind}
         </div>

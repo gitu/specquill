@@ -34,7 +34,7 @@ export function ModelView() {
       <div style={sx('max-width:1000px;margin:0 auto;padding:28px 32px 64px')}>
         <div style={sx('display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap')}>
           <div>
-            <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-3)")}>.specquill/config.yml · .specquill/schema.json</div>
+            <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-3)")}>.specquill/config.yml · .specquill/schema.json</div>
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Model definitions</h1>
             <div style={sx('font-size:12.5px;color:var(--text-2);margin-top:5px;max-width:560px;line-height:1.5')}>
               The workspace taxonomy that everything else is computed from — edit the config files to change drivers, statuses, link types, or property schema.
@@ -46,7 +46,7 @@ export function ModelView() {
           </div>
         </div>
 
-        <div style={sx("margin-top:24px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px")}>Entities</div>
+        <div style={sx("margin-top:24px;font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px")}>Entities</div>
         <div style={sx('display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:10px')}>
           {entities.map((e) => (
             <div key={e.kind} onClick={() => nav('/editor/' + firstIn(M, e.prefix))} style={sx('background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:14px;box-shadow:var(--shadow);cursor:pointer')}>
@@ -55,7 +55,7 @@ export function ModelView() {
                 <span style={sx('font-size:23px;font-weight:700;letter-spacing:-.5px')}>{e.count}</span>
               </div>
               <div style={sx('font-size:12.5px;font-weight:600;margin-top:6px')}>{e.label}</div>
-              <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{e.kind}</div>
+              <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{e.kind}</div>
             </div>
           ))}
         </div>
@@ -95,10 +95,10 @@ export function ModelView() {
           </div>
           {tax.links.map((l) => (
             <div key={l.name} style={sx('display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border)')}>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:var(--prod);width:110px;flex:none")}>{l.name}</span>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.from}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600;color:var(--prod);width:110px;flex:none")}>{l.name}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.from}</span>
               <IconArrowLR />
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.to}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.to}</span>
             </div>
           ))}
         </div>
@@ -110,16 +110,16 @@ export function ModelView() {
             <div style={sx('flex:1')} />
             <span onClick={() => nav('/editor/.specquill/schema.json')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Edit schema.json →</span>
           </div>
-          <div style={sx("display:grid;grid-template-columns:160px 90px 1fr;padding:8px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
+          <div style={sx("display:grid;grid-template-columns:160px 90px 1fr;padding:8px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
             <span>Field</span><span>Type</span><span>Enum values</span>
           </div>
           {schemaFields.map((f) => (
             <div key={f.key} style={sx('display:grid;grid-template-columns:160px 90px 1fr;align-items:center;padding:9px 18px;border-top:1px solid var(--border)')}>
               <span style={sx('font-size:12.5px;font-weight:500')}>{f.label}</span>
               <span>
-                <span style={sx(`font-family:'IBM Plex Mono',monospace;font-size:10.5px;padding:1px 7px;border-radius:5px;background:var(--surface-2);color:${TYPE_COLOR[f.type] || 'var(--text-2)'}`)}>{f.type}</span>
+                <span style={sx(`font-family:'JetBrains Mono',monospace;font-size:10.5px;padding:1px 7px;border-radius:5px;background:var(--surface-2);color:${TYPE_COLOR[f.type] || 'var(--text-2)'}`)}>{f.type}</span>
               </span>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2)")}>{f.values}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-2)")}>{f.values}</span>
             </div>
           ))}
         </div>

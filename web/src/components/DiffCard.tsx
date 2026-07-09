@@ -32,7 +32,7 @@ export function DiffCard({ file, artifact, review, comments = [] }: {
   const lc = review?.lineComment;
   return (
     <div id={'file-' + file.path} style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;margin-bottom:16px;background:var(--surface)')}>
-      <div style={sx("display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:11.5px")}>
+      <div style={sx("display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11.5px")}>
         <span style={{ color: meta.color }}>{meta.icon}</span>{file.path}
         {file.status === 'A' && <span style={sx('color:var(--add);font-size:10px;font-weight:700')}>NEW</span>}
         {file.status === 'D' && <span style={sx('color:var(--del);font-size:10px;font-weight:700')}>DELETED</span>}
@@ -41,9 +41,9 @@ export function DiffCard({ file, artifact, review, comments = [] }: {
         <span style={sx('color:var(--del);font-size:10.5px')}>−{file.deletions}</span>
       </div>
       {file.binaryLike ? (
-        artifact ?? <div style={sx("padding:14px;color:var(--text-3);font-size:11.5px;font-family:'IBM Plex Mono',monospace")}>binary-like file changed</div>
+        artifact ?? <div style={sx("padding:14px;color:var(--text-3);font-size:11.5px;font-family:'JetBrains Mono',monospace")}>binary-like file changed</div>
       ) : (
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.85")}>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.85")}>
           {(file.hunks || []).map((h, hi) => (
             <Fragment key={hi}>
               <div style={sx('padding:4px 14px;background:var(--surface-2);color:var(--text-3);border-bottom:1px solid var(--border)')}>{h.header}</div>
@@ -102,7 +102,7 @@ export function CommentRow({ c, inline }: { c: PRComment; inline?: boolean }) {
       <div style={sx('flex:1')}>
         <div style={sx('font-size:12px')}>
           <b>{c.author.name}</b>
-          {c.line ? <span style={sx("color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:10.5px")}> · line {c.line}</span> : null}
+          {c.line ? <span style={sx("color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:10.5px")}> · line {c.line}</span> : null}
           {c.outdated && <span style={sx('margin-left:6px;font-size:10px;color:var(--reg);border:1px solid var(--reg-line);border-radius:4px;padding:0 4px')}>outdated</span>}
         </div>
         <div style={sx('font-size:12.5px;color:var(--text);margin-top:3px;line-height:1.5')}>{c.body}</div>

@@ -15,7 +15,7 @@ export function Dashboard() {
       <div style={sx('max-width:1020px;margin:0 auto;padding:28px 32px 64px')}>
         <div style={sx('display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap')}>
           <div>
-            <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-3)")}>{app.repoId} · {app.branch}</div>
+            <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-3)")}>{app.repoId} · {app.branch}</div>
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Overview</h1>
           </div>
           <div style={sx('display:flex;gap:8px')}>
@@ -60,7 +60,7 @@ export function Dashboard() {
                     <div style={sx('display:flex;align-items:baseline;gap:8px')}>
                       <span style={sx('font-weight:600;font-size:13px')}>{c.title}</span>
                       <div style={sx('flex:1')} />
-                      <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{c.ago}</span>
+                      <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{c.ago}</span>
                     </div>
                     <div style={sx('font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.5')}>
                       <span style={sx('color:var(--ai);font-weight:600')}>✦</span> {c.summary}
@@ -80,7 +80,7 @@ export function Dashboard() {
                   <div style={sx('font-size:12.5px;font-weight:600')}>mifid-ii.md</div>
                   <div style={sx('font-size:11px;color:var(--text-3)')}>2 unresolved comments</div>
                 </div>
-                <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--reg)")}>M</span>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--reg)")}>M</span>
               </div>
               <div style={sx('display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border)')}>
                 <span style={sx('width:22px;height:22px;border-radius:6px;background:var(--prod-bg);color:var(--prod);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none')}>⑂</span>
@@ -105,7 +105,7 @@ export function Dashboard() {
                   <div key={h.label}>
                     <div style={sx('display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px')}>
                       <span style={sx('color:var(--text-2)')}>{h.label}</span>
-                      <span style={sx("font-family:'IBM Plex Mono',monospace;font-weight:600")}>{h.pct}%</span>
+                      <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600")}>{h.pct}%</span>
                     </div>
                     <div style={sx('height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden')}>
                       <div style={sx(`width:${h.pct}%;height:100%;background:${h.color}`)} />
@@ -135,7 +135,7 @@ function Kpi({ label, value, sub, valueStyle = '' }: { label: string; value: str
 
 export function Loading() {
   return (
-    <div style={sx("flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>
+    <div style={sx("flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>
       loading workspace…
     </div>
   );

@@ -37,20 +37,20 @@ export function MatrixView() {
               <div style={sx('width:120px;flex:none;background:var(--surface);border-left:1px solid var(--border)')} />
             </div>
             <div style={sx('display:flex;background:var(--surface);border-bottom:1px solid var(--border)')}>
-              <div style={sx("position:sticky;left:0;z-index:5;width:210px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;align-items:flex-end;padding:0 14px 9px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Requirement</div>
+              <div style={sx("position:sticky;left:0;z-index:5;width:210px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;align-items:flex-end;padding:0 14px 9px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Requirement</div>
               {mx.mcolumns.map((c) => (
                 <div key={c.kind + c.ref} style={sx('width:26px;flex:none;height:120px;border-right:1px solid var(--border);display:flex;align-items:flex-end;justify-content:center;padding-bottom:9px;overflow:hidden')}>
-                  <span style={{ ...sx("font-family:'IBM Plex Mono',monospace;font-size:10px;white-space:nowrap;color:var(--text-2)"), writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{c.label}</span>
+                  <span style={{ ...sx("font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;color:var(--text-2)"), writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{c.label}</span>
                 </div>
               ))}
-              <div style={sx("width:120px;flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;align-items:flex-end;justify-content:flex-end;padding:0 14px 9px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Coverage</div>
+              <div style={sx("width:120px;flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;align-items:flex-end;justify-content:flex-end;padding:0 14px 9px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Coverage</div>
             </div>
           </div>
           {mx.mrows.map((r) => (
             <div key={r.id} className="mrow" style={sx('display:flex;border-bottom:1px solid var(--border)')}>
               <div style={sx('position:sticky;left:0;z-index:3;width:210px;flex:none;background:var(--surface);border-right:1px solid var(--border);padding:8px 14px')}>
                 <div style={sx('font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis')}>{r.name}</div>
-                <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3)")}>{r.id}</div>
+                <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>{r.id}</div>
               </div>
               {r.cells.map((cell, i) => (
                 <div key={i} style={sx('width:26px;flex:none;height:46px;border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center')}>
@@ -59,14 +59,14 @@ export function MatrixView() {
               ))}
               <div style={sx('width:120px;flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 14px')}>
                 <div style={sx('flex:1;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden')}><div style={sx(r.covStyle)} /></div>
-                <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;width:28px;text-align:right")}>{r.cov}%</span>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;width:28px;text-align:right")}>{r.cov}%</span>
               </div>
             </div>
           ))}
         </div>
       </div>
       <div style={sx('flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:16px;padding:11px 20px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;color:var(--text-2)')}>
-        <span style={sx("font-family:'IBM Plex Mono',monospace;color:var(--text-3)")}>{mx.caption}</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-3)")}>{mx.caption}</span>
         <div style={sx('flex:1')} />
         <span style={sx('display:inline-flex;align-items:center;gap:6px')}><span style={sx('width:13px;height:13px;border-radius:4px;background:var(--data)')} />linked</span>
         <span style={sx('display:inline-flex;align-items:center;gap:6px')}><span style={sx('width:13px;height:13px;border-radius:4px;background:var(--reg)')} />drift / stale</span>

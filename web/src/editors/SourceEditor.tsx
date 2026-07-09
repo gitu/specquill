@@ -64,8 +64,8 @@ function changeGutter(getBaseline: () => string | undefined) {
 // theme built from the design's CSS custom properties
 const cmTheme = EditorView.theme({
   '&': { fontSize: '12.5px', backgroundColor: 'var(--surface)', color: 'var(--text)' },
-  '.cm-content': { fontFamily: "'IBM Plex Mono', monospace", lineHeight: '1.8', padding: '10px 0' },
-  '.cm-gutters': { backgroundColor: 'var(--surface-2)', color: 'var(--text-3)', border: 'none', borderRight: '1px solid var(--border)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '11px' },
+  '.cm-content': { fontFamily: "'JetBrains Mono', monospace", lineHeight: '1.8', padding: '10px 0' },
+  '.cm-gutters': { backgroundColor: 'var(--surface-2)', color: 'var(--text-3)', border: 'none', borderRight: '1px solid var(--border)', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' },
   '.cm-activeLine': { backgroundColor: 'var(--surface-2)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--surface-2)' },
   '&.cm-focused': { outline: 'none' },

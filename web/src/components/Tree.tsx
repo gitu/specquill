@@ -28,7 +28,7 @@ function ReadOnlyRepoSection({ repoId, syncedAt, openPath }: { repoId: string; s
       <div style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;color:var(--text-3);font-weight:700;font-size:10.5px;letter-spacing:.5px')}>
         <span title="read-only input repo" style={sx('display:inline-flex')}><IconLock /></span>{repoId.toUpperCase()}
         <div style={sx('flex:1')} />
-        <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:400")}>{agoLabel(syncedAt)}</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:400")}>{agoLabel(syncedAt)}</span>
       </div>
       {(tree.data || []).map((e) => {
         const target = `~${repoId}/${e.path}`;
@@ -138,7 +138,7 @@ export function Tree() {
                   <span title="unsaved co-editing changes — open the file to recover them"
                     style={sx('width:7px;height:7px;flex:none;border-radius:50%;background:var(--reg)')} />
                 )}
-                <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;" + f.badgeStyle)}>{f.badge}</span>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;" + f.badgeStyle)}>{f.badge}</span>
               </div>
             ))}
           </div>
@@ -162,7 +162,7 @@ export function Tree() {
           </div>
         )}
       </div>
-      <div style={sx("height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-top:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-2)")}>
+      <div style={sx("height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-2)")}>
         {nDirty > 0 ? (
           <>
             <span

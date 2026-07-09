@@ -19,11 +19,11 @@ function WorktreeArtifact({ path }: { path: string }) {
   return (
     <div style={sx('display:grid;grid-template-columns:1fr 1fr')}>
       <div style={sx('padding:14px;border-right:1px solid var(--border)')}>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>committed</div>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>committed</div>
         <div dangerouslySetInnerHTML={{ __html: render(before.data?.content) }} />
       </div>
       <div style={sx('padding:14px')}>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>uncommitted</div>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>uncommitted</div>
         <div dangerouslySetInnerHTML={{ __html: render(after.data?.content) }} />
       </div>
     </div>
@@ -44,7 +44,7 @@ export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
       <div onClick={(e) => e.stopPropagation()} style={sx('width:640px;max-width:90vw;height:100%;background:var(--bg);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);display:flex;flex-direction:column')}>
         <div style={sx('height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border)')}>
           <span style={sx('font-weight:700;font-size:13.5px')}>Uncommitted changes</span>
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)")}>on {app.branch}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>on {app.branch}</span>
           <div style={sx('flex:1')} />
           {files.length > 0 && status.data && (
             <button onClick={() => setCommitOpen(true)}
@@ -67,7 +67,7 @@ export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
             </div>
           ))}
           {files.length === 0 && !diff.isLoading && (
-            <div style={sx("padding:32px;text-align:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>
+            <div style={sx("padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>
               working tree clean — nothing to commit
             </div>
           )}

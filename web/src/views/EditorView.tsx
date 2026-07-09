@@ -348,7 +348,7 @@ export function EditorView() {
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
       {!narrow && docTabsStrip('editor', name, nav, draft.dirty)}
       <div style={sx('height:40px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 ' + (narrow ? '10px' : '16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'overflow-x:auto;overflow-y:hidden' : ''))}>
-        <div style={sx("display:flex;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
+        <div style={sx("display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
           <span style={sx('color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{path}</span>
           {draft.dirty && <span title="unsaved changes" style={sx('flex:none;width:6px;height:6px;border-radius:50%;background:var(--reg)')} />}
         </div>
@@ -356,7 +356,7 @@ export function EditorView() {
         {effMode === 'edit' && (
           <>
             <span style={sx('flex:none;display:inline-flex;border:1px solid var(--border-2);border-radius:7px;overflow:hidden')}>
-              {([['strong', 'B', 'Bold (Ctrl+B)', 'font-weight:800'], ['em', 'I', 'Italic (Ctrl+I)', 'font-style:italic'], ['strike', 'S', 'Strikethrough', 'text-decoration:line-through'], ['code', '‹›', 'Inline code', "font-family:'IBM Plex Mono',monospace;font-size:10.5px"]] as const).map(([mark, label, title, style]) => (
+              {([['strong', 'B', 'Bold (Ctrl+B)', 'font-weight:800'], ['em', 'I', 'Italic (Ctrl+I)', 'font-style:italic'], ['strike', 'S', 'Strikethrough', 'text-decoration:line-through'], ['code', '‹›', 'Inline code', "font-family:'JetBrains Mono',monospace;font-size:10.5px"]] as const).map(([mark, label, title, style]) => (
                 <button key={mark} onMouseDown={(e) => e.preventDefault()} onClick={() => editorApi.current?.format(mark)} title={title}
                   style={sx('flex:none;height:26px;width:26px;border:none;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer;' + style)}>
                   {label}
@@ -406,7 +406,7 @@ export function EditorView() {
               <IconUserPlus /> Invite
             </button>
             <span data-sync={session.dirty ? 'saving' : session.savedSha ? 'saved' : 'clean'}
-              style={sx("flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;min-width:64px;" +
+              style={sx("flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;min-width:64px;" +
                 (session.status === 'offline' ? 'color:var(--del)' : session.dirty ? 'color:var(--text-3)' : 'color:var(--data)'))}>
               {session.status === 'offline' ? 'offline — reconnecting'
                 : session.status === 'error' ? session.errorMsg
@@ -416,7 +416,7 @@ export function EditorView() {
           </>
         )}
         {!readOnly && !(collabEligible && session) && syncState !== 'clean' && (
-          <span data-sync={syncState} style={sx("display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;" +
+          <span data-sync={syncState} style={sx("display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;" +
             (syncState === 'saved' ? 'color:var(--data)' : syncState === 'error' || syncState === 'conflict' ? 'color:var(--del)' : 'color:var(--text-3)'))}>
             {syncState === 'saved' ? 'Saved ✓'
               : syncState === 'saving' ? 'Saving…'
@@ -480,7 +480,7 @@ export function EditorView() {
             <div style={sx('height:30px;width:52%;border-radius:7px;background:var(--surface-2)')} />
             <div style={sx('height:12px;width:38%;border-radius:6px;background:var(--surface-2)')} />
             <div style={sx('height:12px;width:92%;border-radius:6px;background:var(--surface-2);margin-top:14px')} />
-            <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)")}>rendering {path}…</div>
+            <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>rendering {path}…</div>
           </div>
         )}
         {file.error != null && (
@@ -517,12 +517,12 @@ export function EditorView() {
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
                     <path d="M9 6l6 6-6 6" />
                   </svg>
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· {viewProps.length} fields</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· {viewProps.length} fields</span>
                 </div>
                 {propsOpen && viewProps.map((p) => (
                   <div key={p.key} style={sx('display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--border)')}>
-                    <span style={sx("width:132px;flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
+                    <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
                       {p.items.map((it, i) => (
                         <span key={i} onClick={it.openPath ? () => nav('/editor/' + it.openPath) : undefined} style={sx(it.style)}>{it.text}</span>
@@ -569,8 +569,8 @@ export function EditorView() {
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
                     <path d="M9 6l6 6-6 6" />
                   </svg>
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· editable</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· editable</span>
                 </div>
                 {propsOpen && (
                   <PropertiesForm
@@ -604,7 +604,7 @@ export function EditorView() {
               onRequestSketch={() => void insertSketch()}
             />
             {collabEligible && session && session.peers.length > 1 && (
-              <div style={sx("margin-top:10px;font-size:11px;color:var(--text-3);font-family:'IBM Plex Mono',monospace")}>
+              <div style={sx("margin-top:10px;font-size:11px;color:var(--text-3);font-family:'JetBrains Mono',monospace")}>
                 co-editing live with {session.peers.filter((p) => p.name !== me.data?.name).map((p) => p.name).join(', ')} — everyone lands as Co-authored-by on commit
               </div>
             )}
@@ -621,7 +621,7 @@ export function EditorView() {
                       key={s.path}
                       onClick={() => applyLinkify(s.path)}
                       title={'Link the first mention to ' + s.path}
-                      style={sx("display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;font-size:11.5px;color:var(--prod);cursor:pointer;background:var(--surface-2);font-family:'IBM Plex Mono',monospace")}
+                      style={sx("display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;font-size:11.5px;color:var(--prod);cursor:pointer;background:var(--surface-2);font-family:'JetBrains Mono',monospace")}
                     >
                       ＋ {s.label}
                     </span>

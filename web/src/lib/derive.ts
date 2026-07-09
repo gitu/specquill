@@ -95,11 +95,11 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
   const keys = [...order.filter((k) => byKey[k]), ...entries.map((e) => e.key).filter((k) => order.indexOf(k) < 0)].filter((k) => k !== 'title');
   const chip = (bg: string, fg: string, mono?: boolean, cap?: boolean) =>
     'display:inline-flex;align-items:center;padding:2px 9px;border-radius:6px;font-size:11.5px;' +
-    (mono ? "font-family:'IBM Plex Mono',monospace;" : '') + (cap ? 'text-transform:capitalize;' : '') +
+    (mono ? "font-family:'JetBrains Mono',monospace;" : '') + (cap ? 'text-transform:capitalize;' : '') +
     'background:' + bg + ';color:' + fg;
   const badge = (c: { fg: string; bg: string }) =>
     'display:inline-flex;align-items:center;padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:600;text-transform:capitalize;background:' + c.bg + ';color:' + c.fg;
-  const linkStyle = "color:var(--prod);cursor:pointer;text-decoration:underline;text-decoration-color:var(--prod-line);font-family:'IBM Plex Mono',monospace;font-size:12px";
+  const linkStyle = "color:var(--prod);cursor:pointer;text-decoration:underline;text-decoration-color:var(--prod-line);font-family:'JetBrains Mono',monospace;font-size:12px";
   const linkItem = (t: string): PropItem => {
     const pm = String(t).match(/([\w-]+\/[\w.\/-]+\.(?:md|excalidraw|mermaid))/);
     if (pm) return { text: t, style: linkStyle, openPath: pm[1] };
@@ -118,7 +118,7 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
       else if (type === 'user') items = [{ text: v, style: chip('var(--surface-2)', 'var(--text)', true) }];
       else if (type === 'code') items = [{ text: v, style: chip('var(--surface-2)', 'var(--text-2)', true) }];
       else if (type === 'tag') items = [{ text: v, style: chip('var(--surface-2)', 'var(--text-2)', false, true) }];
-      else if (type === 'date') items = [{ text: v, style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-2)" }];
+      else if (type === 'date') items = [{ text: v, style: "font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2)" }];
       else items = [{ text: v, style: 'font-size:13px;color:var(--text);line-height:1.5' }];
     } else {
       items = e.items.map((it) => (type === 'code' || type === 'anchors') ? { text: it, style: chip('var(--surface-2)', 'var(--text-2)', true) } : linkItem(it));
@@ -207,12 +207,12 @@ export function buildGraph(model: WorkspaceModel) {
     if (o.kind === 'src') o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2);border-left:3px solid ' + n.color;
     else if (o.kind === 'field') o.boxStyle = base + (n.drift ? 'background:var(--reg-bg);border:1px solid var(--reg-line)' : 'background:var(--data-bg);border:1px solid var(--data-line)');
     else o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2)';
-    o.labelStyle = o.kind === 'src' ? "font-family:'IBM Plex Mono',monospace;font-size:9.5px;font-weight:700;color:" + n.color
-      : o.kind === 'field' ? "font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:var(--data)"
+    o.labelStyle = o.kind === 'src' ? "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:" + n.color
+      : o.kind === 'field' ? "font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--data)"
       : o.kind === 'spec' ? 'font-size:12px;font-weight:600'
-      : "font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3)";
+      : "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)";
     o.subStyle = o.kind === 'field' ? 'font-size:10px;color:var(--reg);margin-top:1px'
-      : o.kind === 'spec' ? "font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--text-3);margin-top:1px"
+      : o.kind === 'spec' ? "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3);margin-top:1px"
       : 'font-size:12px;font-weight:600;margin-top:1px;text-transform:capitalize';
   });
   const edges: GraphEdge[] = [];

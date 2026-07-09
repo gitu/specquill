@@ -14,7 +14,7 @@ function initMermaid() {
     startOnLoad: false,
     theme: dark ? 'dark' : 'neutral',
     securityLevel: 'loose',
-    fontFamily: "'IBM Plex Sans',sans-serif",
+    fontFamily: "'Instrument Sans',sans-serif",
     themeVariables: { background: 'transparent' },
   });
 }
@@ -28,7 +28,7 @@ async function renderInto(el: HTMLElement, code: string, errText = 'mermaid: syn
     if (svgEl) svgEl.style.backgroundColor = 'transparent';
     return true;
   } catch {
-    el.innerHTML = `<div style="padding:12px;border:1px dashed var(--reg-line);border-radius:9px;color:var(--reg);font-size:12px;font-family:'IBM Plex Mono',monospace">${errText}</div>`;
+    el.innerHTML = `<div style="padding:12px;border:1px dashed var(--reg-line);border-radius:9px;color:var(--reg);font-size:12px;font-family:'JetBrains Mono',monospace">${errText}</div>`;
     return false;
   }
 }
@@ -86,7 +86,7 @@ class MermaidView implements NodeView {
 
     const header = document.createElement('div');
     header.style.cssText = 'height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border)';
-    header.innerHTML = `<span style="display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8"><rect x="3.5" y="3.5" width="8" height="6" rx="1.4"/><rect x="12.5" y="14.5" width="8" height="6" rx="1.4"/><path d="M7.5 9.5v4.5a2 2 0 002 2h3"/></svg></span><span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600">mermaid diagram</span><div style="flex:1"></div>`;
+    header.innerHTML = `<span style="display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8"><rect x="3.5" y="3.5" width="8" height="6" rx="1.4"/><rect x="12.5" y="14.5" width="8" height="6" rx="1.4"/><path d="M7.5 9.5v4.5a2 2 0 002 2h3"/></svg></span><span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600">mermaid diagram</span><div style="flex:1"></div>`;
     const btn = (label: string, css: string) => {
       const b = document.createElement('button');
       b.textContent = label;
@@ -103,7 +103,7 @@ class MermaidView implements NodeView {
     const ta = document.createElement('textarea');
     ta.value = this.node.textContent;
     ta.spellcheck = false;
-    ta.style.cssText = "font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.7;border:1px solid var(--border-2);border-radius:10px;background:var(--surface-2);color:var(--text);padding:12px 14px;resize:none;outline:none";
+    ta.style.cssText = "font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.7;border:1px solid var(--border-2);border-radius:10px;background:var(--surface-2);color:var(--text);padding:12px 14px;resize:none;outline:none";
     const live = document.createElement('div');
     live.style.cssText = 'display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px';
     bodyEl.append(ta, live);

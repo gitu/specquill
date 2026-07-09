@@ -94,7 +94,7 @@ export function Copilot() {
       </div>
 
       <div ref={scroller} style={sx('flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px')}>
-        <div style={sx("display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:10.5px")}>
+        <div style={sx("display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:10.5px")}>
           <span style={sx('color:var(--text-3)')}>Context</span>
           {focusPath && <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>@{focusPath.split('/').pop()}</span>}
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>repo:{app.repoId}</span>
@@ -107,7 +107,7 @@ export function Copilot() {
               <span style={sx('font-size:13px')}>⚖</span>
               <span style={sx('font-size:12px;font-weight:700;color:var(--reg)')}>Regulatory change detected</span>
               <div style={sx('flex:1')} />
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--reg)")}>{change.published}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--reg)")}>{change.published}</span>
             </div>
             <div style={sx('padding:11px 13px;font-size:12.5px;line-height:1.6;color:var(--text)')}>
               {change.summary}
@@ -148,7 +148,7 @@ export function Copilot() {
       <div style={sx('flex:none;padding:12px 14px;border-top:1px solid var(--border)')}>
         <div style={sx('border:1px solid var(--border-2);border-radius:11px;background:var(--surface-2);padding:9px 11px')}>
           {focusPath && (
-            <div style={sx("display:flex;align-items:center;gap:6px;margin-bottom:8px;font-family:'IBM Plex Mono',monospace;font-size:10px")}>
+            <div style={sx("display:flex;align-items:center;gap:6px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;font-size:10px")}>
               <span style={sx('padding:2px 6px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--text-2)')}>@ {focusPath.split('/').pop()}</span>
             </div>
           )}
@@ -200,18 +200,18 @@ function DraftResultCard({ result, onReview }: { result: DraftResult; onReview: 
       <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--ai-bg)')}>
         <IconSpark size={13} stroke="var(--ai)" width={1.9} />
         <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Edits drafted on</span>
-        <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ai)")}>{result.branch}</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ai)")}>{result.branch}</span>
       </div>
       <div style={sx('padding:11px 13px;font-size:12.5px;line-height:1.6;color:var(--text)')}>
         {result.summary}
         <div style={sx('margin-top:9px;display:flex;flex-direction:column;gap:4px')}>
           {result.applied.map((p) => (
-            <div key={p} style={sx("display:flex;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2)")}>
+            <div key={p} style={sx("display:flex;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-2)")}>
               <span style={sx('color:var(--add)')}>✎</span>{p}
             </div>
           ))}
           {result.failures.map((f) => (
-            <div key={f} style={sx("display:flex;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--reg)")}>
+            <div key={f} style={sx("display:flex;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--reg)")}>
               <span>⚠</span>{f}
             </div>
           ))}

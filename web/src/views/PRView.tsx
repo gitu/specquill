@@ -57,7 +57,7 @@ export function PRView() {
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg)')}>
       <div style={sx('flex:none;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border)')}>
         <div style={sx('display:flex;align-items:center;gap:10px;flex-wrap:wrap')}>
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-3)")}>#{p.number}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-3)")}>#{p.number}</span>
           <h1 style={sx('margin:0;font-size:16px;font-weight:700')}>{p.title}</h1>
           <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;text-transform:capitalize;' + (STATE_CHIP[p.state] || ''))}>{p.state}</span>
           {p.mergeable === false && <span style={sx('font-size:11.5px;color:var(--del);font-weight:600')}>⚠ conflicts: {(p.conflicts || []).join(', ')}</span>}
@@ -85,7 +85,7 @@ export function PRView() {
           )}
         </div>
         <div style={sx('display:flex;align-items:center;gap:12px;margin-top:11px;font-size:11.5px;color:var(--text-2);flex-wrap:wrap')}>
-          <span style={sx("font-family:'IBM Plex Mono',monospace;display:inline-flex;align-items:center;gap:5px")}>
+          <span style={sx("font-family:'JetBrains Mono',monospace;display:inline-flex;align-items:center;gap:5px")}>
             <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border)')}>{p.target}</span>←
             <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border)')}>{p.source}</span>
           </span>
@@ -96,7 +96,7 @@ export function PRView() {
               approved by {p.approvals.map((a) => a.user.name + (a.current ? '' : ' (outdated)')).join(', ')}
             </span>
           )}
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3)")}>head {p.headSha.slice(0, 8)}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>head {p.headSha.slice(0, 8)}</span>
         </div>
       </div>
 
@@ -112,8 +112,8 @@ export function PRView() {
                 <div style={sx('display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;font-size:12px;color:var(--text-2);cursor:pointer')}>
                   <span style={{ color: meta.color }}>{meta.icon}</span>
                   <span style={sx('flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{f.path.split('/').pop()}</span>
-                  {f.additions > 0 && <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--add)")}>+{f.additions}</span>}
-                  {f.deletions > 0 && <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--del)")}>−{f.deletions}</span>}
+                  {f.additions > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--add)")}>+{f.additions}</span>}
+                  {f.deletions > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--del)")}>−{f.deletions}</span>}
                 </div>
               </a>
             );
@@ -137,7 +137,7 @@ export function PRView() {
               />
             ))}
             {files.length === 0 && !diff.isLoading && (
-              <div style={sx("padding:24px;text-align:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>no changes between {p.target} and {p.source}</div>
+              <div style={sx("padding:24px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>no changes between {p.target} and {p.source}</div>
             )}
 
             {/* general comments */}
@@ -179,11 +179,11 @@ function ArtifactDiff({ path, pr }: { path: string; pr: { source: string; target
   return (
     <div style={sx('display:grid;grid-template-columns:1fr 1fr;gap:0')}>
       <div style={sx('padding:14px;border-right:1px solid var(--border)')}>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>before · {pr.target}</div>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>before · {pr.target}</div>
         <div dangerouslySetInnerHTML={{ __html: render(before.data?.content) }} />
       </div>
       <div style={sx('padding:14px')}>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>after · {pr.source}</div>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>after · {pr.source}</div>
         <div dangerouslySetInnerHTML={{ __html: render(after.data?.content) }} />
       </div>
     </div>
@@ -215,14 +215,14 @@ export function PRListView() {
               <span style={sx('display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:600;text-transform:capitalize;' + (STATE_CHIP[p.state] || ''))}>{p.state}</span>
               <div style={sx('flex:1;min-width:0')}>
                 <div style={sx('font-weight:600;font-size:13px')}>#{p.number} {p.title}</div>
-                <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3);margin-top:2px")}>{p.target} ← {p.source} · by {p.author.name}</div>
+                <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3);margin-top:2px")}>{p.target} ← {p.source} · by {p.author.name}</div>
               </div>
               {p.approvals.some((a) => a.current) && <span title="approved" style={sx('color:var(--data);font-weight:700')}>✓</span>}
-              {p.commentCount > 0 && <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)")}>💬 {p.commentCount}</span>}
+              {p.commentCount > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>💬 {p.commentCount}</span>}
             </div>
           ))}
           {prs.data?.length === 0 && (
-            <div style={sx("padding:28px;text-align:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>no {state === 'all' ? '' : state + ' '}pull requests</div>
+            <div style={sx("padding:28px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>no {state === 'all' ? '' : state + ' '}pull requests</div>
           )}
         </div>
         <div style={sx('margin-top:14px;font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:6px')}>

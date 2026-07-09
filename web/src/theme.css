@@ -1,27 +1,40 @@
 *{box-sizing:border-box}
+/* Palette adopted from the schr.ag Design System (claude.ai/design project
+   001a6e6f…): zinc neutrals (oklch hue 286), muted orange brand primary
+   ("little-orange-box"), desaturated accent families — amber (regulatory),
+   cyan (product), green/success (data), violet (AI). Fonts: Instrument Sans
+   + JetBrains Mono. Shadows per the DS surfaces tokens. */
 :root{
-  --bg:#f5f6f8;--surface:#ffffff;--surface-2:#f8f9fb;--panel:#f6f7f9;--rail:#eef0f3;
-  --border:#e2e6eb;--border-2:#d3d9e0;--text:#1a1e24;--text-2:#5a616b;--text-3:#8b929c;
-  --reg:#b06f16;--reg-bg:#fbf0da;--reg-line:#e6cf9c;
-  --prod:#2563c9;--prod-bg:#e5edfb;--prod-line:#bcd2f4;
-  --data:#12876a;--data-bg:#daf0e8;--data-line:#a7ddce;
-  --ai:#6a4fc4;--ai-bg:#ece7fa;--ai-line:#cfc3f2;
-  --add:#12874f;--add-bg:#e4f4ea;--del-bg:#fbe7e7;--del:#c0392b;
-  --shadow:0 1px 2px rgba(20,25,35,.06),0 4px 14px rgba(20,25,35,.05);
-  --shadow-lg:0 8px 30px rgba(20,25,35,.14);
+  --bg:oklch(0.985 0.001 286);--surface:oklch(1 0 0);--surface-2:oklch(0.955 0.002 286);
+  --panel:oklch(0.97 0.002 286);--rail:oklch(0.94 0.003 286);
+  --border:oklch(0.89 0.004 286);--border-2:oklch(0.86 0.004 286);
+  --text:oklch(0.21 0.006 286);--text-2:oklch(0.50 0.01 286);--text-3:oklch(0.62 0.008 286);
+  --brand:oklch(0.62 0.14 45);--brand-fg:oklch(0.99 0.005 45);--selection:oklch(0.62 0.14 45 / 0.22);
+  --reg:oklch(0.62 0.11 75);--reg-bg:oklch(0.95 0.035 85);--reg-line:oklch(0.85 0.06 85);
+  --prod:oklch(0.56 0.09 215);--prod-bg:oklch(0.945 0.025 215);--prod-line:oklch(0.85 0.05 215);
+  --data:oklch(0.56 0.11 150);--data-bg:oklch(0.945 0.03 150);--data-line:oklch(0.85 0.06 150);
+  --ai:oklch(0.54 0.12 300);--ai-bg:oklch(0.95 0.025 300);--ai-line:oklch(0.87 0.05 300);
+  --add:oklch(0.56 0.11 150);--add-bg:oklch(0.945 0.03 150);
+  --del:oklch(0.55 0.16 25);--del-bg:oklch(0.95 0.03 25);
+  --shadow:0 1px 2px oklch(0.2 0.01 260 / 0.07),0 4px 12px oklch(0.2 0.01 260 / 0.09);
+  --shadow-lg:0 12px 32px oklch(0.2 0.01 260 / 0.13);
 }
 body[data-theme="dark"]{
-  --bg:#0e1013;--surface:#16191e;--surface-2:#1b1f26;--panel:#131519;--rail:#101216;
-  --border:#262b33;--border-2:#333a44;--text:#e7eaee;--text-2:#a1a9b4;--text-3:#6b727d;
-  --reg:#e0a94a;--reg-bg:#2c2412;--reg-line:#4d3f1c;
-  --prod:#6ea3f5;--prod-bg:#152438;--prod-line:#274063;
-  --data:#4fcda6;--data-bg:#0f2a22;--data-line:#1d4a3c;
-  --ai:#a690f2;--ai-bg:#211c34;--ai-line:#39305a;
-  --add:#4cc98a;--add-bg:#11291d;--del-bg:#2e1516;--del:#e2726b;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.35);
-  --shadow-lg:0 8px 30px rgba(0,0,0,.5);
+  --bg:oklch(0.185 0.004 286);--surface:oklch(0.215 0.005 286);--surface-2:oklch(0.26 0.005 286);
+  --panel:oklch(0.20 0.004 286);--rail:oklch(0.17 0.004 286);
+  --border:oklch(0.32 0.006 286);--border-2:oklch(0.38 0.006 286);
+  --text:oklch(0.93 0.004 286);--text-2:oklch(0.69 0.01 286);--text-3:oklch(0.55 0.008 286);
+  --brand:oklch(0.68 0.13 45);--brand-fg:oklch(0.18 0.03 45);--selection:oklch(0.68 0.13 45 / 0.30);
+  --reg:oklch(0.78 0.10 85);--reg-bg:oklch(0.27 0.04 85);--reg-line:oklch(0.42 0.06 85);
+  --prod:oklch(0.74 0.08 215);--prod-bg:oklch(0.27 0.035 215);--prod-line:oklch(0.42 0.055 215);
+  --data:oklch(0.70 0.10 150);--data-bg:oklch(0.26 0.04 150);--data-line:oklch(0.40 0.06 150);
+  --ai:oklch(0.68 0.10 300);--ai-bg:oklch(0.27 0.035 300);--ai-line:oklch(0.42 0.055 300);
+  --add:oklch(0.70 0.10 150);--add-bg:oklch(0.26 0.04 150);
+  --del:oklch(0.60 0.15 25);--del-bg:oklch(0.27 0.04 25);
+  --shadow:0 1px 2px oklch(0 0 0 / 0.28),0 4px 12px oklch(0 0 0 / 0.32);
+  --shadow-lg:0 12px 32px oklch(0 0 0 / 0.42);
 }
-body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:6px;border:3px solid transparent;background-clip:padding-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--text-3);background-clip:padding-box}
@@ -30,7 +43,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 .mrow:hover{background:var(--surface-2)}
 
 /* rendered-markdown typography (scoped to file-rendered docs) */
-:is(#specquill-doc,.doc-typo){font-size:15px;line-height:1.72;color:var(--text)}
+:is(#specquill-doc,.doc-typo){font-size:16px;line-height:1.65;color:var(--text)}
 :is(#specquill-doc,.doc-typo)>*:first-child{margin-top:0}
 :is(#specquill-doc,.doc-typo) h1{font-size:27px;font-weight:700;letter-spacing:-.5px;margin:24px 0 6px;line-height:1.15}
 :is(#specquill-doc,.doc-typo) h2{font-size:18px;font-weight:700;margin:28px 0 8px}
@@ -42,10 +55,10 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 :is(#specquill-doc,.doc-typo) a:hover{border-bottom-color:var(--prod)}
 :is(#specquill-doc,.doc-typo) blockquote{margin:18px 0;padding:12px 16px;border-left:3px solid var(--prod);background:var(--surface-2);border-radius:0 9px 9px 0;color:var(--text)}
 :is(#specquill-doc,.doc-typo) blockquote p{margin:0}
-:is(#specquill-doc,.doc-typo) code{font-family:'IBM Plex Mono',monospace;font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+:is(#specquill-doc,.doc-typo) code{font-family:'JetBrains Mono',monospace;font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
 :is(#specquill-doc,.doc-typo) pre{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;overflow:auto}
 :is(#specquill-doc,.doc-typo) pre code{background:none;padding:0;font-size:12px}
-:is(#specquill-doc,.doc-typo) table{border-collapse:separate;border-spacing:0;width:100%;margin:16px 0;font-size:12.5px;font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+:is(#specquill-doc,.doc-typo) table{border-collapse:separate;border-spacing:0;width:100%;margin:16px 0;font-size:12.5px;font-family:'JetBrains Mono',monospace;border:1px solid var(--border);border-radius:10px;overflow:hidden}
 :is(#specquill-doc,.doc-typo) thead th{background:var(--surface-2);text-align:left;font-weight:600;color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:.3px;padding:9px 13px;border-bottom:1px solid var(--border)}
 :is(#specquill-doc,.doc-typo) td{padding:10px 13px;border-bottom:1px solid var(--border)}
 :is(#specquill-doc,.doc-typo) tbody tr:last-child td{border-bottom:none}
@@ -67,14 +80,14 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 /* y-prosemirror remote cursors + selections */
 .ProseMirror .ProseMirror-yjs-cursor{position:relative;border-left:2px solid;margin-left:-1px;margin-right:-1px;pointer-events:none;word-break:normal}
 .ProseMirror .ProseMirror-yjs-cursor>div{position:absolute;top:-1.35em;left:-2px;padding:1px 5px;border-radius:4px 4px 4px 0;font-size:9.5px;font-weight:700;color:#fff;white-space:nowrap;line-height:1.4;user-select:none}
-.ProseMirror ::selection{background:var(--prod-bg)}
+.ProseMirror ::selection{background:var(--selection)}
 
 /* ---- rich editing chrome: slash menu, selection toolbar, tables, links ---- */
 .slash-menu{z-index:30;min-width:220px;max-height:280px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);padding:4px}
 .slash-menu:not([data-show="true"]){display:none}
 .slash-item{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;font-size:12.5px;color:var(--text);cursor:pointer}
 .slash-item.active{background:var(--surface-2)}
-.slash-hint{width:22px;flex:none;text-align:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:11px}
+.slash-hint{width:22px;flex:none;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:11px}
 .sel-toolbar{z-index:30;display:flex;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-lg);overflow:hidden}
 .sel-toolbar:not([data-show="true"]){display:none}
 .sel-toolbar button{width:28px;height:28px;border:none;background:transparent;color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer}
@@ -82,7 +95,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 .sel-toolbar .fmt-b{font-weight:800}
 .sel-toolbar .fmt-i{font-style:italic}
 .sel-toolbar .fmt-s{text-decoration:line-through}
-.sel-toolbar .fmt-c{font-family:'IBM Plex Mono',monospace;font-size:10.5px}
+.sel-toolbar .fmt-c{font-family:'JetBrains Mono',monospace;font-size:10.5px}
 .sel-toolbar .fmt-l{font-size:11px}
 /* table-block widget (kit component): muted floating handles */
 .milkdown-table-block{position:relative}
@@ -99,7 +112,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 .milkdown-link-preview:not([data-show="true"]),.milkdown-link-edit:not([data-show="true"]){display:none}
 .milkdown-link-preview .link-preview{display:flex;align-items:center;gap:6px;max-width:320px;overflow:hidden;cursor:pointer}
 .milkdown-link-preview .link-display{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--prod)}
-.milkdown-link-edit input{border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:4px 8px;width:260px;outline:none}
+.milkdown-link-edit input{border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:4px 8px;width:260px;outline:none}
 .milkdown-link-edit .link-edit-confirm,.milkdown-link-preview .button{display:flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:6px;cursor:pointer;color:var(--text-2);font-size:11.5px}
 .milkdown-link-edit .link-edit-confirm:hover,.milkdown-link-preview .button:hover{background:var(--surface-2);color:var(--text)}
 /* editable task-list checkboxes */

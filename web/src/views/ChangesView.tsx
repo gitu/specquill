@@ -64,7 +64,7 @@ export function ChangesView() {
                 <div style={sx('display:flex;align-items:center;gap:7px')}>
                   <span style={sx(`display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:600;background:${m.bg};color:${m.fg}`)}>{m.icon} {m.label}</span>
                   <div style={sx('flex:1')} />
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3)")}>{c.ago}</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>{c.ago}</span>
                 </div>
                 <div style={sx('font-weight:600;font-size:12.5px;margin-top:7px')}>{c.title}</div>
                 <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden')}>{c.summary}</div>
@@ -82,8 +82,8 @@ export function ChangesView() {
           <div style={sx('max-width:680px;margin:0 auto;padding:26px 30px 60px')}>
             <div style={sx('display:flex;align-items:center;gap:9px;flex-wrap:wrap')}>
               <span style={sx(`display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;background:${selMeta.bg};color:${selMeta.fg}`)}>{selMeta.icon} {selMeta.label}</span>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)")}>{sel.name}</span>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3)")}>· {sel.published}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{sel.name}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>· {sel.published}</span>
             </div>
             <h1 style={sx('margin:14px 0 0;font-size:23px;font-weight:700;letter-spacing:-.4px')}>{sel.title}</h1>
             <div style={sx('margin-top:16px;border:1px solid var(--ai-line);border-radius:11px;overflow:hidden')}>
@@ -97,7 +97,7 @@ export function ChangesView() {
             <div style={sx('display:flex;flex-direction:column;gap:8px')}>
               {impacts.map((a) => (
                 <div key={a.key} onClick={a.open} style={{ ...sx(a.style), cursor: 'pointer' }}>
-                  <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--prod);background:var(--prod-bg);padding:2px 7px;border-radius:5px")}>{a.badge}</span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--prod);background:var(--prod-bg);padding:2px 7px;border-radius:5px")}>{a.badge}</span>
                   <span style={sx('font-size:12.5px;font-weight:500')}>{a.label}</span>
                   <div style={sx('flex:1')} />
                   <span style={{ ...sx('font-size:11px;font-weight:600'), color: a.tagColor }}>{a.tag}</span>

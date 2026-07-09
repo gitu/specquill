@@ -9,7 +9,7 @@ const PAL: Record<string, { fg: string; bg: string }> = {
   slate: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
 };
 
-const INPUT = "height:26px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:11.5px;outline:none";
+const INPUT = "height:26px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;outline:none";
 
 /**
  * Schema-driven frontmatter editor: each row edits one top-level key and
@@ -39,7 +39,7 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
         const label = def.label || key.replace(/_/g, ' ');
         return (
           <div key={key} style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
-            <span style={sx("width:132px;flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px")}>{label}</span>
+            <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px")}>{label}</span>
             <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
               <Field
                 fieldKey={key}
@@ -72,7 +72,7 @@ function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: 
     return (
       <>
         {value.map((v, i) => (
-          <span key={i} style={sx("display:inline-flex;align-items:center;padding:2px 9px;border-radius:6px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;background:var(--surface-2);color:var(--text-2)")}>
+          <span key={i} style={sx("display:inline-flex;align-items:center;padding:2px 9px;border-radius:6px;font-size:11.5px;font-family:'JetBrains Mono',monospace;background:var(--surface-2);color:var(--text-2)")}>
             {Object.values(v as Record<string, unknown>).join(' · ')}
           </span>
         ))}
@@ -147,7 +147,7 @@ function ListField({ fieldKey, type, items, files, onSet, onOpenPath }: {
   return (
     <>
       {items.map((it, i) => (
-        <span key={i} style={sx("display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:6px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;background:var(--surface-2);color:" + (isLink(it) ? 'var(--prod)' : 'var(--text-2)'))}>
+        <span key={i} style={sx("display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:6px;font-size:11.5px;font-family:'JetBrains Mono',monospace;background:var(--surface-2);color:" + (isLink(it) ? 'var(--prod)' : 'var(--text-2)'))}>
           <span
             onClick={isLink(it) ? () => onOpenPath(it.split('#')[0]) : undefined}
             style={isLink(it) ? { cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'var(--prod-line)' } : undefined}

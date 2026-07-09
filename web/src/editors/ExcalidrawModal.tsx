@@ -149,7 +149,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
       <div style={sx('width:100%;height:100%;max-width:1200px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;overflow:hidden')}>
         <div style={sx('height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border)')}>
           <span style={sx('color:var(--text-3);display:inline-flex')}><IconPen size={13} /></span>
-          <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600")}>{path}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600")}>{path}</span>
           {dirty && <span style={sx('width:6px;height:6px;border-radius:50%;background:var(--reg)')} />}
           {error && <span style={sx('color:var(--del);font-size:12px')}>{error}</span>}
           <div style={sx('flex:1')} />
@@ -167,7 +167,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
         </div>
         <div style={sx('flex:1;min-height:0')}>
           {ready ? (
-            <Suspense fallback={<div style={sx("height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>loading editor…</div>}>
+            <Suspense fallback={<div style={sx("height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>loading editor…</div>}>
               <Excalidraw
                 excalidrawAPI={(api: unknown) => { apiRef.current = api as ExcalidrawAPI; }}
                 initialData={initialData() as never}
@@ -176,7 +176,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
               />
             </Suspense>
           ) : (
-            <div style={sx("height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>
+            <div style={sx("height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>
               loading {path}…
             </div>
           )}

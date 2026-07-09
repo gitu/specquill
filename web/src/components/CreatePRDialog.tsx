@@ -44,7 +44,7 @@ export function CreatePRDialog({ onClose }: { onClose: () => void }) {
     <div onClick={onClose} style={sx('position:fixed;inset:0;background:rgba(10,12,16,.45);z-index:50;display:flex;align-items:center;justify-content:center')}>
       <div onClick={(e) => e.stopPropagation()} style={sx('width:460px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);padding:20px 22px')}>
         <div style={sx('font-weight:700;font-size:15px')}>Open pull request</div>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);margin-top:4px;display:flex;align-items:center;gap:5px")}>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3);margin-top:4px;display:flex;align-items:center;gap:5px")}>
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border)')}>{target || defaultBranch}</span>←
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border)')}>{app.branch}</span>
         </div>
@@ -71,7 +71,7 @@ export function CreatePRDialog({ onClose }: { onClose: () => void }) {
           style={sx('width:100%;padding:9px 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:12.5px;resize:vertical')} />
         <label style={sx('display:block;font-size:11.5px;font-weight:600;color:var(--text-2);margin:12px 0 5px')}>Target branch</label>
         <select value={target} onChange={(e) => setTarget(e.target.value)}
-          style={sx("width:100%;height:32px;padding:0 8px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:12px")}>
+          style={sx("width:100%;height:32px;padding:0 8px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px")}>
           {(branches.data || []).filter((b) => b.name !== app.branch).map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
         </select>
 

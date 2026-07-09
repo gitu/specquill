@@ -96,10 +96,10 @@ export function SearchPalette() {
               <span style={{ color: h.color, flex: 'none', width: 16, textAlign: 'center' }}>{h.icon}</span>
               <span style={sx('font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis')}>{h.label}</span>
               <div style={sx('flex:1')} />
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-3);white-space:nowrap")}>{h.sub}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3);white-space:nowrap")}>{h.sub}</span>
             </div>
           ))}
-          {hits.length === 0 && <div style={sx("padding:18px;text-align:center;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:12px")}>no matches</div>}
+          {hits.length === 0 && <div style={sx("padding:18px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>no matches</div>}
         </div>
       </div>
     </div>

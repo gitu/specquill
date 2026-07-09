@@ -29,7 +29,7 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
       try {
         mermaid.initialize({
           startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose',
-          fontFamily: "'IBM Plex Sans',sans-serif", themeVariables: { background: 'transparent' },
+          fontFamily: "'Instrument Sans',sans-serif", themeVariables: { background: 'transparent' },
         });
       } catch { /* re-init noise */ }
       codes.forEach((c) => {

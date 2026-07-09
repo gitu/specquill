@@ -48,7 +48,7 @@ export function GraphView() {
         </div>
 
         <div style={sx('position:absolute;right:16px;top:14px;z-index:3;width:210px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow-lg);overflow:hidden')}>
-          <div style={sx("padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);font-family:'IBM Plex Mono',monospace;font-size:9.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Lineage · from links</div>
+          <div style={sx("padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Lineage · from links</div>
           <div style={sx('padding:11px 14px;display:flex;flex-direction:column;gap:9px;font-size:12.5px')}>
             {[['Sources', g.stats.s], ['Requirements', g.stats.r], ['Specs', g.stats.sp], ['Data fields', g.stats.f]].map(([label, n]) => (
               <div key={label} style={sx('display:flex;justify-content:space-between;align-items:center')}>
@@ -65,7 +65,7 @@ export function GraphView() {
         </div>
         <div style={sx('position:absolute;right:16px;bottom:14px;z-index:3;display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);overflow:hidden')}>
           <span style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-right:1px solid var(--border)')}>−</span>
-          <span style={sx("padding:0 10px;font-family:'IBM Plex Mono',monospace;font-size:11px")}>100%</span>
+          <span style={sx("padding:0 10px;font-family:'JetBrains Mono',monospace;font-size:11px")}>100%</span>
           <span style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-left:1px solid var(--border)')}>+</span>
         </div>
       </div>

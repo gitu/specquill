@@ -51,14 +51,14 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
     <div onClick={onClose} style={sx('position:fixed;inset:0;background:rgba(10,12,16,.45);z-index:50;display:flex;align-items:center;justify-content:center')}>
       <div onClick={(e) => e.stopPropagation()} style={sx('width:440px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);padding:20px 22px')}>
         <div style={sx('font-weight:700;font-size:15px')}>Commit changes</div>
-        <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);margin-top:3px")}>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3);margin-top:3px")}>
           {app.branch} · {status.dirty.length} file{status.dirty.length === 1 ? '' : 's'}
         </div>
         <div style={sx('margin:14px 0;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:9px')}>
           {status.dirty.map((f) => (
             <div key={f.path} style={sx('display:flex;align-items:center;gap:8px;padding:7px 11px;border-bottom:1px solid var(--border);font-size:12px')}>
-              <span style={{ ...sx("font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;width:12px"), color: STATE_COLOR[f.state] || 'var(--text-2)' }}>{f.state}</span>
-              <span style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{f.path}</span>
+              <span style={{ ...sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:700;width:12px"), color: STATE_COLOR[f.state] || 'var(--text-2)' }}>{f.state}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{f.path}</span>
             </div>
           ))}
         </div>
