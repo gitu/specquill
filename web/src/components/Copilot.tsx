@@ -157,7 +157,7 @@ export function Copilot() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input); } }}
-              placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in reqbase.yml to enable the copilot'}
+              placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in specquill.yml to enable the copilot'}
               disabled={!enabled || busy}
               rows={1}
               style={sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5')}

@@ -5,7 +5,7 @@
 import { Browser, BrowserContext, Page, expect, test } from '@playwright/test';
 
 const REPO = 'trading-specs';
-const H = { 'X-Reqbase': '1' };
+const H = { 'X-SpecQuill': '1' };
 const DOC = 'requirements/REQ-095.md';
 
 async function openEditor(page: Page, branch: string) {

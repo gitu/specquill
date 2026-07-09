@@ -13,10 +13,10 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"reqbase/server/internal/config"
+	"specquill/server/internal/config"
 )
 
-const oauthCookie = "reqbase_oauth"
+const oauthCookie = "specquill_oauth"
 
 // OIDC drives the authorization-code + PKCE flow against the configured IdP.
 type OIDC struct {

@@ -34,15 +34,15 @@ export function ModelView() {
       <div style={sx('max-width:1000px;margin:0 auto;padding:28px 32px 64px')}>
         <div style={sx('display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap')}>
           <div>
-            <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-3)")}>.reqbase/config.yml · .reqbase/schema.json</div>
+            <div style={sx("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-3)")}>.specquill/config.yml · .specquill/schema.json</div>
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Model definitions</h1>
             <div style={sx('font-size:12.5px;color:var(--text-2);margin-top:5px;max-width:560px;line-height:1.5')}>
               The workspace taxonomy that everything else is computed from — edit the config files to change drivers, statuses, link types, or property schema.
             </div>
           </div>
           <div style={sx('display:flex;gap:8px')}>
-            <button onClick={() => nav('/editor/.reqbase/config.yml')} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>config.yml</button>
-            <button onClick={() => nav('/editor/.reqbase/schema.json')} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>schema.json</button>
+            <button onClick={() => nav('/editor/.specquill/config.yml')} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>config.yml</button>
+            <button onClick={() => nav('/editor/.specquill/schema.json')} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>schema.json</button>
           </div>
         </div>
 
@@ -108,7 +108,7 @@ export function ModelView() {
             <span style={sx('font-weight:700;font-size:13.5px')}>Property schema</span>
             <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>Frontmatter fields — types &amp; enum values drive the Properties panel</span>
             <div style={sx('flex:1')} />
-            <span onClick={() => nav('/editor/.reqbase/schema.json')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Edit schema.json →</span>
+            <span onClick={() => nav('/editor/.specquill/schema.json')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Edit schema.json →</span>
           </div>
           <div style={sx("display:grid;grid-template-columns:160px 90px 1fr;padding:8px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
             <span>Field</span><span>Type</span><span>Enum values</span>

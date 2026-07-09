@@ -166,7 +166,7 @@ export function Tree() {
         {nDirty > 0 ? (
           <>
             <span
-              onClick={() => window.dispatchEvent(new CustomEvent('reqbase:changes'))}
+              onClick={() => window.dispatchEvent(new CustomEvent('specquill:changes'))}
               title="Show uncommitted changes"
               style={sx('cursor:pointer;text-decoration:underline;text-decoration-color:var(--border-2)')}
             >

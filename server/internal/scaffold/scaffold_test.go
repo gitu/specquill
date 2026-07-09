@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reqbase/server/internal/okf"
+	"specquill/server/internal/okf"
 )
 
 func TestInit(t *testing.T) {
@@ -15,9 +15,9 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rel := range []string{
-		"README.md", ".reqbase/schema.json", ".reqbase/skills/authoring.md",
-		".reqbase/skills/requirements.md", ".reqbase/skills/specs.md", ".reqbase/skills/changes.md",
-		"requirements/REQ-001.md", "specs/example.md", "changes/example.md", "reqbase.yml.example",
+		"README.md", ".specquill/schema.json", ".specquill/skills/authoring.md",
+		".specquill/skills/requirements.md", ".specquill/skills/specs.md", ".specquill/skills/changes.md",
+		"requirements/REQ-001.md", "specs/example.md", "changes/example.md", "specquill.yml.example",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
@@ -26,7 +26,7 @@ func TestInit(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		t.Errorf("expected a git repo: %v", err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, "reqbase.yml.example"))
+	raw, _ := os.ReadFile(filepath.Join(dir, "specquill.yml.example"))
 	if !strings.Contains(string(raw), "quick_model") {
 		t.Error("config stub should document the quick model tier")
 	}

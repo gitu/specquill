@@ -21,7 +21,7 @@ export async function streamChat(
 ): Promise<string> {
   const res = await fetch('/api/copilot/chat', {
     method: 'POST',
-    headers: { 'X-Reqbase': '1', 'Content-Type': 'application/json' },
+    headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   });

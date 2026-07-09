@@ -10,8 +10,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }

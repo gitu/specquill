@@ -5,7 +5,7 @@ base_url: http://localhost:8643
 
 # store: the compose postgres (docker compose -f docker-compose.dev.yml up -d postgres)
 database:
-  url: postgres://reqbase:reqbase@127.0.0.1:5433/reqbase?sslmode=disable
+  url: postgres://specquill:specquill@127.0.0.1:5433/specquill?sslmode=disable
 
 repos:
   - id: trading-specs
@@ -18,8 +18,8 @@ repos:
     sync_interval: 1m
 
 git:
-  committer_name: reqbase
-  committer_email: reqbase@dev.local
+  committer_name: specquill
+  committer_email: specquill@dev.local
 
 auth:
   oidc:
@@ -35,7 +35,7 @@ session:
   cookie_secure: false             # plain http in dev
 
 # dev copilot: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
-# or to a cloud provider — see reqbase.example.yml)
+# or to a cloud provider — see specquill.example.yml)
 ai:
   enabled: true
   base_url: http://127.0.0.1:11434/v1

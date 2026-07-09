@@ -49,10 +49,10 @@ lookup is a small seam).
 
 ## Authorization: derived from GitHub, never duplicated
 
-No reqbase ACL system. A user's rights in a GitHub tenant are their rights
+No specquill ACL system. A user's rights in a GitHub tenant are their rights
 on the repo, synced from the installation and cached with a TTL:
 
-| GitHub permission | reqbase role | can |
+| GitHub permission | specquill role | can |
 | --- | --- | --- |
 | `admin`           | admin  | tenant settings, repo add/remove + everything below |
 | `push`            | member | edit, commit, open/approve/merge PRs |
@@ -66,7 +66,7 @@ today; a YAML role map is a later option).
 
 `requireAuth` resolves the user; a tenancy layer then resolves the tenant:
 
-1. `X-Reqbase-Tenant: <slug>` header (or `?tenant=` for websockets) when the
+1. `X-SpecQuill-Tenant: <slug>` header (or `?tenant=` for websockets) when the
    client targets one explicitly (membership checked, else 403);
 2. otherwise the user's only tenant;
 3. multiple memberships and no header → 400 `tenant_required` (the SPA gains
@@ -115,10 +115,10 @@ Config gains:
 ```yaml
 github_app:
   app_id: 12345
-  private_key_path: /etc/reqbase/github-app.pem   # or private_key_env
+  private_key_path: /etc/specquill/github-app.pem   # or private_key_env
   client_id: Iv1.…
-  client_secret_env: REQBASE_GH_CLIENT_SECRET
-  webhook_secret_env: REQBASE_GH_WEBHOOK_SECRET
+  client_secret_env: SPECQUILL_GH_CLIENT_SECRET
+  webhook_secret_env: SPECQUILL_GH_WEBHOOK_SECRET
 ```
 
 Components (all behind `github_app:` being present):
@@ -138,7 +138,7 @@ Components (all behind `github_app:` being present):
 ## Everything else
 
 - **AI**: per-tenant copilot config — BYO key (Secret Manager entry per
-  tenant) or platform key + per-tenant metering. `.reqbase/skills/` lives in
+  tenant) or platform key + per-tenant metering. `.specquill/skills/` lives in
   the tenant's repo, so authoring rules are already per-tenant.
 - **Billing** (hosted): seats = distinct active members/month (derivable
   from sessions), quotas on repos/rooms/AI calls hang off `tenants`.

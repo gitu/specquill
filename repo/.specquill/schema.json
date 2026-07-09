@@ -1,5 +1,5 @@
 {
-  "$comment": "Property schema for the reqbase Properties panel. Edit labels/types/colors/order here.",
+  "$comment": "Property schema for the specquill Properties panel. Edit labels/types/colors/order here.",
   "colors": {
     "green": "var(--data)",
     "amber": "var(--reg)",

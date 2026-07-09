@@ -1,4 +1,4 @@
-# reqbase — project notes for Claude
+# specquill — project notes for Claude
 
 Git-native requirements engineering: markdown + typed frontmatter links in git,
 Go single binary (`server/`) + React SPA (`web/`). Read `README.md` first for
@@ -9,25 +9,25 @@ from the code.
 
 - Server runs on **:8643** (8080 is a Java app, 8642 a dead socket); tailnet:
   `http://tt.warg-snares.ts.net:8643`.
-- Start: `./server/reqbased -config reqbase.dev.yml -dev` — the `-dev` flag
+- Start: `./server/specquill -config specquill.dev.yml -dev` — the `-dev` flag
   auto-authenticates every request as `auth.dev_user` ("Flo Dev", workspace
   branch `ws/dev`) and bypasses session TTLs.
 - **The SPA is embedded in the Go binary.** After `cd web && npm run build`
-  you MUST `cd server && go build -o reqbased ./cmd/reqbased` and restart, or
+  you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
-- `pkill reqbased` matches the wrapper shell (exit 143) — use `pkill -x reqbased`.
+- `pkill specquill` matches the wrapper shell (exit 143) — use `pkill -x specquill`.
 - **The store is Postgres** (users, sessions, PRs, collab room logs), NOT in
   `data/`: dev runs the compose container on **:5433**
   (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
-  `reqbase.dev.yml`). Go tests need it too (they skip without it; isolation is
+  `specquill.dev.yml`). Go tests need it too (they skip without it; isolation is
   a throwaway schema per test via `store.OpenTest`). Neon in production.
 - Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
   (tenancy foundation, docs/multi-tenancy.md); the canonical repo key in DB
   rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
-- Full state reset: `pkill -x reqbased; rm -rf data/runtime && ./scripts/dev-fixture.sh`
+- Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
   — the fixture script also drops+recreates the postgres schema; `rm -rf
   data/runtime` alone does NOT clear sessions/PRs anymore.
-- Copilot in dev points at ollama `qwen2.5:7b` (`reqbase.dev.yml`);
+- Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
   (it self-skips unless the configured model is `mock-1`).
 
@@ -65,7 +65,7 @@ from the code.
   `loadFromBlob`/`exportToBlob`. Legacy `*.excalidraw` JSON still supported.
 - **AI tiers**: `ai.model` (thinking-class: chat, draft edits) vs
   `ai.quick_model` (one-shot: commit messages). Both through any
-  OpenAI-compatible endpoint. `.reqbase/skills/*.md` in the workspace are
+  OpenAI-compatible endpoint. `.specquill/skills/*.md` in the workspace are
   pinned into the copilot system prompt as authoring rules.
 
 ## Hard-won gotchas (do not rediscover these)

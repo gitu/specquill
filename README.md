@@ -1,18 +1,19 @@
-# reqbase
+# SpecQuill
 
-A git-native requirements-engineering tool. Requirements, specs, regulations, data
-mappings and change records live as **plain markdown in git**; reqbase is the editing
+**Requirements as readable, structured Markdown.** A git-native
+requirements-engineering tool: requirements, specs, regulations, data mappings
+and change records live as plain markdown in git; SpecQuill is the editing
 and review surface on top: traceability graph & matrix, change inbox, rich editors, and
 an in-app branch-based PR flow — every commit authored by the logged-in user.
 
 Originally implemented from the Claude Design project
-[`Reqbase.dc.html`](design/Reqbase.dc.html) (the static prototype it grew from lives in
+[`SpecQuill.dc.html`](design/SpecQuill.dc.html) (the static prototype it grew from lives in
 [`design/prototype/`](design/prototype/)).
 
 ## Architecture
 
 ```
-server/           Go single binary (reqbased)
+server/           Go single binary (specquill)
   internal/gitx     the only git surface: bare clone + per-branch worktrees,
                     status/commit (user = author & committer, service identity
                     as Co-authored-by), structured diffs, merge-tree merges,
@@ -61,7 +62,7 @@ Key properties:
   detected and blocked. No forge API involved; `push`/`fetch` sync the plain remote with
   a token from the environment.
 - **Honest git identity.** The logged-in user is both **author and committer** on every
-  commit and merge; the reqbase service identity is recorded as a `Co-authored-by:`
+  commit and merge; the SpecQuill service identity is recorded as a `Co-authored-by:`
   trailer instead, alongside trailers for live co-editing contributors.
 - **Byte-fidelity editing.** Untouched documents save byte-identical; frontmatter edits
   go through the `yaml` Document API (comments/formatting preserved); WYSIWYG edits
@@ -92,11 +93,11 @@ Key properties:
   history regenerated on every commit — readable by any OKF consumer or
   agent straight from git. Untyped OKF body links show up as dashed
   reference edges in the traceability graph.
-- **Workspace onboarding.** `reqbased init <dir> [-types requirements,specs,changes,…]`
+- **Workspace onboarding.** `specquill init <dir> [-types requirements,specs,changes,…]`
   scaffolds a new workspace repo: folder skeleton per chosen document family
   (requirements, specs, regulations, data-mappings, changes, decisions, glossary),
-  the `.reqbase/schema.json` property schema, starter documents, a server-config
-  stub — and **AI authoring skills** under `.reqbase/skills/` that the copilot pins
+  the `.specquill/schema.json` property schema, starter documents, a server-config
+  stub — and **AI authoring skills** under `.specquill/skills/` that the copilot pins
   into its system prompt, so it drafts requirements/specs following your house rules.
 - **Two model tiers.** `ai.model` is the main (thinking-class) tier for chat and
   draft edits; `ai.quick_model` is a fast one-shot tier for small tasks. Commit
@@ -116,9 +117,9 @@ Key properties:
 ```sh
 make dev-fixture        # local bare origins under data/origin/ from repo/
                         # (also starts + resets the compose postgres, the store)
-make web server         # build SPA into the embed dir + build reqbased
+make web server         # build SPA into the embed dir + build specquill
 python3 scripts/mock-llm.py &          # keyless copilot provider for dev
-./server/reqbased -config reqbase.dev.yml -dev
+./server/specquill -config specquill.dev.yml -dev
 # → http://localhost:8643  (dev flag auto-authenticates as auth.dev_user)
 ```
 
@@ -127,12 +128,12 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on :5173, proxying /ap
 ## Run (production-ish)
 
 ```sh
-cp reqbase.example.yml reqbase.yml     # point at your remotes, OIDC issuer, data dir
-export REQBASE_DATABASE_URL=…          # Postgres DSN (e.g. Neon), env only
-export REQBASE_TOKEN_TRADING=…         # git token, env only
-export REQBASE_OIDC_SECRET=…
-make build && ./server/reqbased -config reqbase.yml
-./server/reqbased -config reqbase.yml user add flo 'Flo' flo@example.com   # local fallback user
+cp specquill.example.yml specquill.yml     # point at your remotes, OIDC issuer, data dir
+export SPECQUILL_DATABASE_URL=…          # Postgres DSN (e.g. Neon), env only
+export SPECQUILL_TOKEN_TRADING=…         # git token, env only
+export SPECQUILL_OIDC_SECRET=…
+make build && ./server/specquill -config specquill.yml
+./server/specquill -config specquill.yml user add flo 'Flo' flo@example.com   # local fallback user
 ```
 
 Requirements: `git` ≥ 2.38 on the server (checked at startup). Exactly one `writable`

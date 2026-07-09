@@ -22,11 +22,11 @@ function Shell() {
   useEffect(() => {
     const open = () => setChangesOpen(true);
     const tree = () => setTreeOpen((v) => !v);
-    window.addEventListener('reqbase:changes', open);
-    window.addEventListener('reqbase:tree', tree);
+    window.addEventListener('specquill:changes', open);
+    window.addEventListener('specquill:tree', tree);
     return () => {
-      window.removeEventListener('reqbase:changes', open);
-      window.removeEventListener('reqbase:tree', tree);
+      window.removeEventListener('specquill:changes', open);
+      window.removeEventListener('specquill:tree', tree);
     };
   }, []);
   // navigating (tapping a file) closes the drawer

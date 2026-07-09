@@ -3,11 +3,11 @@ node_modules/
 web/dist/
 server/internal/webui/dist/*
 !server/internal/webui/dist/.gitkeep
-server/reqbased
+server/specquill
 *.log
 test-results/
 playwright-report/
-# production config lives outside the repo (deploy/reqbase.cloud.yml is the
+# production config lives outside the repo (deploy/specquill.cloud.yml is the
 # committed, secret-free Cloud Run config)
-reqbase.yml
+specquill.yml
 .env

@@ -13,9 +13,9 @@ mkdir -p "$ORIGIN"
 # so sessions/PRs/collab logs don't reference vanished git state
 docker compose -f docker-compose.dev.yml up -d --wait postgres
 docker compose -f docker-compose.dev.yml exec -T postgres \
-  psql -q -U reqbase -d reqbase -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+  psql -q -U specquill -d specquill -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
 
-fixture_env=(-c user.name=reqbase-fixture -c user.email=fixture@reqbase.local)
+fixture_env=(-c user.name=specquill-fixture -c user.email=fixture@specquill.local)
 
 make_bare() { # $1=name  $2=src-dir
   local bare="$ORIGIN/$1.git" tmp

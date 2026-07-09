@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"reqbase/server/internal/okf"
+	"specquill/server/internal/okf"
 )
 
 // maxOKFLogEntries caps log.md — full history stays in git itself.

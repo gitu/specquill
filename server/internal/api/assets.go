@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"reqbase/server/internal/gitx"
+	"specquill/server/internal/gitx"
 )
 
 // image/asset types we serve raw and accept as uploads

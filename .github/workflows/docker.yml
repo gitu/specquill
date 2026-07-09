@@ -64,7 +64,7 @@ jobs:
             # via ${COMMIT_SHA}.
             type=sha,prefix=,format=long
           labels: |
-            org.opencontainers.image.title=reqbase
+            org.opencontainers.image.title=specquill
             org.opencontainers.image.description=Git-native requirements engineering — markdown specs, traceability, PRs, real-time co-editing
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
 

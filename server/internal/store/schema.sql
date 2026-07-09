@@ -1,4 +1,4 @@
--- reqbase review/auth metadata (Postgres). Content lives in git; this DB
+-- specquill review/auth metadata (Postgres). Content lives in git; this DB
 -- holds only users, sessions, PR review state, and the collab update log.
 
 CREATE TABLE IF NOT EXISTS users (

@@ -32,7 +32,7 @@ export function LoginView() {
           <div style={sx('width:26px;height:26px;border-radius:7px;background:var(--text);display:flex;align-items:center;justify-content:center')}>
             <div style={sx('width:10px;height:10px;border-radius:2px;border:2px solid var(--surface);transform:rotate(45deg)')} />
           </div>
-          <span style={sx('font-weight:700;font-size:17px;letter-spacing:-.2px')}>reqbase</span>
+          <span style={sx('font-weight:700;font-size:17px;letter-spacing:-.2px')}>specquill</span>
         </div>
         <div style={sx('font-size:13px;color:var(--text-2);margin-bottom:18px')}>Sign in with your local account.</div>
         {oidcError && <div style={sx('margin-bottom:12px;padding:9px 12px;border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:8px;color:var(--reg);font-size:12px')}>Single sign-on failed — try again or use a local account.</div>}

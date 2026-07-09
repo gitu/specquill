@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"reqbase/server/internal/config"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/config"
+	"specquill/server/internal/store"
 )
 
-const SessionCookie = "reqbase_session"
+const SessionCookie = "specquill_session"
 
 type ctxKey struct{}
 

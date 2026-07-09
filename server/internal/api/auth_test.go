@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/config"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/config"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 	"testing/fstest"
 )
 
@@ -91,7 +91,7 @@ func TestLocalLoginFlow(t *testing.T) {
 	// wrong password rejected
 	body, _ := json.Marshal(map[string]string{"username": "flo", "password": "wrong"})
 	req := httptest.NewRequest("POST", "/auth/local/login", bytes.NewReader(body))
-	req.Header.Set("X-Reqbase", "1")
+	req.Header.Set("X-SpecQuill", "1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -101,7 +101,7 @@ func TestLocalLoginFlow(t *testing.T) {
 	// correct login issues a session cookie
 	body, _ = json.Marshal(map[string]string{"username": "flo", "password": "hunter2secret"})
 	req = httptest.NewRequest("POST", "/auth/local/login", bytes.NewReader(body))
-	req.Header.Set("X-Reqbase", "1")
+	req.Header.Set("X-SpecQuill", "1")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -139,6 +139,6 @@ func TestCSRFHeaderRequired(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("want 403 without X-Reqbase header, got %d", rec.Code)
+		t.Fatalf("want 403 without X-SpecQuill header, got %d", rec.Code)
 	}
 }

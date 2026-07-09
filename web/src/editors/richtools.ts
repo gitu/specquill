@@ -14,8 +14,8 @@ import {
 import { insertTableCommand, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
 import { linkTooltipAPI } from '@milkdown/kit/component/link-tooltip';
 
-export const slash = slashFactory('reqbase-slash');
-export const selectionTooltip = tooltipFactory('reqbase-fmt');
+export const slash = slashFactory('specquill-slash');
+export const selectionTooltip = tooltipFactory('specquill-fmt');
 
 /** host-app hooks the menu items call back into */
 export interface RichHooks {

@@ -1,4 +1,4 @@
-# Deploying reqbase to Cloud Run
+# Deploying specquill to Cloud Run
 
 Same pipeline as pert.li — **the image is built once, by GitHub, not by
 Google Cloud.** The [`Docker` workflow](.github/workflows/docker.yml) builds
@@ -21,8 +21,8 @@ push main / tag ─► GitHub Actions: build + push ghcr.io
 
 | Environment | GitHub event | `_SERVICE` | Rolls out when |
 | --- | --- | --- | --- |
-| **Staging** | push to `main` | `reqbase-staging` | always (`_VERSION_GATE=off`) |
-| **Production** | push of a `v*` tag | `reqbase` | only if the tag is reachable from `main` **and** is the newest `v*` version (`_VERSION_GATE=on`) |
+| **Staging** | push to `main` | `specquill-staging` | always (`_VERSION_GATE=off`) |
+| **Production** | push of a `v*` tag | `specquill` | only if the tag is reachable from `main` **and** is the newest `v*` version (`_VERSION_GATE=on`) |
 
 Release: merge to `main`, verify on staging, then
 `git tag vX.Y.Z <main-commit> && git push origin vX.Y.Z`. Prod never moves
@@ -32,10 +32,10 @@ The GitHub `deploy` job is guarded by the `CLOUD_BUILD_REGION` repo variable —
 until step 7 below sets it, pushes only build + push the image and skip the
 deploy cleanly.
 
-## reqbase-specific constraints (read first)
+## specquill-specific constraints (read first)
 
-- **Config is baked into the image.** [`deploy/reqbase.cloud.yml`](deploy/reqbase.cloud.yml)
-  becomes `/etc/reqbase/reqbase.yml`. It holds no secrets — credentials are
+- **Config is baked into the image.** [`deploy/specquill.cloud.yml`](deploy/specquill.cloud.yml)
+  becomes `/etc/specquill/specquill.yml`. It holds no secrets — credentials are
   referenced by env-var *name* (`token_env`, `client_secret_env`,
   `api_key_env`) and mounted from Secret Manager by the deploy step. To change
   config: edit, commit, push (staging updates on the next main build).
@@ -43,7 +43,7 @@ deploy cleanly.
   `remote`, and the OIDC issuer.
 - **The store is Postgres — use Neon in production.** Users, sessions, PRs,
   review comments, approvals, workspace-branch claims and the collab update
-  logs all live in the database referenced by the `REQBASE_DATABASE_URL`
+  logs all live in the database referenced by the `SPECQUILL_DATABASE_URL`
   secret (a Neon connection string, `sslmode=require`). All of that survives
   instance replacement.
 - **`--max-instances=1` is still a hard requirement**, already set in
@@ -103,15 +103,15 @@ deploy cleanly.
 
 3. **Create the runtime secrets** (mounted as env vars on the service; the
    names must match the `_*_SECRET` substitutions / the env names in
-   `deploy/reqbase.cloud.yml`):
+   `deploy/specquill.cloud.yml`):
 
    ```bash
-   echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create REQBASE_TOKEN --data-file=-
-   echo -n '…oidc-client-secret…'         | gcloud secrets create REQBASE_OIDC_SECRET --data-file=-
-   echo -n 'AIza…copilot-api-key…'        | gcloud secrets create REQBASE_AI_KEY --data-file=-
+   echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
+   echo -n '…oidc-client-secret…'         | gcloud secrets create SPECQUILL_OIDC_SECRET --data-file=-
+   echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
    # Neon: project → connection string (pooled is fine; keep sslmode=require)
-   echo -n 'postgres://…@…neon.tech/reqbase?sslmode=require' | \
-     gcloud secrets create REQBASE_DATABASE_URL --data-file=-
+   echo -n 'postgres://…@…neon.tech/specquill?sslmode=require' | \
+     gcloud secrets create SPECQUILL_DATABASE_URL --data-file=-
    ```
 
    **Staging gets its own set** — at minimum a distinct database so staging
@@ -120,7 +120,7 @@ deploy cleanly.
 
    ```bash
    echo -n 'postgres://…staging-branch…?sslmode=require' | \
-     gcloud secrets create REQBASE_DATABASE_URL_STAGING --data-file=-
+     gcloud secrets create SPECQUILL_DATABASE_URL_STAGING --data-file=-
    ```
 
    Point the staging trigger's `_DATABASE_URL_SECRET` (and `_TOKEN_SECRET`/…
@@ -131,9 +131,9 @@ deploy cleanly.
    as an explicit SA):
 
    ```bash
-   gcloud iam service-accounts create reqbase-deployer \
-     --display-name="reqbase Cloud Build deployer"
-   DEPLOYER="reqbase-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+   gcloud iam service-accounts create specquill-deployer \
+     --display-name="specquill Cloud Build deployer"
+   DEPLOYER="specquill-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
 
    for role in run.admin iam.serviceAccountUser secretmanager.secretAccessor artifactregistry.reader logging.logWriter; do
      gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -152,8 +152,8 @@ deploy cleanly.
    this repo and the SA binding):
 
    ```bash
-   gcloud iam service-accounts create gh-deploy-reqbase --display-name="GitHub Actions deploy (reqbase)"
-   DEPLOY_SA="gh-deploy-reqbase@${PROJECT_ID}.iam.gserviceaccount.com"
+   gcloud iam service-accounts create gh-deploy-specquill --display-name="GitHub Actions deploy (specquill)"
+   DEPLOY_SA="gh-deploy-specquill@${PROJECT_ID}.iam.gserviceaccount.com"
 
    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
      --member="serviceAccount:${DEPLOY_SA}" --role="roles/cloudbuild.builds.editor"
@@ -161,19 +161,19 @@ deploy cleanly.
      --member="serviceAccount:${DEPLOY_SA}" --role="roles/iam.serviceAccountUser"
 
    gcloud iam workload-identity-pools create github --location=global --display-name="GitHub" || true
-   gcloud iam workload-identity-pools providers create-oidc github-reqbase \
-     --location=global --workload-identity-pool=github --display-name="GitHub OIDC (reqbase)" \
+   gcloud iam workload-identity-pools providers create-oidc github-specquill \
+     --location=global --workload-identity-pool=github --display-name="GitHub OIDC (specquill)" \
      --issuer-uri="https://token.actions.githubusercontent.com" \
      --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-     --attribute-condition="assertion.repository=='gitu/reqbase' && (assertion.ref=='refs/heads/main' || assertion.ref.startsWith('refs/tags/'))"
+     --attribute-condition="assertion.repository=='gitu/specquill' && (assertion.ref=='refs/heads/main' || assertion.ref.startsWith('refs/tags/'))"
 
    POOL_ID=$(gcloud iam workload-identity-pools describe github --location=global --format='value(name)')
    gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" \
      --role="roles/iam.workloadIdentityUser" \
-     --member="principalSet://iam.googleapis.com/${POOL_ID}/attribute.repository/gitu/reqbase"
+     --member="principalSet://iam.googleapis.com/${POOL_ID}/attribute.repository/gitu/specquill"
 
    # provider resource name → the GCP_WORKLOAD_IDENTITY_PROVIDER secret (step 7)
-   gcloud iam workload-identity-pools providers describe github-reqbase \
+   gcloud iam workload-identity-pools providers describe github-specquill \
      --location=global --workload-identity-pool=github --format='value(name)'
    ```
 
@@ -181,59 +181,59 @@ deploy cleanly.
    connect the repo first under Cloud Build → Repositories):
 
    ```bash
-   REPO=projects/${PROJECT_ID}/locations/europe-west1/connections/<conn>/repositories/reqbase
+   REPO=projects/${PROJECT_ID}/locations/europe-west1/connections/<conn>/repositories/specquill
    DEPLOYER_RES=projects/${PROJECT_ID}/serviceAccounts/${DEPLOYER}
 
    # staging — run by GitHub on push to main (own database, scale to zero)
    gcloud builds triggers create manual \
-     --name=reqbase-deploy-staging --region=europe-west1 \
+     --name=specquill-deploy-staging --region=europe-west1 \
      --repository="$REPO" --branch=main --build-config=cloudbuild.yaml \
      --service-account="$DEPLOYER_RES" \
-     --substitutions=_SERVICE=reqbase-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/reqbase,_DATABASE_URL_SECRET=REQBASE_DATABASE_URL_STAGING
+     --substitutions=_SERVICE=specquill-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/specquill,_DATABASE_URL_SECRET=SPECQUILL_DATABASE_URL_STAGING
 
    # prod — run by GitHub on a v* tag (cloudbuild.yaml defaults are prod)
    gcloud builds triggers create manual \
-     --name=reqbase-deploy-prod --region=europe-west1 \
+     --name=specquill-deploy-prod --region=europe-west1 \
      --repository="$REPO" --branch=main --build-config=cloudbuild.yaml \
      --service-account="$DEPLOYER_RES" \
-     --substitutions=_VERSION_GATE=on,_GHCR_IMAGE=gitu/reqbase
+     --substitutions=_VERSION_GATE=on,_GHCR_IMAGE=gitu/specquill
    ```
 
 7. **Wire the GitHub repo** (this arms the deploy job — set it last):
 
    ```bash
    gh secret   set GCP_WORKLOAD_IDENTITY_PROVIDER --body "<provider resource name from step 5>"
-   gh secret   set GCP_DEPLOY_SERVICE_ACCOUNT     --body "gh-deploy-reqbase@${PROJECT_ID}.iam.gserviceaccount.com"
-   gh variable set CLOUD_BUILD_STAGING_TRIGGER    --body "reqbase-deploy-staging"
-   gh variable set CLOUD_BUILD_PROD_TRIGGER       --body "reqbase-deploy-prod"
+   gh secret   set GCP_DEPLOY_SERVICE_ACCOUNT     --body "gh-deploy-specquill@${PROJECT_ID}.iam.gserviceaccount.com"
+   gh variable set CLOUD_BUILD_STAGING_TRIGGER    --body "specquill-deploy-staging"
+   gh variable set CLOUD_BUILD_PROD_TRIGGER       --body "specquill-deploy-prod"
    gh variable set CLOUD_BUILD_REGION             --body "europe-west1"
    ```
 
    The first staging deploy prints the service URL; map your domain via Cloud
-   Run domain mappings and set `base_url` in `deploy/reqbase.cloud.yml`
+   Run domain mappings and set `base_url` in `deploy/specquill.cloud.yml`
    accordingly (OIDC redirect URLs + cookies depend on it).
 
 ## Local smoke test of the production image
 
 ```bash
-docker build -t reqbase:local .
+docker build -t specquill:local .
 docker run --rm -p 8080:8080 \
-  -e REQBASE_TOKEN='ghp_…' \
-  -e REQBASE_OIDC_SECRET='…' \
-  -e REQBASE_AI_KEY='…' \
-  -e REQBASE_DATABASE_URL='postgres://…?sslmode=require' \
-  reqbase:local
+  -e SPECQUILL_TOKEN='ghp_…' \
+  -e SPECQUILL_OIDC_SECRET='…' \
+  -e SPECQUILL_AI_KEY='…' \
+  -e SPECQUILL_DATABASE_URL='postgres://…?sslmode=require' \
+  specquill:local
 ```
 
 (With placeholder config values the server will fail on the unreachable
 remote/issuer — override the config with
-`-v $PWD/reqbase.yml:/etc/reqbase/reqbase.yml:ro` to test against real ones.)
+`-v $PWD/specquill.yml:/etc/specquill/specquill.yml:ro` to test against real ones.)
 
 ## Operational notes
 
 - **Rollback**: `gcloud run services update-traffic <service> --region=europe-west1 --to-revisions=<prev>=100`.
 - **Deployed version**: recorded as the `APP_VERSION` env var on the service
-  (`gcloud run services describe reqbase --region=europe-west1`).
+  (`gcloud run services describe specquill --region=europe-west1`).
 - **Websockets** (collab rooms) ride the same HTTP port; `--timeout=3600` and
   `--no-cpu-throttling` are set so background flush/heartbeat work keeps
   running while rooms are open.

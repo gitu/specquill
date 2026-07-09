@@ -6,7 +6,7 @@ import { useApp } from '../state/AppContext';
 import { useBranches, useCreateBranch, useMe, usePRs, useStatus, useSync } from '../api/hooks';
 import { api } from '../api/client';
 import { CreatePRDialog } from './CreatePRDialog';
-import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconSearch, IconUp, IconDown } from './icons';
+import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
   const nav = useNavigate();
@@ -40,16 +40,16 @@ export function TopBar() {
   return (
     <header style={sx('height:46px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 12px 0 14px;background:var(--surface);border-bottom:1px solid var(--border);position:relative;z-index:5')}>
       {narrow && onTreeRoute && (
-        <button onClick={() => window.dispatchEvent(new CustomEvent('reqbase:tree'))} title="Files"
+        <button onClick={() => window.dispatchEvent(new CustomEvent('specquill:tree'))} title="Files"
           style={sx('flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text-2);cursor:pointer')}>
           <IconMenu />
         </button>
       )}
       <div style={sx('flex:none;display:flex;align-items:center;gap:8px')}>
-        <div style={sx('width:22px;height:22px;border-radius:6px;background:var(--text);display:flex;align-items:center;justify-content:center')}>
-          <div style={sx('width:9px;height:9px;border-radius:2px;border:2px solid var(--surface);transform:rotate(45deg)')} />
+        <div style={sx('width:22px;height:22px;border-radius:6px;background:var(--text);color:var(--surface);display:flex;align-items:center;justify-content:center')}>
+          <IconQuill size={14} />
         </div>
-        {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>reqbase</span>}
+        {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
       </div>
 
       {/* branch switcher */}
@@ -88,13 +88,13 @@ export function TopBar() {
 
       <div style={sx('flex:1')} />
       {narrow ? (
-        <button onClick={() => window.dispatchEvent(new CustomEvent('reqbase:search'))} title="Search"
+        <button onClick={() => window.dispatchEvent(new CustomEvent('specquill:search'))} title="Search"
           style={sx('flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer')}>
           <IconSearch />
         </button>
       ) : (
         <div
-          onClick={() => window.dispatchEvent(new CustomEvent('reqbase:search'))}
+          onClick={() => window.dispatchEvent(new CustomEvent('specquill:search'))}
           style={sx('width:340px;height:30px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer')}
         >
           <IconSearch />

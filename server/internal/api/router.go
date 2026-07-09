@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"reqbase/server/internal/ai"
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/collab"
-	"reqbase/server/internal/config"
-	"reqbase/server/internal/events"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/ai"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/collab"
+	"specquill/server/internal/config"
+	"specquill/server/internal/events"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 type Server struct {

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 var slugRe = regexp.MustCompile(`[^a-z0-9-]+`)

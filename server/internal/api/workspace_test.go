@@ -12,11 +12,11 @@ func login(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"username": "flo", "password": "hunter2secret"})
 	req := httptest.NewRequest("POST", "/auth/local/login", bytes.NewReader(body))
-	req.Header.Set("X-Reqbase", "1")
+	req.Header.Set("X-SpecQuill", "1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == "reqbase_session" {
+		if c.Name == "specquill_session" {
 			return c
 		}
 	}
@@ -31,7 +31,7 @@ func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, url strin
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, url, &buf)
-	req.Header.Set("X-Reqbase", "1")
+	req.Header.Set("X-SpecQuill", "1")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

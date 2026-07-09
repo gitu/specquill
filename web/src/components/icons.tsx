@@ -79,3 +79,12 @@ export const IconArrowLR = () => (
     <path d="M1 6h16M13 2l4 4-4 4" />
   </svg>
 );
+
+// The SpecQuill mark: a stroke quill, nib meeting the paper.
+export const IconQuill = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 4.5c-5.6 0-10.7 3.2-12.6 8.6C5.7 15.2 5.5 17.3 5.5 18.8c1.9 0 4.1-.15 6.4-.95C17.5 15.9 19 9 19 4.5z" />
+    <path d="M5.6 18.8C8 12.8 12.1 8.5 16.4 6.2" />
+    <path d="M3.6 20.7l2-1.9" />
+  </svg>
+);

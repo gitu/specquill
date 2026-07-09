@@ -18,7 +18,7 @@ func OpenTest(t *testing.T) *Store {
 	t.Helper()
 	base := os.Getenv("TEST_DATABASE_URL")
 	if base == "" {
-		base = "postgres://reqbase:reqbase@127.0.0.1:5433/reqbase?sslmode=disable"
+		base = "postgres://specquill:specquill@127.0.0.1:5433/specquill?sslmode=disable"
 	}
 	admin, err := sql.Open("pgx", base)
 	if err != nil {

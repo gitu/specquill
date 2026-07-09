@@ -1,7 +1,7 @@
 package scaffold
 
 // Document-type registry: folders, starter documents, and the AI authoring
-// skills the copilot loads from .reqbase/skills/.
+// skills the copilot loads from .specquill/skills/.
 
 var types = map[string]SpecType{
 	"requirements": {

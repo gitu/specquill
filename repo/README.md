@@ -5,12 +5,12 @@ title: trading-specs
 
 # trading-specs
 
-Requirements-engineering workspace, stored as plain markdown in git. `reqbase` (the UI)
+Requirements-engineering workspace, stored as plain markdown in git. `specquill` (the UI)
 is a **view over these files** — every rendered object on screen maps to a file below.
 
 ```
 trading-specs/
-├─ .reqbase/config.yml        workspace taxonomy: drivers, statuses, link types
+├─ .specquill/config.yml        workspace taxonomy: drivers, statuses, link types
 ├─ regulations/               external drivers (regulatory sources)
 │  ├─ mifid-ii.md
 │  ├─ gdpr.md

@@ -1,6 +1,6 @@
 // Package okf implements Open Knowledge Format (v0.1) producer support:
 // a workspace opts in by declaring `okf_version` in the frontmatter of its
-// root index.md; reqbase then keeps the derived reserved files current —
+// root index.md; specquill then keeps the derived reserved files current —
 // index.md per directory (grouped concept listings) and log.md (change
 // history). Spec: github.com/GoogleCloudPlatform/knowledge-catalog/okf.
 package okf

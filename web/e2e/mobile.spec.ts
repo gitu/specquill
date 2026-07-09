@@ -13,7 +13,7 @@ test('narrow viewport: doc reads full-width, tree opens as a drawer', async ({ p
   await expect(page.getByPlaceholder(/Ask about requirements/)).toHaveCount(0);
 
   // the doc uses (nearly) the full width
-  const doc = await page.locator('#reqbase-doc').boundingBox();
+  const doc = await page.locator('#specquill-doc').boundingBox();
   expect(doc!.width).toBeGreaterThan(330);
 
   // hamburger opens the file tree as a drawer; tapping a file navigates + closes

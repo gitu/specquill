@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"reqbase/server/internal/config"
+	"specquill/server/internal/config"
 )
 
 type Message struct {

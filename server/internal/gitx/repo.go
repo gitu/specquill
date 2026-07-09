@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"reqbase/server/internal/config"
+	"specquill/server/internal/config"
 )
 
 type Manager struct {

@@ -117,7 +117,7 @@ func (r *Repo) SaveFile(branch, path, content, baseSha string) (sha string, err 
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(abs), ".reqbase-*")
+	tmp, err := os.CreateTemp(filepath.Dir(abs), ".specquill-*")
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +162,7 @@ func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err erro
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(abs), ".reqbase-*")
+	tmp, err := os.CreateTemp(filepath.Dir(abs), ".specquill-*")
 	if err != nil {
 		return "", err
 	}

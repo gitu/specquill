@@ -2,7 +2,7 @@
 import { APIRequestContext, expect, test } from '@playwright/test';
 
 const REPO = 'trading-specs';
-const H = { 'X-Reqbase': '1' };
+const H = { 'X-SpecQuill': '1' };
 const DOC = 'requirements/REQ-051.md';
 // 1x1 red PNG
 const PNG = Buffer.from(
@@ -89,7 +89,7 @@ test('editor: upload button embeds an image; bold toolbar formats text', async (
 
   // view mode renders the embedded image through the raw endpoint too
   await page.getByText('View', { exact: true }).click();
-  await expect(page.locator('#reqbase-doc img[src*="/raw/requirements/assets/shot"]').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#specquill-doc img[src*="/raw/requirements/assets/shot"]').first()).toBeVisible({ timeout: 10_000 });
 
   // restore: close the room, put the committed content back, drop the asset
   await page.goto('/#/dashboard');

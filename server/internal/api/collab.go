@@ -6,8 +6,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/gitx"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/gitx"
 )
 
 // GET /api/repos/{repo}/collab/{path...}?branch=  — websocket upgrade into a

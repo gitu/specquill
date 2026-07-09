@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"reqbase/server/internal/ai"
-	"reqbase/server/internal/gitx"
+	"specquill/server/internal/ai"
+	"specquill/server/internal/gitx"
 )
 
 // GET /api/copilot/info
@@ -22,7 +22,7 @@ func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 // POST /api/copilot/chat {messages, focusPath?, branch?} → SSE stream
 func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in reqbase.yml)")
+		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return
 	}
 	var body struct {
@@ -81,7 +81,7 @@ type draftEdit struct {
 // on a copilot branch — the human reviews via status → commit → PR.
 func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in reqbase.yml)")
+		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return
 	}
 	var body struct {
@@ -217,7 +217,7 @@ func (s *Server) writableRepo() *gitx.Repo {
 // the uncommitted diff on the fast one-shot tier (ai.quick_model).
 func (s *Server) postCommitMessage(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in reqbase.yml)")
+		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return
 	}
 	branch := r.URL.Query().Get("branch")

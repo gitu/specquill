@@ -24,10 +24,10 @@ func (r *Repo) credentialArgsEnv() (args []string, env []string) {
 	if token == "" {
 		return nil, nil
 	}
-	helper := `!f(){ echo "username=${REQBASE_GIT_USER:-x-access-token}"; echo "password=${REQBASE_GIT_TOKEN}"; };f`
-	env = []string{"REQBASE_GIT_TOKEN=" + token}
+	helper := `!f(){ echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; };f`
+	env = []string{"SPECQUILL_GIT_TOKEN=" + token}
 	if user != "" {
-		env = append(env, "REQBASE_GIT_USER="+user)
+		env = append(env, "SPECQUILL_GIT_USER="+user)
 	}
 	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, env
 }

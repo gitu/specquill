@@ -1,14 +1,14 @@
-# reqbase server configuration (copy to reqbase.yml and adjust)
+# specquill server configuration (copy to specquill.yml and adjust)
 
 listen: ":8080"
-data_dir: /var/lib/reqbase        # bare clones + worktrees (content only)
-base_url: https://reqbase.example.com
+data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
+base_url: https://specquill.example.com
 
 # Postgres store: users, sessions, PR review state, collab logs. The DSN
 # carries credentials, so production must pass it via env (works great with
 # a serverless Postgres like Neon).
 database:
-  url_env: REQBASE_DATABASE_URL   # e.g. postgres://…neon.tech/reqbase?sslmode=require
+  url_env: SPECQUILL_DATABASE_URL   # e.g. postgres://…neon.tech/specquill?sslmode=require
 
 repos:
   # exactly one writable repo is the editing workspace
@@ -16,7 +16,7 @@ repos:
     mode: writable
     remote: https://github.com/acme/trading-specs.git
     default_branch: main
-    token_env: REQBASE_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
+    token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
 
   # any number of read-only input repos (fetched, never written)
   - id: regulations
@@ -25,18 +25,18 @@ repos:
     sync_interval: 5m
 
 git:
-  committer_name: reqbase            # service identity — recorded as a Co-authored-by
-  committer_email: reqbase@example.com   # trailer; the user is author AND committer
+  committer_name: specquill            # service identity — recorded as a Co-authored-by
+  committer_email: specquill@example.com   # trailer; the user is author AND committer
 
 auth:
   oidc:
     enabled: true
     issuer: https://login.example.com
-    client_id: reqbase
-    client_secret_env: REQBASE_OIDC_SECRET
+    client_id: specquill
+    client_secret_env: SPECQUILL_OIDC_SECRET
     scopes: [openid, profile, email]
   local:
-    enabled: true                    # fallback login page; add users with `reqbased user add`
+    enabled: true                    # fallback login page; add users with `specquill user add`
 
 session:
   ttl: 10m
@@ -51,5 +51,5 @@ ai:
   base_url: https://api.openai.com/v1
   model: gpt-4o                      # main tier (thinking-class): chat + draft edits
   quick_model: gpt-4o-mini           # fast one-shot tier: commit messages, titles
-  api_key_env: REQBASE_AI_KEY
+  api_key_env: SPECQUILL_AI_KEY
 

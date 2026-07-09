@@ -7,9 +7,9 @@ import urllib.error
 import urllib.request
 
 BASE = 'http://127.0.0.1:8643/api/repos/trading-specs'
-ROOT = '/home/flo/Projects/reqbase'
+ROOT = '/home/flo/Projects/specquill'
 BRANCH = 'feature/edit-test'
-H = {'X-Reqbase': '1', 'Content-Type': 'application/json'}
+H = {'X-SpecQuill': '1', 'Content-Type': 'application/json'}
 
 
 def call(method, url, body=None):
@@ -54,7 +54,7 @@ assert code == 200
 log = git('-C', f'{ROOT}/data/runtime/repos/trading-specs/worktrees/feature__edit-test',
           'log', '-1', '--format=%an <%ae> | committer %cn <%ce>')
 print('7. log:', log)
-assert log == 'Flo Dev <flo@dev.local> | committer reqbase <reqbase@dev.local>', log
+assert log == 'Flo Dev <flo@dev.local> | committer specquill <specquill@dev.local>', log
 
 code, out = call('POST', f'{BASE}/push?branch={BRANCH}')
 print('8. push:', code, out)

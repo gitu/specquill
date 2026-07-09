@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"reqbase/server/internal/auth"
+	"specquill/server/internal/auth"
 )
 
 // GET /auth/login — OIDC redirect when enabled, else the SPA's local login page.

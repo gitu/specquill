@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"reqbase/server/internal/auth"
+	"specquill/server/internal/auth"
 )
 
 // requireAuth resolves the session (or the -dev auto-user) and attaches the
@@ -24,14 +24,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// csrfGuard rejects state-changing requests that lack the X-Reqbase header.
+// csrfGuard rejects state-changing requests that lack the X-SpecQuill header.
 // Together with SameSite=Lax cookies this blocks cross-site request forgery
 // without token machinery — browsers won't let cross-origin JS set the header.
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !strings.HasPrefix(r.URL.Path, "/auth/callback") && r.Header.Get("X-Reqbase") != "1" {
-				jsonError(w, http.StatusForbidden, "missing X-Reqbase header")
+			if !strings.HasPrefix(r.URL.Path, "/auth/callback") && r.Header.Get("X-SpecQuill") != "1" {
+				jsonError(w, http.StatusForbidden, "missing X-SpecQuill header")
 				return
 			}
 		}

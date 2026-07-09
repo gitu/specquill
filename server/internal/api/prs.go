@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 type prView struct {

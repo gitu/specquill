@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reqbase/server/internal/config"
+	"specquill/server/internal/config"
 )
 
 // fixture creates a bare origin with two files on main and returns a Manager

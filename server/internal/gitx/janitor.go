@@ -16,13 +16,13 @@ func LockDataDir(dataDir string) (release func(), err error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dataDir, ".reqbase.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(filepath.Join(dataDir, ".specquill.lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("data dir %s is locked by another reqbased instance", dataDir)
+		return nil, fmt.Errorf("data dir %s is locked by another specquill instance", dataDir)
 	}
 	return func() { _ = f.Close() }, nil
 }

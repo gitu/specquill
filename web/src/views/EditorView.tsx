@@ -329,7 +329,7 @@ export function EditorView() {
     return out;
   }, [body, kind]);
   const jumpToHeading = useCallback((idx: number) => {
-    const host = document.querySelector(effMode === 'view' ? '#reqbase-doc' : '.milkdown-editable');
+    const host = document.querySelector(effMode === 'view' ? '#specquill-doc' : '.milkdown-editable');
     if (!host) return;
     // view mode strips the leading title heading from the rendered html
     const stripped = effMode === 'view' && outline[0]?.level === 1;

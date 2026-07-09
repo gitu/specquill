@@ -121,13 +121,13 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
   // self-heal: restore REQ-090 on the workspace (prior failed runs leave the
   // inserted mermaid in the doc, and clicking it opens the overlay)
   {
-    const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-Reqbase': '1' }, data: {} });
+    const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-SpecQuill': '1' }, data: {} });
     const wsb = ((await wsRes.json()) as { branch: string }).branch;
     const head = (await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}&at=head`)).json()) as { content: string };
     const cur = (await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}`)).json()) as { sha: string };
     if (head.content !== undefined && cur.sha) {
       await request.put(`/api/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(wsb)}`, {
-        headers: { 'X-Reqbase': '1' }, data: { content: head.content, baseSha: cur.sha },
+        headers: { 'X-SpecQuill': '1' }, data: { content: head.content, baseSha: cur.sha },
       });
     }
   }
@@ -151,17 +151,17 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
 
   // cleanup: sketches are now *.excalidraw.png created on first SAVE — closing
   // without drawing leaves no file, so the delete may 404 (that's fine)
-  const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-Reqbase': '1' }, data: {} });
+  const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-SpecQuill': '1' }, data: {} });
   const ws = (await wsRes.json()) as { branch: string };
   await request.delete(
     `/api/repos/trading-specs/files/diagrams/e2e-${stamp}.excalidraw.png?branch=${encodeURIComponent(ws.branch)}`,
-    { headers: { 'X-Reqbase': '1' } },
+    { headers: { 'X-SpecQuill': '1' } },
   ).catch(() => {});
   // restore the autosaved doc to its committed content
   const head = await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}&at=head`)).json() as { content: string };
   const cur = await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}`)).json() as { sha: string };
   await request.put(`/api/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(ws.branch)}`, {
-    headers: { 'X-Reqbase': '1' },
+    headers: { 'X-SpecQuill': '1' },
     data: { content: head.content, baseSha: cur.sha },
   });
 });

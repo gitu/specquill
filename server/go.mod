@@ -1,4 +1,4 @@
-module reqbase/server
+module specquill/server
 
 go 1.26.4
 

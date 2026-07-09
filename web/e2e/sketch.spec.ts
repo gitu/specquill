@@ -3,7 +3,7 @@
 import { APIRequestContext, expect, test } from '@playwright/test';
 
 const REPO = 'trading-specs';
-const H = { 'X-Reqbase': '1' };
+const H = { 'X-SpecQuill': '1' };
 const DOC = `scratch-sketch-${Date.now().toString(36)}.md`;
 const SLUG = `e2esketch-${Date.now().toString(36)}`;
 
@@ -60,7 +60,7 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
 
   // view mode shows it as a plain image too
   await page.getByText('View', { exact: true }).click();
-  await expect(page.locator(`#reqbase-doc img[src*="${SLUG}.excalidraw.png"]`).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(`#specquill-doc img[src*="${SLUG}.excalidraw.png"]`).first()).toBeVisible({ timeout: 10_000 });
 
   // cleanup
   await page.goto('/#/dashboard');

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"reqbase/server/internal/gitx"
+	"specquill/server/internal/gitx"
 )
 
 func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {

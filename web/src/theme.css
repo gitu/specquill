@@ -30,28 +30,28 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 .mrow:hover{background:var(--surface-2)}
 
 /* rendered-markdown typography (scoped to file-rendered docs) */
-:is(#reqbase-doc,.doc-typo){font-size:15px;line-height:1.72;color:var(--text)}
-:is(#reqbase-doc,.doc-typo)>*:first-child{margin-top:0}
-:is(#reqbase-doc,.doc-typo) h1{font-size:27px;font-weight:700;letter-spacing:-.5px;margin:24px 0 6px;line-height:1.15}
-:is(#reqbase-doc,.doc-typo) h2{font-size:18px;font-weight:700;margin:28px 0 8px}
-:is(#reqbase-doc,.doc-typo) h3{font-size:15px;font-weight:700;margin:20px 0 6px}
-:is(#reqbase-doc,.doc-typo) p{margin:12px 0}
-:is(#reqbase-doc,.doc-typo) ul,:is(#reqbase-doc,.doc-typo) ol{margin:12px 0;padding-left:22px}
-:is(#reqbase-doc,.doc-typo) li{margin:5px 0}
-:is(#reqbase-doc,.doc-typo) a{color:var(--prod);text-decoration:none;border-bottom:1px solid transparent}
-:is(#reqbase-doc,.doc-typo) a:hover{border-bottom-color:var(--prod)}
-:is(#reqbase-doc,.doc-typo) blockquote{margin:18px 0;padding:12px 16px;border-left:3px solid var(--prod);background:var(--surface-2);border-radius:0 9px 9px 0;color:var(--text)}
-:is(#reqbase-doc,.doc-typo) blockquote p{margin:0}
-:is(#reqbase-doc,.doc-typo) code{font-family:'IBM Plex Mono',monospace;font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
-:is(#reqbase-doc,.doc-typo) pre{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;overflow:auto}
-:is(#reqbase-doc,.doc-typo) pre code{background:none;padding:0;font-size:12px}
-:is(#reqbase-doc,.doc-typo) table{border-collapse:separate;border-spacing:0;width:100%;margin:16px 0;font-size:12.5px;font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:10px;overflow:hidden}
-:is(#reqbase-doc,.doc-typo) thead th{background:var(--surface-2);text-align:left;font-weight:600;color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:.3px;padding:9px 13px;border-bottom:1px solid var(--border)}
-:is(#reqbase-doc,.doc-typo) td{padding:10px 13px;border-bottom:1px solid var(--border)}
-:is(#reqbase-doc,.doc-typo) tbody tr:last-child td{border-bottom:none}
-:is(#reqbase-doc,.doc-typo) img{max-width:100%}
-:is(#reqbase-doc,.doc-typo) input[type=checkbox]{margin-right:7px;accent-color:var(--data)}
-:is(#reqbase-doc,.doc-typo) hr{border:none;border-top:1px solid var(--border);margin:22px 0}
+:is(#specquill-doc,.doc-typo){font-size:15px;line-height:1.72;color:var(--text)}
+:is(#specquill-doc,.doc-typo)>*:first-child{margin-top:0}
+:is(#specquill-doc,.doc-typo) h1{font-size:27px;font-weight:700;letter-spacing:-.5px;margin:24px 0 6px;line-height:1.15}
+:is(#specquill-doc,.doc-typo) h2{font-size:18px;font-weight:700;margin:28px 0 8px}
+:is(#specquill-doc,.doc-typo) h3{font-size:15px;font-weight:700;margin:20px 0 6px}
+:is(#specquill-doc,.doc-typo) p{margin:12px 0}
+:is(#specquill-doc,.doc-typo) ul,:is(#specquill-doc,.doc-typo) ol{margin:12px 0;padding-left:22px}
+:is(#specquill-doc,.doc-typo) li{margin:5px 0}
+:is(#specquill-doc,.doc-typo) a{color:var(--prod);text-decoration:none;border-bottom:1px solid transparent}
+:is(#specquill-doc,.doc-typo) a:hover{border-bottom-color:var(--prod)}
+:is(#specquill-doc,.doc-typo) blockquote{margin:18px 0;padding:12px 16px;border-left:3px solid var(--prod);background:var(--surface-2);border-radius:0 9px 9px 0;color:var(--text)}
+:is(#specquill-doc,.doc-typo) blockquote p{margin:0}
+:is(#specquill-doc,.doc-typo) code{font-family:'IBM Plex Mono',monospace;font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+:is(#specquill-doc,.doc-typo) pre{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;overflow:auto}
+:is(#specquill-doc,.doc-typo) pre code{background:none;padding:0;font-size:12px}
+:is(#specquill-doc,.doc-typo) table{border-collapse:separate;border-spacing:0;width:100%;margin:16px 0;font-size:12.5px;font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+:is(#specquill-doc,.doc-typo) thead th{background:var(--surface-2);text-align:left;font-weight:600;color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:.3px;padding:9px 13px;border-bottom:1px solid var(--border)}
+:is(#specquill-doc,.doc-typo) td{padding:10px 13px;border-bottom:1px solid var(--border)}
+:is(#specquill-doc,.doc-typo) tbody tr:last-child td{border-bottom:none}
+:is(#specquill-doc,.doc-typo) img{max-width:100%}
+:is(#specquill-doc,.doc-typo) input[type=checkbox]{margin-right:7px;accent-color:var(--data)}
+:is(#specquill-doc,.doc-typo) hr{border:none;border-top:1px solid var(--border);margin:22px 0}
 
 /* Milkdown WYSIWYG editor */
 .milkdown-host .milkdown{position:relative}
@@ -62,7 +62,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans'
 .mermaid-block .mermaid-error{color:var(--reg)}
 
 /* mermaid renders on a transparent background in both themes */
-.mermaid-block svg, :is(#reqbase-doc,.doc-typo) svg[id^="mmd-"] { background: transparent !important; }
+.mermaid-block svg, :is(#specquill-doc,.doc-typo) svg[id^="mmd-"] { background: transparent !important; }
 
 /* y-prosemirror remote cursors + selections */
 .ProseMirror .ProseMirror-yjs-cursor{position:relative;border-left:2px solid;margin-left:-1px;margin-right:-1px;pointer-events:none;word-break:normal}

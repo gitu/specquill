@@ -7,8 +7,8 @@ import urllib.error
 import urllib.request
 
 BASE = 'http://127.0.0.1:8643/api/repos/trading-specs'
-ROOT = '/home/flo/Projects/reqbase'
-H = {'X-Reqbase': '1', 'Content-Type': 'application/json'}
+ROOT = '/home/flo/Projects/specquill'
+H = {'X-SpecQuill': '1', 'Content-Type': 'application/json'}
 
 
 def call(method, url, body=None):
@@ -72,7 +72,7 @@ assert code == 200
 merged = out['mergedCommit']
 log = git('-C', f'{ROOT}/data/runtime/repos/trading-specs/git', 'log', '-1', '--format=%an|%cn|%s', merged)
 print('7. merge commit:', log)
-assert log.startswith('Flo Dev|reqbase|Merge PR #')
+assert log.startswith('Flo Dev|specquill|Merge PR #')
 
 # main now carries the change (both in git and via the API/model path)
 code, f = call('GET', f'{BASE}/files/requirements/REQ-063.md?ref=main')

@@ -81,5 +81,5 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
     });
   }, [html, docPath, app.theme, app.repoId, app.branch, files, nav]);
 
-  return <div id="reqbase-doc" ref={host} />;
+  return <div id="specquill-doc" ref={host} />;
 }

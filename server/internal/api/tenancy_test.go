@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reqbase/server/internal/config"
+	"specquill/server/internal/config"
 )
 
 // Cross-tenant isolation: a second tenant's repos are invisible and
-// unreachable without membership; membership + the X-Reqbase-Tenant header
+// unreachable without membership; membership + the X-SpecQuill-Tenant header
 // selects them; the default tenant stays the implicit single choice.
 func TestTenantIsolation(t *testing.T) {
 	h, st, git := testServerFull(t, false)
@@ -37,8 +37,8 @@ func TestTenantIsolation(t *testing.T) {
 
 	// without membership: acme is unreachable, even named explicitly
 	req := httptest.NewRequest("GET", "/api/repos/specs/tree", nil)
-	req.Header.Set("X-Reqbase", "1")
-	req.Header.Set("X-Reqbase-Tenant", "acme")
+	req.Header.Set("X-SpecQuill", "1")
+	req.Header.Set("X-SpecQuill-Tenant", "acme")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -61,8 +61,8 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequest("GET", "/api/repos/specs/tree", nil)
-	req.Header.Set("X-Reqbase", "1")
-	req.Header.Set("X-Reqbase-Tenant", "acme")
+	req.Header.Set("X-SpecQuill", "1")
+	req.Header.Set("X-SpecQuill-Tenant", "acme")
 	req.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

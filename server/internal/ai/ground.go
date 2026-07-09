@@ -8,7 +8,7 @@ import (
 
 const groundingBudget = 48 * 1024 // chars of file content in the system prompt
 
-const systemHeader = `You are the reqbase copilot — an assistant embedded in a
+const systemHeader = `You are the specquill copilot — an assistant embedded in a
 requirements-engineering workspace stored as markdown files in git. Requirements
 (requirements/REQ-*.md) are driven by regulations (regulations/), implement into
 specs (specs/), map to data fields (data-mappings/), and change records
@@ -26,11 +26,11 @@ func GroundingPrompt(files map[string]string, focusPath string) string {
 	var b strings.Builder
 	b.WriteString(systemHeader)
 
-	// .reqbase/skills/* are authoring instructions, not data — pin them right
+	// .specquill/skills/* are authoring instructions, not data — pin them right
 	// after the header so they always survive the budget
 	var skills []string
 	for p := range files {
-		if strings.HasPrefix(p, ".reqbase/skills/") {
+		if strings.HasPrefix(p, ".specquill/skills/") {
 			skills = append(skills, p)
 		}
 	}
@@ -47,7 +47,7 @@ func GroundingPrompt(files map[string]string, focusPath string) string {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		if strings.HasSuffix(p, ".excalidraw") || strings.HasPrefix(p, "uploads/") ||
-			strings.HasPrefix(p, ".reqbase/skills/") {
+			strings.HasPrefix(p, ".specquill/skills/") {
 			continue // sketch JSON is noise; skills are already pinned above
 		}
 		paths = append(paths, p)
@@ -83,7 +83,7 @@ func GroundingPrompt(files map[string]string, focusPath string) string {
 	return b.String()
 }
 
-const draftSystem = `You are the reqbase copilot drafting edits to workspace
+const draftSystem = `You are the specquill copilot drafting edits to workspace
 files in response to a change record. Reply with ONLY a JSON object, no prose.
 The shape, shown with example values:
 

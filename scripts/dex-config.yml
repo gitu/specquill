@@ -7,11 +7,11 @@ web:
 oauth2:
   skipApprovalScreen: true
 staticClients:
-  - id: reqbase
+  - id: specquill
     redirectURIs:
       - http://localhost:8643/auth/callback
       - http://localhost:8644/auth/callback
-    name: reqbase dev
+    name: specquill dev
     secret: dev-secret
 enablePasswordDB: true
 staticPasswords:

@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 test.describe.configure({ mode: 'serial' });
 
 const REPO = 'trading-specs';
-const H = { 'X-Reqbase': '1' };
+const H = { 'X-SpecQuill': '1' };
 
 async function wsBranch(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });

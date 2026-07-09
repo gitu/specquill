@@ -2,7 +2,7 @@
 import { APIRequestContext, expect, test } from '@playwright/test';
 
 const REPO = 'trading-specs';
-const H = { 'X-Reqbase': '1' };
+const H = { 'X-SpecQuill': '1' };
 const DOC = `scratch-rich-${Date.now().toString(36)}.md`;
 const BODY = '# Rich scratch\n\nintro paragraph words here\n\n## Section two\n\nmore text\n\n## Section three\n\ntail\n';
 

@@ -1,5 +1,5 @@
-// Thin fetch wrapper for the reqbase API. Every non-GET carries the
-// X-Reqbase header (CSRF guard, enforced server-side from M3 on).
+// Thin fetch wrapper for the specquill API. Every non-GET carries the
+// X-SpecQuill header (CSRF guard, enforced server-side from M3 on).
 
 export class ApiError extends Error {
   status: number;
@@ -13,7 +13,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: {
-      'X-Reqbase': '1',
+      'X-SpecQuill': '1',
       // FormData bodies set their own multipart boundary
       ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
@@ -40,7 +40,7 @@ export function rawUrl(repo: string, ref: string, path: string): string {
 export async function putRaw(repo: string, branch: string, path: string, body: Blob, baseSha: string): Promise<{ sha: string }> {
   const res = await fetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
     method: 'PUT',
-    headers: { 'X-Reqbase': '1' },
+    headers: { 'X-SpecQuill': '1' },
     body,
   });
   if (!res.ok) {

@@ -15,10 +15,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/config"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/config"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 // ---- test scaffolding -------------------------------------------------

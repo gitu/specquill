@@ -23,7 +23,7 @@ interface FileData {
 
 const DEBOUNCE_MS = 1500;
 const MAX_WAIT_MS = 5000;
-const LS_PREFIX = 'reqbase-draft:';
+const LS_PREFIX = 'specquill-draft:';
 const LS_MAX_AGE = 7 * 24 * 3600 * 1000;
 
 // prune stale recovery entries once per session
@@ -239,7 +239,7 @@ export function useDraft({ repo, branch, path, file, enabled, onRecovered, befor
       // fire-and-forget; the localStorage copy covers failure
       void fetch(s.url, {
         method: 'PUT',
-        headers: { 'X-Reqbase': '1', 'Content-Type': 'application/json' },
+        headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: s.raw, baseSha: s.baseSha }),
         keepalive: true,
       });

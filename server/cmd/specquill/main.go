@@ -1,11 +1,15 @@
-// reqbased — the reqbase server: files + git + auth + PR review over a
+// specquill — the specquill server: files + git + auth + PR review over a
 // locally checked-out requirements workspace.
 //
 // Usage:
 //
-//	reqbased [-config reqbase.yml] [-dev]              serve
-//	reqbased [-config reqbase.yml] user add <username> <name> <email>
-//	reqbased init <dir> [-types requirements,specs,…] [-name project]
+//	specquill [-config specquill.yml] [-dev]              serve
+//	specquill [-config specquill.yml] user add <username> <name> <email>
+//	specquill init <dir> [-types requirements,specs,…] [-name project]
+//	specquill add <type> [name] [-dir <workspace>]        new document
+//	specquill validate [dir]                              OKF + link check
+//	specquill graph [dir]                                 traceability DOT
+//	specquill export [dir]                                model as JSON
 package main
 
 import (
@@ -19,32 +23,42 @@ import (
 
 	"golang.org/x/term"
 
-	"reqbase/server/internal/ai"
-	"reqbase/server/internal/api"
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/config"
-	"reqbase/server/internal/events"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/scaffold"
-	"reqbase/server/internal/store"
-	"reqbase/server/internal/webui"
+	"specquill/server/internal/ai"
+	"specquill/server/internal/api"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/config"
+	"specquill/server/internal/events"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/scaffold"
+	"specquill/server/internal/store"
+	"specquill/server/internal/webui"
 )
 
 func main() {
-	configPath := flag.String("config", "reqbase.yml", "path to config file")
+	configPath := flag.String("config", "specquill.yml", "path to config file")
 	dev := flag.Bool("dev", false, "dev mode: UI served by Vite, dev_user honored")
 	flag.Parse()
 
 	var err error
-	if args := flag.Args(); len(args) > 0 && args[0] == "user" {
+	args := flag.Args()
+	switch {
+	case len(args) > 0 && args[0] == "user":
 		err = userCmd(*configPath, args[1:])
-	} else if len(args) > 0 && args[0] == "init" {
+	case len(args) > 0 && args[0] == "init":
 		err = initCmd(args[1:])
-	} else {
+	case len(args) > 0 && args[0] == "add":
+		err = addCmd(args[1:])
+	case len(args) > 0 && args[0] == "validate":
+		err = validateCmd(args[1:])
+	case len(args) > 0 && args[0] == "graph":
+		err = graphCmd(args[1:])
+	case len(args) > 0 && args[0] == "export":
+		err = exportCmd(args[1:])
+	default:
 		err = serve(*configPath, *dev)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "reqbased:", err)
+		fmt.Fprintln(os.Stderr, "specquill:", err)
 		os.Exit(1)
 	}
 }
@@ -142,10 +156,10 @@ func serve(configPath string, dev bool) error {
 	return http.ListenAndServe(cfg.Listen, handler)
 }
 
-// userCmd implements `reqbased user add <username> <name> <email>`.
+// userCmd implements `specquill user add <username> <name> <email>`.
 func userCmd(configPath string, args []string) error {
 	if len(args) != 4 || args[0] != "add" {
-		return fmt.Errorf("usage: reqbased user add <username> <name> <email>")
+		return fmt.Errorf("usage: specquill user add <username> <name> <email>")
 	}
 	username, name, email := args[1], args[2], args[3]
 	cfg, err := config.Load(configPath)
@@ -204,7 +218,7 @@ func initCmd(args []string) error {
 		dir = fs.Arg(0)
 	}
 	if dir == "" {
-		return fmt.Errorf("usage: reqbased init <dir> [-types %s] [-name project]", strings.Join(scaffold.DefaultTypes, ","))
+		return fmt.Errorf("usage: specquill init <dir> [-types %s] [-name project]", strings.Join(scaffold.DefaultTypes, ","))
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

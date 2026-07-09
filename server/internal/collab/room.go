@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"reqbase/server/internal/store"
+	"specquill/server/internal/store"
 )
 
 const (

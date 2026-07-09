@@ -1,16 +1,16 @@
 # Open Knowledge Format (OKF) support
 
-reqbase workspaces are conformant [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+specquill workspaces are conformant [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 bundles: a directory of markdown files with YAML frontmatter in git, readable
-by humans and agents with no reqbase tooling required. OKF is a strict subset
-of what reqbase already does — the typed traceability links (`implements`,
+by humans and agents with no specquill tooling required. OKF is a strict subset
+of what specquill already does — the typed traceability links (`implements`,
 `maps_to`, `verifies`, `drivers`) ride along as producer extension fields,
 which the spec requires consumers to preserve.
 
 ## Producer
 
-- **`type:` frontmatter** — the only field OKF requires. `reqbased init`
-  scaffolds it everywhere (including `.reqbase/skills/*` and READMEs), the
+- **`type:` frontmatter** — the only field OKF requires. `specquill init`
+  scaffolds it everywhere (including `.specquill/skills/*` and READMEs), the
   in-app "New file" flow derives it from the folder family
   (`requirements/` → `Requirement`, …), and `okf.Validate` checks a tree.
 - **Opt-in marker** — a bundle opts into derived-file generation by declaring
@@ -38,9 +38,9 @@ which the spec requires consumers to preserve.
 ## Notes
 
 - `type` values are deliberately free-form (spec: no central registry);
-  reqbase uses `Requirement`, `Specification`, `Regulation`, `Data Mapping`,
+  specquill uses `Requirement`, `Specification`, `Regulation`, `Data Mapping`,
   `Change Record`, `Decision`, `Glossary`, `Guide`, `Skill`.
 - `resource:` (a URI for the underlying asset) is scaffolded on data
   mappings — point it at the real table/system the mapping describes.
 - Strict conformance covers *hidden directories too*, which is why the
-  `.reqbase/skills/` files carry frontmatter.
+  `.specquill/skills/` files carry frontmatter.

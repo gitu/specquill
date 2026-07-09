@@ -38,7 +38,7 @@ func TestGenerateIndexes(t *testing.T) {
 	write(t, root, "README.md", "---\ntype: Guide\ntitle: Readme\n---\n\n# hi\n")
 	write(t, root, "requirements/REQ-001.md", "---\ntype: Requirement\ntitle: Login\ndescription: Users can log in.\n---\n\nbody\n")
 	write(t, root, "requirements/REQ-002.md", "---\ntype: Requirement\n---\n\nbody\n") // title falls back to filename
-	write(t, root, ".reqbase/skills/x.md", "---\ntype: Skill\n---\n")                  // hidden dir skipped
+	write(t, root, ".specquill/skills/x.md", "---\ntype: Skill\n---\n")                  // hidden dir skipped
 	write(t, root, "index.md", "---\nokf_version: \"0.1\"\ncustom: kept\n---\nstale body\n")
 
 	changed, err := GenerateIndexes(root)

@@ -1,4 +1,4 @@
-// Package config loads and validates the reqbase server configuration.
+// Package config loads and validates the specquill server configuration.
 package config
 
 import (

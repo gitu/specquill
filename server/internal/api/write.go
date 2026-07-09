@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/gitx"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/gitx"
 )
 
 // writableH additionally rejects requests against read-only repos.

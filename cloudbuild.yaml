@@ -14,19 +14,19 @@
 #
 #   "deploy staging" (run by GH on main)    "deploy prod" (run by GH on tag v*)
 #   ────────────────────────────────────    ───────────────────────────────────
-#   _SERVICE: reqbase-staging               _SERVICE: reqbase
+#   _SERVICE: specquill-staging               _SERVICE: specquill
 #   _VERSION_GATE: "off"                    _VERSION_GATE: "on"
 #   (+ per-env secret-name overrides)
 #
 # Promotion model:
-#   • Staging tracks main head-on: every push deploys `reqbase-staging`.
+#   • Staging tracks main head-on: every push deploys `specquill-staging`.
 #   • Production only advances to a newer version that shipped through main:
 #     the version-gate deploys only when the tagged commit is an ancestor of
 #     origin/main AND the tag is the newest v* reachable from main. Release:
 #     merge to main, then `git tag vX.Y.Z <main-commit> && git push origin vX.Y.Z`.
 #
-# reqbase specifics:
-#   • The runtime config is baked into the image (deploy/reqbase.cloud.yml);
+# specquill specifics:
+#   • The runtime config is baked into the image (deploy/specquill.cloud.yml);
 #     the only deploy-time inputs are the secrets mounted as env vars below.
 #   • max-instances=1 is a HARD requirement: SQLite (sessions, PRs, collab
 #     room logs) and the in-process collab hub live in one instance.
@@ -46,13 +46,13 @@
 
 substitutions:
   _REGION: europe-west1
-  _SERVICE: reqbase
+  _SERVICE: specquill
   _REMOTE_REPO: ghcr-remote
-  _GHCR_IMAGE: gitu/reqbase
-  _TOKEN_SECRET: REQBASE_TOKEN
-  _OIDC_SECRET_NAME: REQBASE_OIDC_SECRET
-  _AI_KEY_SECRET: REQBASE_AI_KEY
-  _DATABASE_URL_SECRET: REQBASE_DATABASE_URL
+  _GHCR_IMAGE: gitu/specquill
+  _TOKEN_SECRET: SPECQUILL_TOKEN
+  _OIDC_SECRET_NAME: SPECQUILL_OIDC_SECRET
+  _AI_KEY_SECRET: SPECQUILL_AI_KEY
+  _DATABASE_URL_SECRET: SPECQUILL_DATABASE_URL
   _MIN_INSTANCES: "1"
   _VERSION_GATE: "off"
 
@@ -169,4 +169,4 @@ steps:
           --timeout=3600 \
           --no-cpu-throttling \
           --set-env-vars="APP_VERSION=$$APP_VERSION" \
-          --set-secrets=REQBASE_TOKEN=${_TOKEN_SECRET}:latest,REQBASE_OIDC_SECRET=${_OIDC_SECRET_NAME}:latest,REQBASE_AI_KEY=${_AI_KEY_SECRET}:latest,REQBASE_DATABASE_URL=${_DATABASE_URL_SECRET}:latest
+          --set-secrets=SPECQUILL_TOKEN=${_TOKEN_SECRET}:latest,SPECQUILL_OIDC_SECRET=${_OIDC_SECRET_NAME}:latest,SPECQUILL_AI_KEY=${_AI_KEY_SECRET}:latest,SPECQUILL_DATABASE_URL=${_DATABASE_URL_SECRET}:latest

@@ -3,13 +3,13 @@ package api
 import (
 	"net/http"
 
-	"reqbase/server/internal/auth"
-	"reqbase/server/internal/gitx"
-	"reqbase/server/internal/store"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 // Tenant resolution (docs/multi-tenancy.md): API URLs carry the short repo
-// id; the tenant comes from the request — the X-Reqbase-Tenant header (or
+// id; the tenant comes from the request — the X-SpecQuill-Tenant header (or
 // ?tenant= for websocket connects, which can't set headers), else the
 // user's only membership. Users with no membership yet are auto-enrolled
 // into the built-in `default` (config) tenant — self-host semantics.
@@ -19,7 +19,7 @@ func (s *Server) tenant(w http.ResponseWriter, r *http.Request) (*store.Tenant, 
 		jsonError(w, http.StatusUnauthorized, "authentication required")
 		return nil, false
 	}
-	want := r.Header.Get("X-Reqbase-Tenant")
+	want := r.Header.Get("X-SpecQuill-Tenant")
 	if want == "" {
 		want = r.URL.Query().Get("tenant")
 	}
@@ -44,7 +44,7 @@ func (s *Server) tenant(w http.ResponseWriter, r *http.Request) (*store.Tenant, 
 	case 1:
 		return &ms[0].Tenant, true
 	default:
-		jsonError2(w, http.StatusBadRequest, "multiple tenants — set X-Reqbase-Tenant", "tenant_required")
+		jsonError2(w, http.StatusBadRequest, "multiple tenants — set X-SpecQuill-Tenant", "tenant_required")
 		return nil, false
 	}
 }

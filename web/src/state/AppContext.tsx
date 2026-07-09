@@ -44,15 +44,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const writable = repos.data?.find((r) => r.mode === 'writable');
   const [branch, setBranch] = useState('');
   const [theme, setTheme] = useState<'light' | 'dark'>(
-    () => (localStorage.getItem('reqbase-theme') as 'light' | 'dark') || 'light',
+    () => (localStorage.getItem('specquill-theme') as 'light' | 'dark') || 'light',
   );
   // narrow screens never open the copilot by default (it overlays the doc)
   const [copilotOpen, setCopilotOpen] = useState(
-    () => localStorage.getItem('reqbase-copilot') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
+    () => localStorage.getItem('specquill-copilot') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
   );
   const [aiSuggestions, setAI] = useState(true);
   const [userDefaultView, setUserDefaultView] = useState<ViewName | null>(() => {
-    const v = localStorage.getItem('reqbase-default-view');
+    const v = localStorage.getItem('specquill-default-view');
     return VIEWS.includes(v as ViewName) ? (v as ViewName) : null;
   });
 
@@ -61,17 +61,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.body.setAttribute('data-theme', theme);
-    localStorage.setItem('reqbase-theme', theme);
+    localStorage.setItem('specquill-theme', theme);
   }, [theme]);
   useEffect(() => {
-    localStorage.setItem('reqbase-copilot', copilotOpen ? '1' : '0');
+    localStorage.setItem('specquill-copilot', copilotOpen ? '1' : '0');
   }, [copilotOpen]);
 
   const value = useMemo<AppState>(() => {
     const files = snapshot.data?.files;
     let schema: PropertySchema | undefined;
-    try { schema = files?.['.reqbase/schema.json'] ? JSON.parse(files['.reqbase/schema.json']) : undefined; } catch { schema = undefined; }
-    const configYml = files?.['.reqbase/config.yml'] || '';
+    try { schema = files?.['.specquill/schema.json'] ? JSON.parse(files['.specquill/schema.json']) : undefined; } catch { schema = undefined; }
+    const configYml = files?.['.specquill/config.yml'] || '';
     const wsView = (configYml.match(/^\s*default_view:\s*([\w-]+)/m) || [])[1];
     const workspaceDefaultView = VIEWS.includes(wsView as ViewName) ? (wsView as ViewName) : null;
     const protectedBranches = writable?.protectedBranches || [];
@@ -95,8 +95,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       userDefaultView,
       workspaceDefaultView,
       setDefaultView: (v) => {
-        if (v) localStorage.setItem('reqbase-default-view', v);
-        else localStorage.removeItem('reqbase-default-view');
+        if (v) localStorage.setItem('specquill-default-view', v);
+        else localStorage.removeItem('specquill-default-view');
         setUserDefaultView(v);
       },
       copilotOpen,
@@ -106,7 +106,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       model: files ? buildModel(files) : undefined,
       files,
       schema,
-      configYml: files?.['.reqbase/config.yml'],
+      configYml: files?.['.specquill/config.yml'],
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
   }, [writable?.id, effBranch, theme, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView]);

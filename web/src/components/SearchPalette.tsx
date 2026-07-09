@@ -35,10 +35,10 @@ export function SearchPalette() {
     };
     const onOpen = () => { setOpen(true); setQ(''); setSel(0); };
     window.addEventListener('keydown', onKey);
-    window.addEventListener('reqbase:search', onOpen);
+    window.addEventListener('specquill:search', onOpen);
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('reqbase:search', onOpen);
+      window.removeEventListener('specquill:search', onOpen);
     };
   }, []);
 

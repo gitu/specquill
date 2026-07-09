@@ -54,7 +54,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
     let gone = false;
     (async () => {
       try {
-        const res = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-Reqbase': '1' } });
+        const res = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-SpecQuill': '1' } });
         if (res.status === 404) {
           // fresh sketch: file is created on first save
           if (!gone) setPngScene({ scene: { elements: [], appState: {}, files: {} }, sha: '' });
@@ -126,7 +126,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
         const scene = {
           type: 'excalidraw',
           version: 2,
-          source: 'reqbase',
+          source: 'specquill',
           elements: api.getSceneElements(),
           appState: { gridSize: null, viewBackgroundColor: '#ffffff' },
           files: api.getFiles(),
