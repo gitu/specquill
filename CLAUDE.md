@@ -45,6 +45,28 @@ from the code.
 
 ## Domain model / invariants
 
+- **Projects vs sources** (config-split): a **project** is a writable workspace
+  = git repo + optional `content_root` subfolder (monorepo). A **source** is a
+  read-only catalog entry projects reference. `internal/project` is the ONLY
+  place project-relative ↔ full repo paths are mapped (MapIn/MapOut); store rows
+  and git ops use full paths, the wire format is project-relative.
+- **4-stage authorization**: (1) catalog sources+credentials in app YAML/admin,
+  (2) grants attach a source to a tenant, (3) in-repo `.specquill/config.yml`
+  `references:` SELECT granted sources (read from the DEFAULT branch only), (4)
+  roles viewer<member<admin. In-repo config can only select already-granted
+  sources — it can NEVER mint access. `EffectiveReferences` = selection ∩ grants.
+- **Copilot grounding**: grounded reference sources join the system prompt under
+  `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
+  draft edits refuse any `~`-prefixed path.
+- **Non-git sources = importer mirror repos**: url/openapi/confluence sources are
+  remote-less gitx repos (`Mirror: true`, `git init --bare`) that `internal/
+  importer`'s Runner populates via `SnapshotMirror` (full-tree bare-repo commit,
+  idempotent). Credentials are env-only via `token_env`; `email:token` → HTTP
+  Basic (Atlassian Cloud), a bare token → Bearer. **Dev quirk**: the demo
+  `platform-api` openapi source self-fetches `http://127.0.0.1:8643/demo-openapi.
+  json`, so its boot import errors ("connection refused") before the listener is
+  up — it goes green on the next interval or a manual `POST /api/sources/platform-api/sync`
+  (or the Admin "Sync now" button).
 - **Protected main**: the default branch is never edited; the first edit
   auto-creates/switches to the caller's `ws/<user>` branch (claimed in Postgres).
   Direct writes to protected branches 403 (`protected_branch`).
