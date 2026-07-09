@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
-import { api } from '../api/client';
+import { api, RepoInfo } from '../api/client';
+import { useRepos } from '../api/hooks';
 
 interface ProjectRow {
   id: string;
@@ -16,6 +17,8 @@ interface ProjectRow {
 export function AdminView() {
   const qc = useQueryClient();
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectRow[]>('/api/projects') });
+  const repos = useRepos();
+  const sources = (repos.data || []).filter((r) => r.kind === 'source');
   const [form, setForm] = useState({ id: '', remote: '', contentRoot: '' });
   const [error, setError] = useState('');
 
@@ -81,7 +84,54 @@ export function AdminView() {
             </button>
           </form>
         </div>
+
+        {sources.length > 0 && (
+          <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+            <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Reference sources</div>
+            {sources.map((sourceRow) => (
+              <SourceRow key={sourceRow.id} source={sourceRow} onError={setError} />
+            ))}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// SourceRow shows one granted reference source. Importer-backed sources
+// (url/openapi/confluence) carry their last-sync status and a manual re-import
+// button; plain git sources show only their name.
+function SourceRow({ source, onError }: { source: RepoInfo; onError: (m: string) => void }) {
+  const qc = useQueryClient();
+  const sync = useMutation({
+    mutationFn: () => api<{ status: string; fileCount: number }>(`/api/sources/${source.id}/sync`, { method: 'POST' }),
+    onSuccess: () => {
+      onError('');
+      qc.invalidateQueries({ queryKey: ['repos'] });
+      qc.invalidateQueries({ queryKey: ['tree'] });
+    },
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  const ok = source.syncStatus !== 'error';
+  return (
+    <div style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+      <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600")}>{source.id}</span>
+      {source.importer && (
+        <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--surface-2);color:var(--text-3)')}>{source.importer}</span>
+      )}
+      {source.okf && <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--data-bg);color:var(--data)')}>OKF</span>}
+      {source.syncStatus && (
+        <span title={source.syncError} style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' + (ok ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--reg-bg);color:var(--reg)'))}>
+          {ok ? 'synced' : 'error'}
+        </span>
+      )}
+      <span style={sx('flex:1')} />
+      {source.importer && (
+        <button onClick={() => sync.mutate()} disabled={sync.isPending}
+          style={sx('height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer')}>
+          {sync.isPending ? 'Importing…' : 'Sync now'}
+        </button>
+      )}
     </div>
   );
 }

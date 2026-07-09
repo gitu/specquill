@@ -74,8 +74,10 @@ func rebind(q string) string {
 }
 
 func (s *Store) exec(q string, args ...any) (sql.Result, error) { return s.db.Exec(rebind(q), args...) }
-func (s *Store) query(q string, args ...any) (*sql.Rows, error) { return s.db.Query(rebind(q), args...) }
-func (s *Store) queryRow(q string, args ...any) *sql.Row        { return s.db.QueryRow(rebind(q), args...) }
+func (s *Store) query(q string, args ...any) (*sql.Rows, error) {
+	return s.db.Query(rebind(q), args...)
+}
+func (s *Store) queryRow(q string, args ...any) *sql.Row { return s.db.QueryRow(rebind(q), args...) }
 
 // ---------------------------------------------------------------- users
 

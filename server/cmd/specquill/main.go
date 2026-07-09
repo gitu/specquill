@@ -30,6 +30,7 @@ import (
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/importer"
 	"specquill/server/internal/scaffold"
 	"specquill/server/internal/store"
 	"specquill/server/internal/webui"
@@ -181,6 +182,18 @@ func serve(configPath string, dev bool) error {
 	}
 	git.StartSyncLoops()
 
+	// importer.Runner materializes non-git sources (url/openapi/confluence) into
+	// their mirror repos on a schedule; git.Init() has already created the empty
+	// bare repos, Start() does the first import
+	imp := importer.NewRunner(git, st)
+	for _, sc := range cfg.Sources {
+		if !sc.IsGit() {
+			imp.Register(def.Slug, def.ID, sc)
+			log.Printf("importer registered: %s (%s)", sc.Name, sc.Kind)
+		}
+	}
+	imp.Start(context.Background())
+
 	var oidcAuth *auth.OIDC
 	if cfg.Auth.OIDC.Enabled {
 		oidcAuth, err = auth.NewOIDC(context.Background(), cfg)
@@ -206,6 +219,7 @@ func serve(configPath string, dev bool) error {
 		OIDC:     oidcAuth,
 		AI:       aiClient,
 		Bus:      bus,
+		Importer: imp,
 		Dist:     dist,
 		Dev:      dev,
 	})

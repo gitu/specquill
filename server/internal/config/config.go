@@ -30,6 +30,10 @@ type RepoConfig struct {
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	ProtectedBranches []string      `yaml:"protected_branches"` // default: [default_branch]
 	ContentRoot       string        `yaml:"-"`                  // set from the owning project
+	// Mirror marks a remote-less source repo whose content is materialized by
+	// an importer (kind url|openapi|confluence), not cloned/fetched from a
+	// remote. ensure() inits it empty; the importer.Runner commits snapshots.
+	Mirror bool `yaml:"-"`
 }
 
 // SourceConfig is a stage-1 catalog entry: a named external source that
@@ -38,12 +42,18 @@ type RepoConfig struct {
 // environment via token_env — never from the DB or in-repo config.
 type SourceConfig struct {
 	Name          string        `yaml:"name"`
-	Kind          string        `yaml:"kind"` // git | url | openapi | confluence
-	Remote        string        `yaml:"remote"`
+	Kind          string        `yaml:"kind"`   // git | url | openapi | confluence
+	Remote        string        `yaml:"remote"` // git: clone URL; else: importer endpoint
 	TokenEnv      string        `yaml:"token_env"`
 	DefaultBranch string        `yaml:"default_branch"`
 	SyncInterval  time.Duration `yaml:"sync_interval"`
+	// importer-specific (non-git kinds):
+	URLs  []string `yaml:"urls"`  // url: explicit page list (else Remote is the single page)
+	Space string   `yaml:"space"` // confluence: space key to mirror
 }
+
+// IsGit reports whether the source is a plain git clone (vs an importer mirror).
+func (s SourceConfig) IsGit() bool { return s.Kind == "" || s.Kind == "git" }
 
 // ProjectConfig is a writable workspace: a git repo plus an optional
 // content_root subfolder (monorepo case; "" = repo root).
@@ -263,12 +273,18 @@ func (c *Config) Normalize() {
 		})
 	}
 	for _, src := range c.Sources {
-		if src.Kind != "git" {
-			continue // non-git sources materialize as mirror repos later (importers)
+		if src.IsGit() {
+			c.Repos = append(c.Repos, RepoConfig{
+				ID: src.Name, Mode: ReadOnly, Remote: src.Remote, DefaultBranch: src.DefaultBranch,
+				TokenEnv: src.TokenEnv, SyncInterval: src.SyncInterval,
+			})
+			continue
 		}
+		// non-git sources are remote-less mirror repos: gitx inits them empty
+		// and the importer.Runner commits fetched snapshots. The importer, not
+		// the gitx sync loop, drives updates — so no git SyncInterval.
 		c.Repos = append(c.Repos, RepoConfig{
-			ID: src.Name, Mode: ReadOnly, Remote: src.Remote, DefaultBranch: src.DefaultBranch,
-			TokenEnv: src.TokenEnv, SyncInterval: src.SyncInterval,
+			ID: src.Name, Mode: ReadOnly, DefaultBranch: src.DefaultBranch, Mirror: true,
 		})
 	}
 }
@@ -317,15 +333,23 @@ func (c *Config) validate() error {
 	}
 	kinds := map[string]bool{"git": true, "url": true, "openapi": true, "confluence": true}
 	for i, src := range c.Sources {
-		if src.Name == "" || src.Remote == "" {
-			return fmt.Errorf("source %d: name and remote are required", i)
+		if src.Name == "" {
+			return fmt.Errorf("source %d: name is required", i)
 		}
 		if seen[src.Name] {
 			return fmt.Errorf("duplicate project/source id %q", src.Name)
 		}
 		seen[src.Name] = true
-		if !kinds[src.Kind] {
+		if src.Kind != "" && !kinds[src.Kind] {
 			return fmt.Errorf("source %s: kind must be git, url, openapi or confluence", src.Name)
+		}
+		// a url source may list its pages in `urls:` instead of a single remote;
+		// every other kind needs an endpoint/clone URL in `remote:`
+		if src.Remote == "" && !(src.Kind == "url" && len(src.URLs) > 0) {
+			return fmt.Errorf("source %s: remote is required", src.Name)
+		}
+		if src.Kind == "confluence" && src.Space == "" {
+			return fmt.Errorf("source %s: confluence sources require a space", src.Name)
 		}
 	}
 	for _, g := range c.Grants {

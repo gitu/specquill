@@ -58,7 +58,7 @@ repos:
 // The two yml files shipped in the repo must keep loading.
 func TestShippedConfigsLoad(t *testing.T) {
 	cases := map[string]struct{ projects, sources int }{
-		"specquill.dev.yml":     {2, 1}, // trading-specs + the monorepo specquill-docs example
+		"specquill.dev.yml":     {2, 2}, // trading-specs + specquill-docs; regulations (git) + platform-api (openapi)
 		"specquill.example.yml": {1, 1},
 	}
 	for f, want := range cases {
@@ -84,9 +84,13 @@ grants: [reg]
 	if cfg.Projects[0].ContentRoot != "docs/specs" {
 		t.Fatalf("content_root not cleaned: %q", cfg.Projects[0].ContentRoot)
 	}
-	// clone registry: the project + the git source; openapi materializes later
-	if len(cfg.Repos) != 2 || cfg.Repos[0].ID != "specs" || cfg.Repos[0].ContentRoot != "docs/specs" || cfg.Repos[1].ID != "reg" {
+	// clone registry: the project, the git source, and the openapi source as a
+	// remote-less mirror repo (populated by the importer.Runner)
+	if len(cfg.Repos) != 3 || cfg.Repos[0].ID != "specs" || cfg.Repos[0].ContentRoot != "docs/specs" || cfg.Repos[1].ID != "reg" {
 		t.Fatalf("clone registry: %+v", cfg.Repos)
+	}
+	if api := cfg.Repos[2]; api.ID != "api" || !api.Mirror || api.Remote != "" || api.Mode != ReadOnly {
+		t.Fatalf("openapi source should materialize as a remote-less mirror: %+v", api)
 	}
 	if len(cfg.Grants) != 1 || cfg.Grants[0] != "reg" {
 		t.Fatalf("grants: %v", cfg.Grants)

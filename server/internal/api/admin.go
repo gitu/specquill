@@ -94,6 +94,34 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
+// POST /api/sources/{name}/sync — re-import a granted, importer-backed source
+// now. Member-gated and grant-gated: a tenant can only trigger a source it has
+// been granted (stage 2). Returns the fresh import status.
+func (s *Server) syncSource(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.tenant(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if _, err := s.store.GrantedSource(t.ID, name); err != nil {
+		jsonError2(w, http.StatusForbidden, "source "+name+" is not granted to this tenant", "source_forbidden")
+		return
+	}
+	if s.importer == nil || !s.importer.Manages(t.Slug, name) {
+		jsonError(w, http.StatusBadRequest, "source "+name+" is not an importer source")
+		return
+	}
+	rec, err := s.importer.Sync(r.Context(), t.Slug, name)
+	if err != nil {
+		jsonError2(w, http.StatusBadGateway, err.Error(), "import_failed")
+		return
+	}
+	s.publish("repos-changed", t.Slug+"/"+name, "")
+	jsonOK(w, map[string]any{
+		"name": rec.Name, "status": rec.Status, "fileCount": rec.FileCount, "headSha": rec.HeadSHA,
+	})
+}
+
 // sourceIsOKF reports whether a source's default branch is an OKF bundle
 // (root index.md declaring okf_version).
 func (s *Server) sourceIsOKF(tenantSlug, name string) bool {

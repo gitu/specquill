@@ -21,6 +21,12 @@ sources:
     kind: git
     remote: ./data/origin/regulations.git
     sync_interval: 1m
+  # importer demo: an OpenAPI spec the server serves to itself (web/public/),
+  # mirrored into a read-only repo so the copilot can ground on the API contract
+  - name: platform-api
+    kind: openapi
+    remote: http://127.0.0.1:8643/demo-openapi.json
+    sync_interval: 1h
 
 git:
   committer_name: specquill

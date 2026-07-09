@@ -10,19 +10,46 @@ base_url: https://specquill.example.com
 database:
   url_env: SPECQUILL_DATABASE_URL   # e.g. postgres://…neon.tech/specquill?sslmode=require
 
-repos:
-  # exactly one writable repo is the editing workspace
+# projects are writable editing workspaces (a git repo, optionally rooted at a
+# content_root subfolder for monorepos)
+projects:
   - id: trading-specs
-    mode: writable
     remote: https://github.com/acme/trading-specs.git
     default_branch: main
     token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
+    # content_root: docs/specs           # monorepo: workspace lives in a subfolder
 
-  # any number of read-only input repos (fetched, never written)
-  - id: regulations
-    mode: readonly
+# sources are the read-only reference catalog projects may reference and the
+# copilot may ground on. Credentials always come from token_env — never inline.
+sources:
+  # git: a read-only input repo, fetched and never written
+  - name: regulations
+    kind: git
     remote: https://github.com/acme/regulations.git
     sync_interval: 5m
+
+  # importers mirror non-git sources into read-only repos (materialized locally,
+  # refreshed on sync_interval or on demand via POST /api/sources/{name}/sync):
+  #
+  # url — fetch a list of pages (HTML reduced to text)
+  # - name: handbook
+  #   kind: url
+  #   urls: [https://acme.com/policies/retention, https://acme.com/policies/reporting]
+  #
+  # openapi — mirror an API contract as a readable index + the raw spec
+  # - name: platform-api
+  #   kind: openapi
+  #   remote: https://api.acme.com/openapi.json
+  #
+  # confluence — mirror a space's pages (token_env = "email:api_token" for Cloud)
+  # - name: wiki
+  #   kind: confluence
+  #   remote: https://acme.atlassian.net/wiki
+  #   space: REG
+  #   token_env: SPECQUILL_CONFLUENCE_TOKEN
+
+# grants attach sources to the default (self-host) tenant; omit to grant all
+grants: [regulations]
 
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by

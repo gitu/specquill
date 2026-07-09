@@ -34,6 +34,9 @@ func (r *Repo) credentialArgsEnv() (args []string, env []string) {
 
 // Fetch updates remote-tracking state (writable) or heads (read-only).
 func (r *Repo) Fetch() error {
+	if r.Cfg.Mirror {
+		return nil // no remote — the importer.Runner drives mirror updates
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	args, env := r.credentialArgsEnv()

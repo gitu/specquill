@@ -67,6 +67,9 @@ export interface RepoInfo {
   mode: 'writable' | 'readonly'; // legacy alias of kind
   contentRoot?: string;          // monorepo projects: subfolder the API roots at
   okf?: boolean;                 // source is an OKF bundle
+  importer?: string;             // non-git source kind: url | openapi | confluence
+  syncStatus?: 'ok' | 'error';   // last import outcome (importer sources)
+  syncError?: string;
   defaultBranch: string;
   protectedBranches: string[];
   syncedAt?: string;

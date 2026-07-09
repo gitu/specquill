@@ -1,0 +1,27 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Platform API",
+    "version": "1.4.0",
+    "description": "Demo OpenAPI source mirrored by the SpecQuill importer so the copilot can ground on the platform's contract."
+  },
+  "paths": {
+    "/trades": {
+      "get": { "summary": "List executed trades" },
+      "post": { "summary": "Book a new trade" }
+    },
+    "/trades/{id}": {
+      "get": { "summary": "Fetch a single trade" }
+    },
+    "/reports/rts22": {
+      "get": { "summary": "Download the RTS 22 transaction report" }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Trade": {},
+      "Execution": {},
+      "TransactionReport": {}
+    }
+  }
+}

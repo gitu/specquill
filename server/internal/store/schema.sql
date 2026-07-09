@@ -166,3 +166,16 @@ CREATE TABLE IF NOT EXISTS source_grants (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, source_id)
 );
+
+-- last-import status per non-git (importer) source, keyed by tenant + source
+-- name. Populated by importer.Runner; surfaced in the sources list + sync API.
+CREATE TABLE IF NOT EXISTS source_syncs (
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
+  name       TEXT NOT NULL,
+  status     TEXT NOT NULL,                       -- ok | error
+  error      TEXT NOT NULL DEFAULT '',
+  file_count INT NOT NULL DEFAULT 0,
+  head_sha   TEXT NOT NULL DEFAULT '',
+  synced_at  BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, name)
+);

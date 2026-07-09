@@ -17,6 +17,7 @@ import (
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/importer"
 	"specquill/server/internal/store"
 )
 
@@ -30,7 +31,8 @@ type Server struct {
 	bus      *events.Bus // nil-safe
 	hub      *collab.Hub
 	devUser  *store.User
-	srcCache *srcCache // grounding source snapshots, keyed by repo key + head SHA
+	srcCache *srcCache        // grounding source snapshots, keyed by repo key + head SHA
+	importer *importer.Runner // nil when no non-git sources are configured
 }
 
 type Options struct {
@@ -40,6 +42,7 @@ type Options struct {
 	AI       *ai.Client  // nil when disabled
 	Bus      *events.Bus // nil-safe
 	Hub      *collab.Hub
+	Importer *importer.Runner // nil when no non-git sources are configured
 	Dist     fs.FS
 	Dev      bool
 }
@@ -49,7 +52,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, srcCache: newSrcCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -72,6 +75,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/projects", s.listProjects)
 	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
 	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
+	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
 	apiMux.HandleFunc("GET /api/repos/{repo}/files/{path...}", s.repoH(s.getFile))

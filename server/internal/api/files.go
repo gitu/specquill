@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"specquill/server/internal/project"
 	"time"
-
 )
 
 func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
@@ -13,7 +12,10 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		Kind              string   `json:"kind"` // project | source
 		Mode              string   `json:"mode"` // legacy alias of kind
 		ContentRoot       string   `json:"contentRoot,omitempty"`
-		OKF               bool     `json:"okf,omitempty"` // source is an OKF bundle
+		OKF               bool     `json:"okf,omitempty"`      // source is an OKF bundle
+		Importer          string   `json:"importer,omitempty"` // non-git source kind (url|openapi|confluence)
+		SyncStatus        string   `json:"syncStatus,omitempty"`
+		SyncError         string   `json:"syncError,omitempty"`
 		DefaultBranch     string   `json:"defaultBranch"`
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
@@ -29,11 +31,14 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	grantedNames := map[string]bool{}
+	grantedKind := map[string]string{}
 	if granted, err := s.store.TenantGrantedSources(t.ID); err == nil {
 		for _, src := range granted {
 			grantedNames[src.Name] = true
+			grantedKind[src.Name] = src.Kind
 		}
 	}
+	syncs, _ := s.store.TenantSourceSyncs(t.ID)
 	var out []repoInfo
 	for _, repo := range s.git.Repos() {
 		if repo.Tenant() != t.Slug {
@@ -57,6 +62,12 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		if kind == "source" {
 			info.OKF = s.sourceIsOKF(t.Slug, repo.Cfg.ID)
+			if k := grantedKind[repo.Cfg.ID]; k != "" && k != "git" {
+				info.Importer = k
+			}
+			if rec, ok := syncs[repo.Cfg.ID]; ok {
+				info.SyncStatus, info.SyncError = rec.Status, rec.Error
+			}
 		}
 		if t := repo.LastFetch(); !t.IsZero() {
 			info.SyncedAt = t.UTC().Format(time.RFC3339)

@@ -195,6 +195,15 @@ func (r *Repo) ensure() error {
 	if err := os.MkdirAll(filepath.Dir(r.gitDir), 0o755); err != nil {
 		return err
 	}
+	// mirror repos have no remote: init an empty bare repo whose default branch
+	// the importer.Runner will populate. No clone, no fetch.
+	if r.Cfg.Mirror {
+		_, err := run("", nil, "init", "--bare", "-b", r.Cfg.DefaultBranch, r.gitDir)
+		if err == nil {
+			r.setLastFetch(time.Now())
+		}
+		return err
+	}
 	if _, err := run("", nil, "clone", "--bare", r.Cfg.Remote, r.gitDir); err != nil {
 		return err
 	}
