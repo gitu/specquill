@@ -7,6 +7,7 @@ var types = map[string]SpecType{
 	"requirements": {
 		Key: "requirements", Dir: "requirements", Title: "Requirements (REQ-*)",
 		Starter: `---
+type: Requirement
 id: REQ-001
 title: Example requirement
 status: draft
@@ -24,7 +25,12 @@ The system MUST demonstrate what a well-formed requirement looks like.
 > **REQ-001.1 · MUST** — Each requirement SHALL contain at least one atomic,
 > testable statement using RFC-2119 language.
 `,
-		Skill: `# Skill: writing requirements
+		Skill: `---
+type: Skill
+title: Writing requirements
+---
+
+# Skill: writing requirements
 
 When asked to draft or edit a requirement (requirements/REQ-*.md):
 
@@ -38,6 +44,7 @@ When asked to draft or edit a requirement (requirements/REQ-*.md):
 	"specs": {
 		Key: "specs", Dir: "specs", Title: "Specifications",
 		Starter: `---
+type: Specification
 title: Example specification
 status: draft
 satisfies: []
@@ -48,7 +55,12 @@ satisfies: []
 Describes HOW requirements are realized. Link the requirements this spec
 satisfies in the frontmatter; requirements point back via implements.
 `,
-		Skill: `# Skill: writing specifications
+		Skill: `---
+type: Skill
+title: Writing specifications
+---
+
+# Skill: writing specifications
 
 When asked to draft or edit a spec (specs/*.md):
 
@@ -60,7 +72,12 @@ When asked to draft or edit a spec (specs/*.md):
 	},
 	"regulations": {
 		Key: "regulations", Dir: "regulations", Title: "Regulations & external drivers (often a read-only reference repo)",
-		Skill: `# Skill: referencing regulations
+		Skill: `---
+type: Skill
+title: Referencing regulations
+---
+
+# Skill: referencing regulations
 
 When working with regulations/*.md:
 
@@ -72,8 +89,10 @@ When working with regulations/*.md:
 	"data-mappings": {
 		Key: "data-mappings", Dir: "data-mappings", Title: "Data mappings (field-level lineage)",
 		Starter: `---
+type: Data Mapping
 title: Example entity mapping
 entity: example
+resource: ""            # URI of the underlying asset, e.g. bigquery://project/dataset/table
 ---
 
 # Example entity mapping
@@ -82,7 +101,12 @@ entity: example
 |---|---|---|---|
 | example.id | upstream.id | report.ID | copy |
 `,
-		Skill: `# Skill: writing data mappings
+		Skill: `---
+type: Skill
+title: Writing data mappings
+---
+
+# Skill: writing data mappings
 
 When asked to draft or edit a data mapping (data-mappings/*.md):
 
@@ -94,6 +118,7 @@ When asked to draft or edit a data mapping (data-mappings/*.md):
 	"changes": {
 		Key: "changes", Dir: "changes", Title: "Change records (incoming deltas: regulatory, product, technical)",
 		Starter: `---
+type: Change Record
 title: Example change record
 status: triage
 source: product
@@ -104,7 +129,12 @@ source: product
 What changed upstream, which requirements/specs/mappings it reaches, and the
 decision taken. Change records drive the change inbox on the dashboard.
 `,
-		Skill: `# Skill: writing change records
+		Skill: `---
+type: Skill
+title: Writing change records
+---
+
+# Skill: writing change records
 
 When asked to draft a change record (changes/*.md):
 
@@ -116,6 +146,7 @@ When asked to draft a change record (changes/*.md):
 	"decisions": {
 		Key: "decisions", Dir: "decisions", Title: "Decision records (ADRs)",
 		Starter: `---
+type: Decision
 id: ADR-001
 title: Example decision
 status: accepted
@@ -129,7 +160,12 @@ status: accepted
 
 ## Consequences
 `,
-		Skill: `# Skill: writing decision records
+		Skill: `---
+type: Skill
+title: Writing decision records
+---
+
+# Skill: writing decision records
 
 When asked to draft an ADR (decisions/ADR-*.md):
 
@@ -141,6 +177,7 @@ When asked to draft an ADR (decisions/ADR-*.md):
 	"glossary": {
 		Key: "glossary", Dir: "glossary", Title: "Glossary (shared vocabulary)",
 		Starter: `---
+type: Glossary
 title: Glossary
 ---
 
@@ -149,7 +186,12 @@ title: Glossary
 **Term** — definition. Keep one canonical definition per term; requirements
 and specs link here instead of redefining.
 `,
-		Skill: `# Skill: maintaining the glossary
+		Skill: `---
+type: Skill
+title: Maintaining the glossary
+---
+
+# Skill: maintaining the glossary
 
 - One canonical definition per term; when documents disagree with the glossary, the glossary wins and the documents get fixed.
 - Definitions are one or two sentences, no circularity, no examples baked in.
@@ -159,9 +201,10 @@ and specs link here instead of redefining.
 }
 
 const schemaJSON = `{
-  "order": ["id", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "updated"],
+  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "updated"],
   "fields": {
     "id": { "label": "ID", "type": "mono" },
+    "type": { "label": "Type", "type": "text" },
     "status": { "label": "Status", "type": "badge", "values": { "draft": "reg", "review": "prod", "approved": "data", "accepted": "data", "triage": "reg", "superseded": "text" } },
     "priority": { "label": "Priority", "type": "badge", "values": { "must": "reg", "should": "prod", "could": "text" } },
     "owner": { "label": "Owner", "type": "text" },
@@ -175,7 +218,12 @@ const schemaJSON = `{
 }
 `
 
-const authoringSkill = `# Skill: authoring in this workspace
+const authoringSkill = `---
+type: Skill
+title: Authoring in this workspace
+---
+
+# Skill: authoring in this workspace
 
 General rules the AI follows for every document it drafts or edits here:
 

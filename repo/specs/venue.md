@@ -1,5 +1,6 @@
 ---
 id: SPEC-venue
+type: Specification
 title: Venue Identification — Technical Spec
 status: approved
 implements:

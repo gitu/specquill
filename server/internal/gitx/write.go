@@ -240,6 +240,10 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 			return "", err
 		}
 	}
+	// OKF bundles: regenerate index.md/log.md so the derived reserved files
+	// ride in the same commit (no-op unless the workspace opted in)
+	r.regenerateOKF(wt, message, authorName)
+
 	// the human is both author AND committer; the service records its
 	// involvement as a Co-authored-by trailer instead
 	env := []string{

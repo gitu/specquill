@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildModel, excalidrawToSvg, parseProps, stripFrontmatter } from './model';
+import { buildModel, excalidrawToSvg, extractReferences, isReservedMd, parseProps, stripFrontmatter } from './model';
 
 const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '../../../repo');
 
@@ -67,5 +67,31 @@ describe('excalidrawToSvg', () => {
     const svg = excalidrawToSvg(JSON.parse(raw));
     expect(svg.startsWith('<svg')).toBe(true);
     expect(svg).toContain('Transform');
+  });
+});
+
+describe('OKF support', () => {
+  it('reserved files are not concepts', () => {
+    expect(isReservedMd('index.md')).toBe(true);
+    expect(isReservedMd('requirements/index.md')).toBe(true);
+    expect(isReservedMd('log.md')).toBe(true);
+    expect(isReservedMd('requirements/REQ-001.md')).toBe(false);
+    // the fixture now carries generated index.md files — entity counts must
+    // not absorb them (checked by the counts above), and buildModel must not
+    // create reference edges from them either
+    const model = buildModel({ ...loadRepo(), 'requirements/index.md': '# requirements\n\n- [x](/specs/venue.md)\n' });
+    expect(model.references.every((r) => !isReservedMd(r.from) && !isReservedMd(r.to))).toBe(true);
+  });
+
+  it('extracts body links as untyped references', () => {
+    const refs = extractReferences({
+      'specs/a.md': '---\ntype: Specification\n---\n\nSee [the req](../requirements/REQ-1.md#sec) and [ext](https://x.test/y.md).\n\n```md\n[not a link](../requirements/REQ-2.md)\n```\n',
+      'requirements/REQ-1.md': '---\ntype: Requirement\n---\n\nAbsolute link to [a](/specs/a.md), self [me](REQ-1.md), broken [b](gone.md).\n',
+      'requirements/REQ-2.md': '---\ntype: Requirement\n---\n\nno links\n',
+    });
+    expect(refs).toEqual([
+      { from: 'specs/a.md', to: 'requirements/REQ-1.md' },   // relative, #anchor stripped
+      { from: 'requirements/REQ-1.md', to: 'specs/a.md' },   // bundle-absolute
+    ]);
   });
 });

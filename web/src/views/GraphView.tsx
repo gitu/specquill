@@ -37,7 +37,7 @@ export function GraphView() {
 
         <div style={{ ...sx('position:relative;width:900px;margin:70px auto 40px;min-width:900px'), height: g.H }}>
           <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
-            {g.edges.map((e, i) => <path key={i} d={e.d} fill="none" stroke={e.stroke} strokeWidth="1.8" />)}
+            {g.edges.map((e, i) => <path key={i} d={e.d} fill="none" stroke={e.stroke} strokeWidth="1.8" strokeDasharray={e.dash ? '5 4' : undefined} />)}
           </svg>
           {g.nodes.map((n) => (
             <div key={n.id} style={sx(n.boxStyle)}>

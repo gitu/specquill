@@ -18,7 +18,7 @@ server/           Go single binary (reqbased)
                     as Co-authored-by), structured diffs, merge-tree merges,
                     env-token push/fetch
   internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
-                    opaque session cookies in SQLite
+                    opaque session cookies in Postgres
   internal/store    Postgres (pgx; Neon in prod): users, sessions, PRs,
                     comments, approvals, workspace claims, collab room
                     logs — content never leaves git
@@ -86,6 +86,12 @@ Key properties:
   hamburger drawer, copilot an overlay) and documents read full-width.
 - **Read-only input repos** (e.g. a regulations repo) are fetched on an interval,
   browsable in the tree (🔒), and refuse writes server-side.
+- **OKF bundles.** Workspaces conform to the
+  [Open Knowledge Format](docs/okf.md) (v0.1): every document carries a
+  `type`, and opted-in bundles get `index.md` listings + a `log.md` change
+  history regenerated on every commit — readable by any OKF consumer or
+  agent straight from git. Untyped OKF body links show up as dashed
+  reference edges in the traceability graph.
 - **Workspace onboarding.** `reqbased init <dir> [-types requirements,specs,changes,…]`
   scaffolds a new workspace repo: folder skeleton per chosen document family
   (requirements, specs, regulations, data-mappings, changes, decisions, glossary),

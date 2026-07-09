@@ -1,5 +1,6 @@
 ---
 id: SPEC-txn-report
+type: Specification
 title: Transaction Reporting — Technical Spec
 status: in_review
 implements:

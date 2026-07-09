@@ -1,5 +1,6 @@
 ---
 id: CHG-2026-06-partial-fills
+type: Change Record
 title: Support partial-fill reporting
 source: product
 authority: Trading desk

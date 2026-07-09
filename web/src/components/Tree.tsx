@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useMe, usePresence, useRepos, useStatus, useTree } from '../api/hooks';
 import { buildTree } from '../lib/derive';
+import { newDocTemplate } from '../lib/newdoc';
+import { api } from '../api/client';
+import { useWorkspace } from '../hooks/useWorkspace';
 import { CommitDialog } from './CommitDialog';
 import { IconChevD, IconChevR, IconLock, IconPlus, IconSync } from './icons';
 
@@ -55,6 +59,30 @@ export function Tree() {
   const presence = usePresence(app.repoId);
   const [commitOpen, setCommitOpen] = useState(false);
   const readOnlyRepos = (repos.data || []).filter((r) => r.mode === 'readonly');
+  const qc = useQueryClient();
+  const { ensureWritableBranch } = useWorkspace();
+
+  // new markdown document: family-typed frontmatter, saved as a draft on the
+  // (auto-created) writable branch, opened in the editor
+  const newFile = async () => {
+    const raw = window.prompt('New file path (e.g. requirements/REQ-101.md):');
+    if (!raw) return;
+    let path = raw.trim().replace(/^\/+/, '');
+    if (!path) return;
+    if (!path.endsWith('.md')) path += '.md';
+    try {
+      const branch = await ensureWritableBranch();
+      await api<{ sha: string }>(`/api/repos/${app.repoId}/files/${path}?branch=${encodeURIComponent(branch)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: newDocTemplate(path), baseSha: '' }),
+      });
+      qc.invalidateQueries({ queryKey: ['status', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
+      nav('/editor/' + path);
+    } catch (e) {
+      window.alert('create failed: ' + String((e as Error).message || e));
+    }
+  };
 
   // who is co-editing what: dots on files roomed on this branch, a status
   // line for live sessions on other branches (discoverability)
@@ -82,7 +110,7 @@ export function Tree() {
           <IconChevR />{(app.repoId || '').toUpperCase()}
         </div>
         <div style={sx('display:flex;gap:2px;color:var(--text-3)')}>
-          <span title="New file" style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconPlus /></span>
+          <span title="New file" onClick={newFile} style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconPlus /></span>
           <span title="Refresh" onClick={() => status.refetch()} style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconSync /></span>
         </div>
       </div>

@@ -1,5 +1,6 @@
 ---
 id: MAP-customer
+type: Data Mapping
 title: Customer / account — field lineage
 status: approved
 source_system: CRM

@@ -1,5 +1,6 @@
 ---
 id: MAP-trade
+type: Data Mapping
 title: Trade reporting — field lineage
 status: in_review
 source_system: OMS v4

@@ -1,3 +1,8 @@
+---
+type: Guide
+title: trading-specs
+---
+
 # trading-specs
 
 Requirements-engineering workspace, stored as plain markdown in git. `reqbase` (the UI)

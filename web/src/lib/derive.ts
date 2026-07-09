@@ -176,7 +176,7 @@ export interface GraphNode {
   id: string; col: number; label: string; sub: string; kind: string;
   x: number; y: number; w: number; boxStyle: string; labelStyle: string; subStyle: string;
 }
-export interface GraphEdge { d: string; stroke: string }
+export interface GraphEdge { d: string; stroke: string; dash?: boolean }
 
 export function buildGraph(model: WorkspaceModel) {
   const reqs = model.requirements, specs = model.specs, fields = model.fields;
@@ -216,11 +216,11 @@ export function buildGraph(model: WorkspaceModel) {
       : 'font-size:12px;font-weight:600;margin-top:1px;text-transform:capitalize';
   });
   const edges: GraphEdge[] = [];
-  const edge = (a: string, b: string, stroke: string) => {
+  const edge = (a: string, b: string, stroke: string, dash?: boolean) => {
     const p = idOf[a], q = idOf[b];
     if (!p || !q) return;
     const x1 = p.x + p.w, y1 = p.y, x2 = q.x, y2 = q.y, mx = (x1 + x2) / 2;
-    edges.push({ d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, stroke });
+    edges.push({ d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, stroke, dash });
   };
   const resolveField = (ref: string): DataField | undefined => {
     const a = ref.split('#')[1] || '';
@@ -230,6 +230,14 @@ export function buildGraph(model: WorkspaceModel) {
     r.drivers.forEach((d) => edge('src:' + (d.type + '|' + d.ref), 'req:' + r.path, sColor(d.type)));
     r.implements.filter((p) => p.startsWith('specs/')).forEach((sp) => edge('req:' + r.path, 'spec:' + sp, 'var(--border-2)'));
     r.maps_to.forEach((ref) => { const f = resolveField(ref); if (f) edge('req:' + r.path, 'field:' + f.name, 'var(--border-2)'); });
+  });
+  // untyped body-link references (OKF linking model) — dashed, and only
+  // where both documents have a node; typed edges take precedence
+  const nodeIdFor = (path: string) => (idOf['req:' + path] ? 'req:' + path : idOf['spec:' + path] ? 'spec:' + path : '');
+  const typed = new Set(reqs.flatMap((r) => r.implements.map((sp) => 'req:' + r.path + '>spec:' + sp)));
+  (model.references || []).forEach((ref) => {
+    const a = nodeIdFor(ref.from), b = nodeIdFor(ref.to);
+    if (a && b && !typed.has(a + '>' + b) && !typed.has(b + '>' + a)) edge(a, b, 'var(--border-2)', true);
   });
   return { nodes, edges, H, stats: { s: sources.length, r: reqs.length, sp: specs.length, f: fields.length } };
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"reqbase/server/internal/okf"
 )
 
 // SpecType is one onboardable document family.
@@ -55,6 +57,7 @@ func Init(dir, project string, chosen []string) error {
 
 	files := map[string]string{
 		"README.md":                    workspaceReadme(project, picked),
+		"index.md":                     "---\nokf_version: \"" + okf.Version + "\"\n---\n\n# Index\n",
 		".reqbase/schema.json":         schemaJSON,
 		".reqbase/skills/authoring.md": authoringSkill,
 	}
@@ -63,7 +66,7 @@ func Init(dir, project string, chosen []string) error {
 		if t.Starter != "" {
 			files[t.Dir+"/"+starterName(t)] = t.Starter
 		} else {
-			files[t.Dir+"/README.md"] = "# " + t.Title + "\n\nDocuments of type `" + t.Key + "` live here.\n"
+			files[t.Dir+"/README.md"] = "---\ntype: Guide\ntitle: " + t.Title + "\n---\n\n# " + t.Title + "\n\nDocuments of type `" + t.Key + "` live here.\n"
 		}
 	}
 	files["reqbase.yml.example"] = serverConfigStub(project)
@@ -79,6 +82,12 @@ func Init(dir, project string, chosen []string) error {
 		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 			return err
 		}
+	}
+
+	// the workspace is an OKF bundle (docs/okf: index.md carries okf_version)
+	// — generate the per-directory listings before the scaffold commit
+	if _, err := okf.GenerateIndexes(dir); err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); os.IsNotExist(err) {
@@ -125,6 +134,7 @@ func starterName(t SpecType) string {
 
 func workspaceReadme(project string, picked map[string]SpecType) string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "---\ntype: Guide\ntitle: %s\ndescription: reqbase workspace — requirements engineering as plain markdown in git.\n---\n\n", project)
 	fmt.Fprintf(&b, "# %s\n\nA reqbase workspace: requirements engineering as plain markdown in git.\n\n## Layout\n\n", project)
 	keys := make([]string, 0, len(picked))
 	for k := range picked {

@@ -1,5 +1,6 @@
 ---
 id: CHG-2026-05-dora-incident
+type: Change Record
 title: DORA — ICT incident reporting windows
 source: regulatory
 authority: ESAs
