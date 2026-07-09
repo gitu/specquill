@@ -55,10 +55,11 @@ export function Rail() {
                 onChange={(e) => app.setThemeMode(e.target.value as ThemeMode)}
                 style={sx('height:24px;padding:0 6px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer')}
               >
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-                <option value="system">System</option>
-                <option value="inverse">Opposite of system</option>
+                <option value="system">System ({app.systemTheme})</option>
+                {/* pins: the one opposing the OS first — it's the likely reach */}
+                {app.systemTheme === 'dark'
+                  ? [<option key="l" value="light">Light</option>, <option key="d" value="dark">Dark</option>]
+                  : [<option key="d" value="dark">Dark</option>, <option key="l" value="light">Light</option>]}
               </select>
             </div>
             <div style={sx('display:flex;align-items:center;gap:8px')}>
