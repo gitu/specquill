@@ -89,6 +89,15 @@ func (s *Server) tenantProject(w http.ResponseWriter, r *http.Request) (*project
 		jsonError(w, http.StatusNotFound, "unknown repo")
 		return nil, false
 	}
-	// sources (and any non-project repo) are browse-only through this API
-	return project.New(repo, id, "", !repo.Writable()), true
+	if repo.Writable() {
+		// a writable repo without a project row (test fixtures, migration
+		// gaps) still resolves as a root project
+		return project.New(repo, id, "", false), true
+	}
+	// read-only repos are SOURCES: browsing requires a stage-2 grant
+	if _, err := s.store.GrantedSource(t.ID, id); err != nil {
+		jsonError2(w, http.StatusForbidden, "source "+id+" is not granted to this tenant", "source_forbidden")
+		return nil, false
+	}
+	return project.New(repo, id, "", true), true
 }

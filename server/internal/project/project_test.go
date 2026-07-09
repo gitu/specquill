@@ -70,3 +70,33 @@ references:
 		t.Fatal("grounding must default false")
 	}
 }
+
+// The stage-3 grant matrix: granted selections pass, ungranted and unknown
+// become warnings, duplicates collapse — never access.
+func TestEffectiveReferences(t *testing.T) {
+	cfg := &Config{References: []Reference{
+		{Source: "eu-regulations", Grounding: true, Paths: []string{"mifid-ii/"}},
+		{Source: "eu-regulations"}, // duplicate: ignored
+		{Source: "revoked-source", Grounding: true},
+		{Source: "never-existed"},
+		{Source: ""}, // junk
+	}}
+	kinds := map[string]string{"eu-regulations": "git", "platform-api": "openapi"}
+
+	refs, warnings := EffectiveReferences(cfg, kinds)
+	if len(refs) != 1 || refs[0].Source != "eu-regulations" || refs[0].Kind != "git" || !refs[0].Grounding || refs[0].Paths[0] != "mifid-ii/" {
+		t.Fatalf("refs: %+v", refs)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+	for _, w := range warnings {
+		if !strings.Contains(w, "not granted") {
+			t.Fatalf("warning wording: %q", w)
+		}
+	}
+	// nil config = no refs, no warnings
+	if refs, warnings := EffectiveReferences(nil, kinds); refs != nil || warnings != nil {
+		t.Fatal("nil config must resolve to nothing")
+	}
+}

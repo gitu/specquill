@@ -66,6 +66,7 @@ export interface RepoInfo {
   kind: 'project' | 'source';
   mode: 'writable' | 'readonly'; // legacy alias of kind
   contentRoot?: string;          // monorepo projects: subfolder the API roots at
+  okf?: boolean;                 // source is an OKF bundle
   defaultBranch: string;
   protectedBranches: string[];
   syncedAt?: string;

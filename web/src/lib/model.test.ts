@@ -95,3 +95,12 @@ describe('OKF support', () => {
     ]);
   });
 });
+
+describe('cross-repo references', () => {
+  it('captures ~source links as external references, tolerantly', () => {
+    const refs = extractReferences({
+      'specs/a.md': '---\ntype: Specification\n---\n\nSee [MiFID II](~regulations/regulations/mifid-ii.md) and [again](~regulations/regulations/mifid-ii.md#art-26).\n',
+    });
+    expect(refs).toEqual([{ from: 'specs/a.md', to: '~regulations/regulations/mifid-ii.md', external: true }]);
+  });
+});

@@ -34,3 +34,38 @@ func ParseConfig(yml string) (*Config, error) {
 	}
 	return cfg, nil
 }
+
+// EffectiveReference is a reference that survived the grant intersection.
+type EffectiveReference struct {
+	Source    string   `json:"source"`
+	Kind      string   `json:"kind"`
+	OKF       bool     `json:"okf,omitempty"`
+	Paths     []string `json:"paths,omitempty"`
+	Grounding bool     `json:"grounding"`
+}
+
+// EffectiveReferences is THE stage-3 resolver (plan D5): the intersection of
+// the in-repo selection and the tenant's grants. It is a pure function — a
+// selection of an ungranted or unknown source becomes a warning, never
+// access. kinds maps granted source names to their kind.
+func EffectiveReferences(cfg *Config, kinds map[string]string) (refs []EffectiveReference, warnings []string) {
+	if cfg == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for _, r := range cfg.References {
+		if r.Source == "" || seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		kind, granted := kinds[r.Source]
+		if !granted {
+			warnings = append(warnings, "reference "+r.Source+" is not granted to this tenant")
+			continue
+		}
+		refs = append(refs, EffectiveReference{
+			Source: r.Source, Kind: kind, Paths: r.Paths, Grounding: r.Grounding,
+		})
+	}
+	return refs, warnings
+}

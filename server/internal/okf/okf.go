@@ -27,7 +27,12 @@ func Enabled(root string) bool {
 	if err != nil {
 		return false
 	}
-	s := string(b)
+	return EnabledContent(string(b))
+}
+
+// EnabledContent is the bare-read variant of Enabled — pass the content of
+// a root index.md (e.g. read from a bare clone without a worktree).
+func EnabledContent(s string) bool {
 	if !strings.HasPrefix(s, "---\n") {
 		return false
 	}

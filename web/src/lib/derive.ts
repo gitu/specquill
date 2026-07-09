@@ -236,9 +236,36 @@ export function buildGraph(model: WorkspaceModel) {
   const nodeIdFor = (path: string) => (idOf['req:' + path] ? 'req:' + path : idOf['spec:' + path] ? 'spec:' + path : '');
   const typed = new Set(reqs.flatMap((r) => r.implements.map((sp) => 'req:' + r.path + '>spec:' + sp)));
   (model.references || []).forEach((ref) => {
+    if (ref.external) return; // handled below
     const a = nodeIdFor(ref.from), b = nodeIdFor(ref.to);
     if (a && b && !typed.has(a + '>' + b) && !typed.has(b + '>' + a)) edge(a, b, 'var(--border-2)', true);
   });
+  // cross-repo references ("~source/path"): external nodes join the sources
+  // column with dashed borders + dashed edges from the linking document
+  const externals = (model.references || []).filter((r) => r.external && nodeIdFor(r.from));
+  if (externals.length) {
+    const seenExt = new Set<string>();
+    externals.forEach((ref) => {
+      const extID = 'ext:' + ref.to;
+      if (!seenExt.has(extID)) {
+        seenExt.add(extID);
+        const short = ref.to.split('/').pop()!.replace('.md', '');
+        const srcName = ref.to.slice(1).split('/')[0];
+        push(extID, 0, { label: '⇲ ' + short, sub: '~' + srcName, kind: 'src', color: 'var(--text-2)' });
+      }
+    });
+    // relayout + restyle the sources column with the new members
+    const col = nodes.filter((n) => n.col === 0);
+    col.forEach((o, i) => { o.x = colX[0]; o.w = colW[0]; o.y = Math.round((H / (col.length + 1)) * (i + 1)); });
+    seenExt.forEach((extID) => {
+      const n = idOf[extID];
+      const base = 'position:absolute;left:' + n.x + 'px;top:' + (n.y - 20) + 'px;width:' + n.w + 'px;padding:8px 10px;border-radius:9px;box-shadow:var(--shadow);';
+      n.boxStyle = base + 'background:var(--surface);border:1px dashed var(--border-2)';
+      n.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:var(--text-2)";
+      n.subStyle = 'font-size:11px;font-weight:600;margin-top:1px;color:var(--text-3)';
+    });
+    externals.forEach((ref) => edge('ext:' + ref.to, nodeIdFor(ref.from), 'var(--border-2)', true));
+  }
   return { nodes, edges, H, stats: { s: sources.length, r: reqs.length, sp: specs.length, f: fields.length } };
 }
 

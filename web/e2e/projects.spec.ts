@@ -53,3 +53,21 @@ test('management api: role-gated project lifecycle', async ({ request }) => {
   const del = await request.delete('/api/projects/trading-specs', { headers: H });
   expect(del.status()).toBe(409);
 });
+
+test('cross-repo reference renders as an external graph node', async ({ page }) => {
+  await page.goto('/#/editor');
+  await page.getByTitle('Project').selectOption('specquill-docs');
+  await expect(page.locator('aside').getByText('SPECQUILL-DOCS', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  await page.goto('/#/graph');
+  // the ~regulations link in specs/references.md becomes an external node…
+  await expect(page.getByText('~regulations')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('mifid-ii').first()).toBeVisible();
+  // …connected by a dashed edge
+  await expect(page.locator('svg path[stroke-dasharray]').first()).toBeVisible();
+
+  // back to the default project for the rest of the suite
+  await page.goto('/#/editor');
+  await page.getByTitle('Project').selectOption('trading-specs');
+  await expect(page.locator('aside').getByText('TRADING-SPECS', { exact: true })).toBeVisible({ timeout: 10_000 });
+});

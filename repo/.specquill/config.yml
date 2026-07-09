@@ -1,6 +1,6 @@
 # specquill workspace config
-version: 1
-workspace: trading-specs
+version: 2
+project: trading-specs
 default_branch: main
 
 # view shown when opening the workspace (users can override in Settings)
@@ -34,11 +34,8 @@ paths:
   diagrams:     diagrams/
   changes:      changes/
 
-# AI copilot grounding sources (RAG over repos + docs)
-ai:
-  model: specquill-copilot
-  grounding:
-    - repo:trading-specs
-    - repo:trading-platform
-    - docs/confluence/regulatory
-  capabilities: [summarize_change, assess_impact, suggest_mapping, draft_edit, answer]
+# references select granted sources by name (stage 3 of the authorization
+# chain); `grounding: true` adds them to the copilot context
+references:
+  - source: regulations
+    grounding: true

@@ -19,6 +19,15 @@ export function useRepos() {
   return useQuery({ queryKey: ['repos'], queryFn: () => api<RepoInfo[]>('/api/repos') });
 }
 
+export interface ProjectRef { source: string; kind: string; okf?: boolean; grounding: boolean; paths?: string[] }
+export interface ProjectInfo {
+  id: string; contentRoot?: string; defaultBranch: string; managedBy: string;
+  references: ProjectRef[]; warnings?: string[];
+}
+export function useProjects() {
+  return useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
+}
+
 export interface PresencePeer { connId: number; userId: number; name: string }
 export interface PresenceRoom { branch: string; path: string; users: PresencePeer[]; orphaned: boolean }
 

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useMe, usePresence, useRepos, useStatus, useTree } from '../api/hooks';
+import { useMe, usePresence, useProjects, useRepos, useStatus, useTree } from '../api/hooks';
 import { buildTree } from '../lib/derive';
 import { newDocTemplate } from '../lib/newdoc';
 import { api } from '../api/client';
@@ -20,13 +20,14 @@ function agoLabel(iso?: string): string {
 }
 
 // Read-only input repo: lock glyph, files open read-only, footer shows sync age.
-function ReadOnlyRepoSection({ repoId, syncedAt, openPath }: { repoId: string; syncedAt?: string; openPath?: string }) {
+function ReadOnlyRepoSection({ repoId, syncedAt, okf, openPath }: { repoId: string; syncedAt?: string; okf?: boolean; openPath?: string }) {
   const nav = useNavigate();
   const tree = useTree(repoId, '');
   return (
     <div style={sx('margin-top:10px;border-top:1px solid var(--border);padding-top:6px')}>
       <div style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;color:var(--text-3);font-weight:700;font-size:10.5px;letter-spacing:.5px')}>
         <span title="read-only input repo" style={sx('display:inline-flex')}><IconLock /></span>{repoId.toUpperCase()}
+        {okf && <span title="OKF bundle" style={sx("font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--data-bg);color:var(--data)")}>OKF</span>}
         <div style={sx('flex:1')} />
         <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:400")}>{agoLabel(syncedAt)}</span>
       </div>
@@ -58,7 +59,15 @@ export function Tree() {
   const me = useMe();
   const presence = usePresence(app.repoId);
   const [commitOpen, setCommitOpen] = useState(false);
-  const readOnlyRepos = (repos.data || []).filter((r) => r.kind === 'source');
+  // reference section: the ACTIVE project's effective references (stage-3
+  // selection ∩ grants); a project without references falls back to every
+  // granted source (self-host default)
+  const projectsQ = useProjects();
+  const activeRefs = projectsQ.data?.find((p) => p.id === app.repoId)?.references || [];
+  const refNames = activeRefs.map((r) => r.source);
+  const readOnlyRepos = (repos.data || []).filter(
+    (r) => r.kind === 'source' && (refNames.length === 0 || refNames.includes(r.id)),
+  );
   const qc = useQueryClient();
   const { ensureWritableBranch } = useWorkspace();
 
@@ -144,7 +153,7 @@ export function Tree() {
           </div>
         ))}
         {readOnlyRepos.map((r) => (
-          <ReadOnlyRepoSection key={r.id} repoId={r.id} syncedAt={r.syncedAt} openPath={openPath} />
+          <ReadOnlyRepoSection key={r.id} repoId={r.id} syncedAt={r.syncedAt} okf={r.okf} openPath={openPath} />
         ))}
         {elsewhere.length > 0 && (
           <div style={sx('margin-top:10px;border-top:1px solid var(--border);padding:8px 8px 0')}>

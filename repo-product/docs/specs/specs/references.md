@@ -25,3 +25,9 @@ How [REQ-004](../requirements/REQ-004.md) is realized.
 Grounded references join the copilot context under `~<source>/<path>`
 headings inside a budget; draft edits remain restricted to project files —
 a reference path in a model reply is refused.
+
+## Worked example
+
+This workspace itself references the regulations source: see
+[MiFID II](~regulations/regulations/mifid-ii.md) — a cross-repo reference
+that shows up as an external node in the traceability graph.

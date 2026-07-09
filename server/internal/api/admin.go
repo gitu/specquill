@@ -13,6 +13,8 @@ import (
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
+	"specquill/server/internal/okf"
+	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
@@ -37,14 +39,17 @@ func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type projectInfo struct {
-	ID            string   `json:"id"`
-	ContentRoot   string   `json:"contentRoot,omitempty"`
-	DefaultBranch string   `json:"defaultBranch"`
-	Protected     []string `json:"protectedBranches"`
-	ManagedBy     string   `json:"managedBy"`
+	ID            string                       `json:"id"`
+	ContentRoot   string                       `json:"contentRoot,omitempty"`
+	DefaultBranch string                       `json:"defaultBranch"`
+	Protected     []string                     `json:"protectedBranches"`
+	ManagedBy     string                       `json:"managedBy"`
+	References    []project.EffectiveReference `json:"references"`
+	Warnings      []string                     `json:"warnings,omitempty"`
 }
 
-// GET /api/projects — the tenant's projects (the switcher's data source).
+// GET /api/projects — the tenant's projects with their EFFECTIVE references
+// (stage-3 selection ∩ stage-2 grants, config read from the default branch).
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.tenant(w, r)
 	if !ok {
@@ -55,16 +60,49 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	granted, _ := s.store.TenantGrantedSources(t.ID)
+	kinds := map[string]string{}
+	for _, src := range granted {
+		kinds[src.Name] = src.Kind
+	}
 	out := []projectInfo{}
 	for _, p := range ps {
-		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy}
+		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy, References: []project.EffectiveReference{}}
 		if repo, ok := s.git.Repo(t.Slug + "/" + p.RepoID); ok {
 			info.DefaultBranch = repo.Cfg.DefaultBranch
 			info.Protected = repo.Cfg.ProtectedBranches
+			proj := project.New(repo, p.ProjectID, p.ContentRoot, false)
+			// default branch only (D5): a feature branch cannot change the
+			// reference selection until merged
+			if yml, _, err := proj.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
+				if cfg, err := project.ParseConfig(yml); err == nil {
+					refs, warnings := project.EffectiveReferences(cfg, kinds)
+					if refs != nil {
+						info.References = refs
+					}
+					info.Warnings = warnings
+					for i, ref := range info.References {
+						info.References[i].OKF = s.sourceIsOKF(t.Slug, ref.Source)
+					}
+				} else {
+					info.Warnings = []string{err.Error()}
+				}
+			}
 		}
 		out = append(out, info)
 	}
 	jsonOK(w, out)
+}
+
+// sourceIsOKF reports whether a source's default branch is an OKF bundle
+// (root index.md declaring okf_version).
+func (s *Server) sourceIsOKF(tenantSlug, name string) bool {
+	repo, ok := s.git.Repo(tenantSlug + "/" + name)
+	if !ok {
+		return false
+	}
+	content, _, err := repo.FileAt(repo.Cfg.DefaultBranch, "index.md")
+	return err == nil && okf.EnabledContent(content)
 }
 
 // POST /api/projects {id, remote, contentRoot?, defaultBranch?, tokenEnv?}

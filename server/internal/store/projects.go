@@ -218,3 +218,19 @@ func (s *Store) TenantGrantedSources(tenantID int64) ([]Source, error) {
 	}
 	return out, rows.Err()
 }
+
+// GrantedSource resolves a source by name ONLY when it is granted to the
+// tenant (stage-2 gate; ErrNotFound otherwise).
+func (s *Store) GrantedSource(tenantID int64, name string) (*Source, error) {
+	src := &Source{}
+	var tid sql.NullInt64
+	err := s.queryRow(`SELECT s.id, s.tenant_id, s.name, s.kind, s.remote, s.token_env, s.default_branch, s.sync_interval, s.managed_by
+		FROM source_grants g JOIN sources s ON s.id = g.source_id
+		WHERE g.tenant_id = ? AND s.name = ? LIMIT 1`, tenantID, name).
+		Scan(&src.ID, &tid, &src.Name, &src.Kind, &src.Remote, &src.TokenEnv, &src.DefaultBranch, &src.SyncInterval, &src.ManagedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	src.TenantID = tid.Int64
+	return src, err
+}
