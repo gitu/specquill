@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
-import { useApp, VIEWS, ViewName } from '../state/AppContext';
+import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { buildDashboard } from '../lib/derive';
 import { IconChanges, IconDash, IconFolder, IconGear, IconMatrix, IconModel, IconSpark, IconTrace } from './icons';
 
@@ -50,9 +50,16 @@ export function Rail() {
             <div style={sx('font-weight:700;font-size:12.5px;margin-bottom:10px')}>Settings</div>
             <div style={sx('display:flex;align-items:center;gap:8px;margin-bottom:11px')}>
               <span style={sx('font-size:11.5px;color:var(--text-2);flex:1')}>Theme</span>
-              <button onClick={app.toggleTheme} style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;text-transform:capitalize')}>
-                {app.theme} → {app.theme === 'dark' ? 'light' : 'dark'}
-              </button>
+              <select
+                value={app.themeMode}
+                onChange={(e) => app.setThemeMode(e.target.value as ThemeMode)}
+                style={sx('height:24px;padding:0 6px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer')}
+              >
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="system">System</option>
+                <option value="inverse">Opposite of system</option>
+              </select>
             </div>
             <div style={sx('display:flex;align-items:center;gap:8px')}>
               <span style={sx('font-size:11.5px;color:var(--text-2);flex:1')}>Default view</span>
