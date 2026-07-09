@@ -128,3 +128,39 @@ CREATE TABLE IF NOT EXISTS pr_approvals (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (pr_id, user_id)
 );
+
+-- projects & sources (config-split plan): a project is a writable workspace
+-- (repo + content_root); a source is a catalog entry projects may reference.
+-- managed_by: 'config' rows reconcile to the YAML at boot, 'api' rows persist.
+CREATE TABLE IF NOT EXISTS tenant_projects (
+  tenant_id    BIGINT NOT NULL REFERENCES tenants(id),
+  project_id   TEXT NOT NULL,
+  repo_id      TEXT NOT NULL,           -- tenant_repos.repo_id (same tenant)
+  content_root TEXT NOT NULL DEFAULT '',
+  managed_by   TEXT NOT NULL DEFAULT 'config',   -- config | api
+  created_at   BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, project_id)
+);
+
+CREATE TABLE IF NOT EXISTS sources (
+  id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id      BIGINT REFERENCES tenants(id),  -- NULL = global (app YAML / platform)
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
+  remote         TEXT NOT NULL,
+  token_env      TEXT NOT NULL DEFAULT '',       -- env var NAME; never a secret value
+  credential_ref TEXT NOT NULL DEFAULT '',       -- hosted future (Secret Manager path)
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  sync_interval  BIGINT NOT NULL DEFAULT 300,    -- seconds
+  managed_by     TEXT NOT NULL DEFAULT 'config',
+  created_at     BIGINT NOT NULL,
+  UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS source_grants (
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
+  source_id  BIGINT NOT NULL REFERENCES sources(id),
+  granted_by BIGINT REFERENCES users(id),        -- NULL = boot sync
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, source_id)
+);

@@ -2,15 +2,17 @@ package api
 
 import (
 	"net/http"
+	"specquill/server/internal/project"
 	"time"
 
-	"specquill/server/internal/gitx"
 )
 
 func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 	type repoInfo struct {
 		ID                string   `json:"id"`
-		Mode              string   `json:"mode"`
+		Kind              string   `json:"kind"` // project | source
+		Mode              string   `json:"mode"` // legacy alias of kind
+		ContentRoot       string   `json:"contentRoot,omitempty"`
 		DefaultBranch     string   `json:"defaultBranch"`
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
@@ -19,14 +21,26 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	rootOf := map[string]string{}
+	if projects, err := s.store.TenantProjects(t.ID); err == nil {
+		for _, p := range projects {
+			rootOf[p.RepoID] = p.ContentRoot
+		}
+	}
 	var out []repoInfo
 	for _, repo := range s.git.Repos() {
 		if repo.Tenant() != t.Slug {
 			continue
 		}
+		kind := "source"
+		if repo.Writable() {
+			kind = "project"
+		}
 		info := repoInfo{
 			ID:                repo.Cfg.ID,
+			Kind:              kind,
 			Mode:              string(repo.Cfg.Mode),
+			ContentRoot:       rootOf[repo.Cfg.ID],
 			DefaultBranch:     repo.Cfg.DefaultBranch,
 			ProtectedBranches: repo.Cfg.ProtectedBranches,
 		}
@@ -38,7 +52,7 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
-func (s *Server) getTree(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getTree(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	entries, err := repo.Tree(r.URL.Query().Get("ref"))
 	if err != nil {
 		gitFail(w, err)
@@ -47,7 +61,7 @@ func (s *Server) getTree(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 	jsonOK(w, entries)
 }
 
-func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	ref := repo.ResolveRef(r.URL.Query().Get("ref"))
 	files, err := repo.Snapshot(ref)
 	if err != nil {
@@ -57,7 +71,7 @@ func (s *Server) getSnapshot(w http.ResponseWriter, r *http.Request, repo *gitx.
 	jsonOK(w, map[string]any{"ref": ref, "files": files})
 }
 
-func (s *Server) getFile(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getFile(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var content, sha string
 	var err error
 	if r.URL.Query().Get("at") == "head" {
@@ -73,7 +87,7 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 	jsonOK(w, map[string]string{"content": content, "sha": sha})
 }
 
-func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	branches, err := repo.Branches()
 	if err != nil {
 		gitFail(w, err)

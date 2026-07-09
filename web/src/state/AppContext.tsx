@@ -46,7 +46,7 @@ export const useApp = () => useContext(Ctx);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
-  const writable = repos.data?.find((r) => r.mode === 'writable');
+  const writable = repos.data?.find((r) => r.kind === 'project'); // sole project until the switcher (P2)
   const [branch, setBranch] = useState('');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const v = localStorage.getItem('specquill-theme');

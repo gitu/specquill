@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"specquill/server/internal/project"
 	"strings"
 
 	"specquill/server/internal/gitx"
@@ -27,7 +28,7 @@ const maxAssetSize = 10 << 20 // 10 MiB
 // GET /api/repos/{repo}/raw/{path...}?ref= — raw blob bytes (binary-safe;
 // the JSON /files endpoint would mangle non-UTF-8 content). Images embedded
 // in documents load through this.
-func (s *Server) getRaw(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getRaw(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	p := r.PathValue("path")
 	ct, ok := assetTypes[strings.ToLower(path.Ext(p))]
 	if !ok {
@@ -53,7 +54,7 @@ var assetNameRe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 // POST /api/repos/{repo}/assets?branch=&dir= — multipart image upload into
 // the branch worktree (a normal uncommitted save). Returns the repo-relative
 // path for embedding.
-func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if err := r.ParseMultipartForm(maxAssetSize); err != nil {
 		jsonError(w, http.StatusBadRequest, "parse upload: "+err.Error())
 		return
@@ -115,10 +116,10 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *gitx.Re
 // PUT /api/repos/{repo}/raw/{path...}?branch=&baseSha= — binary-safe file
 // save (excalidraw PNGs etc.); same optimistic-concurrency contract as the
 // JSON files endpoint.
-func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	p := r.PathValue("path")
 	branch := r.URL.Query().Get("branch")
-	if s.hub.RoomActive(repo.Key(), repo.ResolveRef(branch), p) {
+	if full, err := repo.MapIn(p); err == nil && s.hub.RoomActive(repo.Key(), repo.ResolveRef(branch), full) {
 		jsonError2(w, http.StatusConflict, "a live co-editing session owns this file", "room_active")
 		return
 	}

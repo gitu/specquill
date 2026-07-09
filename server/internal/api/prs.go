@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"specquill/server/internal/project"
 	"strconv"
 
 	"specquill/server/internal/auth"
@@ -26,7 +27,7 @@ type approvalView struct {
 	Current bool `json:"current"` // approval is for the current head
 }
 
-func (s *Server) prView(repo *gitx.Repo, pr *store.PR, withMergeability bool) (*prView, error) {
+func (s *Server) prView(repo *project.Project, pr *store.PR, withMergeability bool) (*prView, error) {
 	v := &prView{PR: pr}
 	if head, err := repo.Head(pr.SourceBranch); err == nil {
 		v.HeadSha = head
@@ -53,7 +54,7 @@ func (s *Server) prView(repo *gitx.Repo, pr *store.PR, withMergeability bool) (*
 	return v, nil
 }
 
-func (s *Server) prByNumber(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) *store.PR {
+func (s *Server) prByNumber(w http.ResponseWriter, r *http.Request, repo *project.Project) *store.PR {
 	n, err := strconv.Atoi(r.PathValue("n"))
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "bad PR number")
@@ -72,7 +73,7 @@ func (s *Server) prByNumber(w http.ResponseWriter, r *http.Request, repo *gitx.R
 }
 
 // GET /api/repos/{repo}/prs?state=open
-func (s *Server) listPRs(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) listPRs(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	state := r.URL.Query().Get("state")
 	if state == "" {
 		state = "open"
@@ -95,7 +96,7 @@ func (s *Server) listPRs(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 }
 
 // POST /api/repos/{repo}/prs {title, body, source, target}
-func (s *Server) createPR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) createPR(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var body struct{ Title, Body, Source, Target string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Title == "" || body.Source == "" {
 		jsonError(w, http.StatusBadRequest, "title and source are required")
@@ -139,7 +140,7 @@ func (s *Server) createPR(w http.ResponseWriter, r *http.Request, repo *gitx.Rep
 }
 
 // GET /api/repos/{repo}/prs/{n}
-func (s *Server) getPR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getPR(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return
@@ -153,7 +154,7 @@ func (s *Server) getPR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) 
 }
 
 // GET /api/repos/{repo}/prs/{n}/diff
-func (s *Server) getPRDiff(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getPRDiff(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return
@@ -173,7 +174,7 @@ func (s *Server) getPRDiff(w http.ResponseWriter, r *http.Request, repo *gitx.Re
 }
 
 // GET|POST /api/repos/{repo}/prs/{n}/comments
-func (s *Server) prComments(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) prComments(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return
@@ -219,7 +220,7 @@ func (s *Server) prComments(w http.ResponseWriter, r *http.Request, repo *gitx.R
 }
 
 // POST /api/repos/{repo}/prs/{n}/approve
-func (s *Server) approvePR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) approvePR(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return
@@ -239,7 +240,7 @@ func (s *Server) approvePR(w http.ResponseWriter, r *http.Request, repo *gitx.Re
 }
 
 // POST /api/repos/{repo}/prs/{n}/merge {strategy}
-func (s *Server) mergePR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) mergePR(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return
@@ -285,7 +286,7 @@ func (s *Server) mergePR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo
 }
 
 // POST /api/repos/{repo}/prs/{n}/close
-func (s *Server) closePR(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) closePR(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	pr := s.prByNumber(w, r, repo)
 	if pr == nil {
 		return

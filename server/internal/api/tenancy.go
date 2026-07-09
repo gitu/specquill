@@ -5,6 +5,7 @@ import (
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
@@ -66,16 +67,28 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 	return s.store.Memberships(u.ID)
 }
 
-// tenantRepo resolves {repo} within the request's tenant.
-func (s *Server) tenantRepo(w http.ResponseWriter, r *http.Request) (*gitx.Repo, bool) {
+// tenantProject resolves {repo} within the request's tenant: a project id
+// first, else a source/repo name browsed as a read-only pseudo-project
+// (config-split plan, D3 — the URL segment is stable across both).
+func (s *Server) tenantProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
 	t, ok := s.tenant(w, r)
 	if !ok {
 		return nil, false
 	}
-	repo, ok := s.git.Repo(t.Slug + "/" + r.PathValue("repo"))
+	id := r.PathValue("repo")
+	if tp, err := s.store.TenantProject(t.ID, id); err == nil {
+		repo, ok := s.git.Repo(t.Slug + "/" + tp.RepoID)
+		if !ok {
+			jsonError(w, http.StatusNotFound, "project repo not initialized")
+			return nil, false
+		}
+		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
+	}
+	repo, ok := s.git.Repo(t.Slug + "/" + id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "unknown repo")
 		return nil, false
 	}
-	return repo, true
+	// sources (and any non-project repo) are browse-only through this API
+	return project.New(repo, id, "", !repo.Writable()), true
 }

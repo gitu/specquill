@@ -58,7 +58,7 @@ export function Tree() {
   const me = useMe();
   const presence = usePresence(app.repoId);
   const [commitOpen, setCommitOpen] = useState(false);
-  const readOnlyRepos = (repos.data || []).filter((r) => r.mode === 'readonly');
+  const readOnlyRepos = (repos.data || []).filter((r) => r.kind === 'source');
   const qc = useQueryClient();
   const { ensureWritableBranch } = useWorkspace();
 

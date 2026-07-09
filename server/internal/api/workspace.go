@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"specquill/server/internal/project"
 	"strconv"
 	"strings"
 
@@ -33,7 +34,7 @@ func workspaceSlug(u *store.User) string {
 
 // POST /api/repos/{repo}/workspace — resolve/claim the caller's personal
 // workspace branch and ensure it exists (fast-forwarding when safe).
-func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	u := auth.UserFrom(r.Context())
 	branch, err := s.store.WorkspaceBranch(repo.Key(), u.ID)
 	if err != nil {
@@ -67,7 +68,7 @@ func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *git
 }
 
 // POST /api/repos/{repo}/pull?branch= — fast-forward onto origin.
-func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	branch := r.URL.Query().Get("branch")
 	// never move a ref while a co-editing room is live on the branch
 	if paths := s.hub.ActiveOnBranch(repo.Key(), repo.ResolveRef(branch)); len(paths) > 0 {
@@ -93,7 +94,7 @@ func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *gitx.Rep
 }
 
 // GET /api/repos/{repo}/diff/worktree?branch=
-func (s *Server) getWorktreeDiff(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) getWorktreeDiff(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	files, err := repo.DiffWorktree(r.URL.Query().Get("branch"))
 	if err != nil {
 		gitFail(w, err)

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"specquill/server/internal/project"
 	"strings"
 	"time"
 
@@ -91,9 +92,12 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/approve", s.writableH(s.approvePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/merge", s.writableH(s.mergePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/close", s.writableH(s.closePR))
+	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
+	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
 	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
-	apiMux.HandleFunc("POST /api/copilot/chat", s.copilotChat)
-	apiMux.HandleFunc("POST /api/copilot/draft", s.copilotDraft)
+	// legacy aliases: resolve the tenant's sole project
+	apiMux.HandleFunc("POST /api/copilot/chat", s.copilotChatAlias)
+	apiMux.HandleFunc("POST /api/copilot/draft", s.copilotDraftAlias)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.requireAuth(apiMux))
@@ -106,9 +110,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 }
 
 // repoH resolves the {repo} path segment within the request's tenant.
-func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *gitx.Repo)) http.HandlerFunc {
+func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := s.tenantRepo(w, r)
+		repo, ok := s.tenantProject(w, r)
 		if !ok {
 			return
 		}

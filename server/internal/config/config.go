@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,9 @@ const (
 	ReadOnly RepoMode = "readonly"
 )
 
+// RepoConfig describes a physical clone. It remains gitx's internal currency;
+// user-facing configuration is `projects:` + `sources:` (legacy `repos:` lists
+// still load and are normalized — see normalize()).
 type RepoConfig struct {
 	ID                string        `yaml:"id"`
 	Mode              RepoMode      `yaml:"mode"`
@@ -25,6 +29,32 @@ type RepoConfig struct {
 	TokenEnv          string        `yaml:"token_env"`
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	ProtectedBranches []string      `yaml:"protected_branches"` // default: [default_branch]
+	ContentRoot       string        `yaml:"-"`                  // set from the owning project
+}
+
+// SourceConfig is a stage-1 catalog entry: a named external source that
+// projects may reference (docs/multi-tenancy.md + the projects plan).
+// Sources are read-only downstream, always. Credentials come from the
+// environment via token_env — never from the DB or in-repo config.
+type SourceConfig struct {
+	Name          string        `yaml:"name"`
+	Kind          string        `yaml:"kind"` // git | url | openapi | confluence
+	Remote        string        `yaml:"remote"`
+	TokenEnv      string        `yaml:"token_env"`
+	DefaultBranch string        `yaml:"default_branch"`
+	SyncInterval  time.Duration `yaml:"sync_interval"`
+}
+
+// ProjectConfig is a writable workspace: a git repo plus an optional
+// content_root subfolder (monorepo case; "" = repo root).
+type ProjectConfig struct {
+	ID                string        `yaml:"id"`
+	Remote            string        `yaml:"remote"`
+	ContentRoot       string        `yaml:"content_root"`
+	DefaultBranch     string        `yaml:"default_branch"`
+	TokenEnv          string        `yaml:"token_env"`
+	SyncInterval      time.Duration `yaml:"sync_interval"`
+	ProtectedBranches []string      `yaml:"protected_branches"`
 }
 
 // IsProtected reports whether direct writes/commits to branch are forbidden
@@ -107,18 +137,26 @@ type AIConfig struct {
 	// empty = fall back to Model
 	QuickModel string `yaml:"quick_model"`
 	APIKeyEnv  string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
+	// GroundingBudget caps the copilot system-prompt size in bytes
+	// (0 = package default; grows automatically when references exist).
+	GroundingBudget int `yaml:"grounding_budget"`
 }
 
 type Config struct {
-	Listen   string         `yaml:"listen"`
-	DataDir  string         `yaml:"data_dir"`
-	BaseURL  string         `yaml:"base_url"`
-	Database DatabaseConfig `yaml:"database"`
-	Repos    []RepoConfig   `yaml:"repos"`
-	Git      GitConfig      `yaml:"git"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Session  SessionConfig  `yaml:"session"`
-	AI       AIConfig       `yaml:"ai"`
+	Listen   string          `yaml:"listen"`
+	DataDir  string          `yaml:"data_dir"`
+	BaseURL  string          `yaml:"base_url"`
+	Database DatabaseConfig  `yaml:"database"`
+	Projects []ProjectConfig `yaml:"projects"`
+	Sources  []SourceConfig  `yaml:"sources"`
+	// Grants: source names granted to the default tenant (stage 2).
+	// Omitted/empty = all sources granted (self-host convenience).
+	Grants  []string      `yaml:"grants"`
+	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Git     GitConfig     `yaml:"git"`
+	Auth    AuthConfig    `yaml:"auth"`
+	Session SessionConfig `yaml:"session"`
+	AI      AIConfig      `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -137,12 +175,23 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	cfg.Normalize()
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	// resolve relative paths against the config file's directory
 	base := filepath.Dir(path)
 	cfg.DataDir = absAgainst(base, cfg.DataDir)
+	for i := range cfg.Projects {
+		if looksLikePath(cfg.Projects[i].Remote) {
+			cfg.Projects[i].Remote = absAgainst(base, cfg.Projects[i].Remote)
+		}
+	}
+	for i := range cfg.Sources {
+		if looksLikePath(cfg.Sources[i].Remote) {
+			cfg.Sources[i].Remote = absAgainst(base, cfg.Sources[i].Remote)
+		}
+	}
 	for i := range cfg.Repos {
 		r := &cfg.Repos[i]
 		if looksLikePath(r.Remote) {
@@ -152,12 +201,92 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// Normalize maps the legacy `repos:` shape onto projects/sources (writable →
+// project at repo root; readonly → git source, browse-only until a project
+// references it), then rebuilds cfg.Repos as the canonical clone registry
+// (projects + git-kind sources) that gitx and the boot sync consume.
+// Idempotent — Load calls it, and test fixtures that build Config literals
+// may call it again.
+func (c *Config) Normalize() {
+	legacy := c.Repos
+	if len(c.Projects) > 0 || len(c.Sources) > 0 {
+		legacy = nil // already normalized (or v2 config); never map twice
+	}
+	for _, r := range legacy {
+		switch r.Mode {
+		case Writable:
+			c.Projects = append(c.Projects, ProjectConfig{
+				ID: r.ID, Remote: r.Remote, DefaultBranch: r.DefaultBranch,
+				TokenEnv: r.TokenEnv, SyncInterval: r.SyncInterval,
+				ProtectedBranches: r.ProtectedBranches,
+			})
+		case ReadOnly:
+			c.Sources = append(c.Sources, SourceConfig{
+				Name: r.ID, Kind: "git", Remote: r.Remote, TokenEnv: r.TokenEnv,
+				DefaultBranch: r.DefaultBranch, SyncInterval: r.SyncInterval,
+			})
+		}
+	}
+	// defaults
+	for i := range c.Projects {
+		p := &c.Projects[i]
+		if p.DefaultBranch == "" {
+			p.DefaultBranch = "main"
+		}
+		if p.SyncInterval == 0 {
+			p.SyncInterval = 2 * time.Minute
+		}
+		if len(p.ProtectedBranches) == 0 {
+			p.ProtectedBranches = []string{p.DefaultBranch}
+		}
+		p.ContentRoot = cleanContentRoot(p.ContentRoot)
+	}
+	for i := range c.Sources {
+		src := &c.Sources[i]
+		if src.Kind == "" {
+			src.Kind = "git"
+		}
+		if src.DefaultBranch == "" {
+			src.DefaultBranch = "main"
+		}
+		if src.SyncInterval == 0 {
+			src.SyncInterval = 5 * time.Minute
+		}
+	}
+	// canonical clone registry: every project + every git source
+	c.Repos = c.Repos[:0]
+	for _, p := range c.Projects {
+		c.Repos = append(c.Repos, RepoConfig{
+			ID: p.ID, Mode: Writable, Remote: p.Remote, DefaultBranch: p.DefaultBranch,
+			TokenEnv: p.TokenEnv, SyncInterval: p.SyncInterval,
+			ProtectedBranches: p.ProtectedBranches, ContentRoot: p.ContentRoot,
+		})
+	}
+	for _, src := range c.Sources {
+		if src.Kind != "git" {
+			continue // non-git sources materialize as mirror repos later (importers)
+		}
+		c.Repos = append(c.Repos, RepoConfig{
+			ID: src.Name, Mode: ReadOnly, Remote: src.Remote, DefaultBranch: src.DefaultBranch,
+			TokenEnv: src.TokenEnv, SyncInterval: src.SyncInterval,
+		})
+	}
+}
+
+// cleanContentRoot normalizes a project subfolder: slash-separated, no
+// leading/trailing slashes, "" for the repo root. Traversal is rejected in
+// validate().
+func cleanContentRoot(root string) string {
+	root = strings.Trim(strings.ReplaceAll(root, "\\", "/"), "/")
+	if root == "." {
+		return ""
+	}
+	return root
+}
+
 func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir is required")
-	}
-	if len(c.Repos) == 0 {
-		return fmt.Errorf("at least one repo must be configured")
 	}
 	if !c.Auth.OIDC.Enabled && !c.Auth.Local.Enabled {
 		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
@@ -168,39 +297,47 @@ func (c *Config) validate() error {
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")
 	}
-	writable := 0
+	if len(c.Projects) == 0 {
+		return fmt.Errorf("at least one project must be configured (projects: or a legacy writable repos: entry)")
+	}
+	// projects and sources share the /api/repos/{x} namespace — ids must be
+	// unique across both
 	seen := map[string]bool{}
-	for i := range c.Repos {
-		r := &c.Repos[i]
-		if r.ID == "" || r.Remote == "" {
-			return fmt.Errorf("repo %d: id and remote are required", i)
+	for i, p := range c.Projects {
+		if p.ID == "" || p.Remote == "" {
+			return fmt.Errorf("project %d: id and remote are required", i)
 		}
-		if seen[r.ID] {
-			return fmt.Errorf("duplicate repo id %q", r.ID)
+		if seen[p.ID] {
+			return fmt.Errorf("duplicate project/source id %q", p.ID)
 		}
-		seen[r.ID] = true
-		switch r.Mode {
-		case Writable:
-			writable++
-		case ReadOnly:
-		default:
-			return fmt.Errorf("repo %s: mode must be writable or readonly", r.ID)
-		}
-		if r.DefaultBranch == "" {
-			r.DefaultBranch = "main"
-		}
-		if r.Mode == ReadOnly && r.SyncInterval == 0 {
-			r.SyncInterval = 5 * time.Minute
-		}
-		if r.Mode == Writable && r.SyncInterval == 0 {
-			r.SyncInterval = 2 * time.Minute
-		}
-		if len(r.ProtectedBranches) == 0 {
-			r.ProtectedBranches = []string{r.DefaultBranch}
+		seen[p.ID] = true
+		if strings.Contains(p.ContentRoot, "..") {
+			return fmt.Errorf("project %s: content_root must not traverse (%q)", p.ID, p.ContentRoot)
 		}
 	}
-	if writable != 1 {
-		return fmt.Errorf("exactly one writable repo is required (got %d)", writable)
+	kinds := map[string]bool{"git": true, "url": true, "openapi": true, "confluence": true}
+	for i, src := range c.Sources {
+		if src.Name == "" || src.Remote == "" {
+			return fmt.Errorf("source %d: name and remote are required", i)
+		}
+		if seen[src.Name] {
+			return fmt.Errorf("duplicate project/source id %q", src.Name)
+		}
+		seen[src.Name] = true
+		if !kinds[src.Kind] {
+			return fmt.Errorf("source %s: kind must be git, url, openapi or confluence", src.Name)
+		}
+	}
+	for _, g := range c.Grants {
+		found := false
+		for _, src := range c.Sources {
+			if src.Name == g {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("grants: unknown source %q", g)
+		}
 	}
 	if c.Auth.OIDC.Enabled {
 		o := c.Auth.OIDC

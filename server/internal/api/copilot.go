@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"specquill/server/internal/project"
 	"strings"
 
 	"specquill/server/internal/ai"
-	"specquill/server/internal/gitx"
 )
 
 // GET /api/copilot/info
@@ -19,8 +19,15 @@ func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, info)
 }
 
-// POST /api/copilot/chat {messages, focusPath?, branch?} → SSE stream
-func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
+// POST /api/repos/{repo}/copilot/chat {messages, focusPath?, branch?} → SSE
+// stream. /api/copilot/chat is the legacy alias (tenant's sole project).
+func (s *Server) copilotChatAlias(w http.ResponseWriter, r *http.Request) {
+	if repo, ok := s.soleProject(w, r); ok {
+		s.copilotChat(w, r, repo)
+	}
+}
+
+func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return
@@ -32,11 +39,6 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) == 0 {
 		jsonError(w, http.StatusBadRequest, "messages required")
-		return
-	}
-	repo := s.writableRepo()
-	if repo == nil {
-		jsonError(w, http.StatusInternalServerError, "no writable repo")
 		return
 	}
 	files, err := repo.Snapshot(repo.ResolveRef(body.Branch))
@@ -79,7 +81,13 @@ type draftEdit struct {
 // POST /api/copilot/draft {changePath, files, branch?}
 // Asks the model for surgical edits and applies them as *uncommitted saves*
 // on a copilot branch — the human reviews via status → commit → PR.
-func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request) {
+func (s *Server) copilotDraftAlias(w http.ResponseWriter, r *http.Request) {
+	if repo, ok := s.soleProject(w, r); ok {
+		s.copilotDraft(w, r, repo)
+	}
+}
+
+func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return
@@ -91,11 +99,6 @@ func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChangePath == "" || len(body.Files) == 0 {
 		jsonError(w, http.StatusBadRequest, "changePath and files required")
-		return
-	}
-	repo := s.writableRepo()
-	if repo == nil {
-		jsonError(w, http.StatusInternalServerError, "no writable repo")
 		return
 	}
 
@@ -162,7 +165,7 @@ func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request) {
 
 // applyEdit validates a search/replace against the *current* file state on the
 // branch and saves the result (uncommitted). allowed limits editable paths.
-func (s *Server) applyEdit(repo *gitx.Repo, branch string, allowed map[string]string, e draftEdit) error {
+func (s *Server) applyEdit(repo *project.Project, branch string, allowed map[string]string, e draftEdit) error {
 	e.Path = normalizePath(e.Path, allowed)
 	if _, ok := allowed[e.Path]; !ok {
 		return fmt.Errorf("not in the impacted file set")
@@ -204,18 +207,29 @@ func normalizePath(p string, allowed map[string]string) string {
 	return p
 }
 
-func (s *Server) writableRepo() *gitx.Repo {
-	for _, r := range s.git.Repos() {
-		if r.Writable() {
-			return r
-		}
+// soleProject resolves the tenant's first project — the legacy /api/copilot/*
+// alias routes use it; per-project routes carry {repo} and resolve normally.
+func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
+	t, ok := s.tenant(w, r)
+	if !ok {
+		return nil, false
 	}
-	return nil
+	ps, err := s.store.TenantProjects(t.ID)
+	if err != nil || len(ps) == 0 {
+		jsonError(w, http.StatusInternalServerError, "no project configured")
+		return nil, false
+	}
+	repo, ok := s.git.Repo(t.Slug + "/" + ps[0].RepoID)
+	if !ok {
+		jsonError(w, http.StatusInternalServerError, "project repo not initialized")
+		return nil, false
+	}
+	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true
 }
 
 // POST /api/repos/{repo}/commit-message?branch= — draft a commit message from
 // the uncommitted diff on the fast one-shot tier (ai.quick_model).
-func (s *Server) postCommitMessage(w http.ResponseWriter, r *http.Request, repo *gitx.Repo) {
+func (s *Server) postCommitMessage(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
 		return

@@ -63,7 +63,9 @@ export async function uploadAsset(repo: string, branch: string, dir: string, fil
 
 export interface RepoInfo {
   id: string;
-  mode: 'writable' | 'readonly';
+  kind: 'project' | 'source';
+  mode: 'writable' | 'readonly'; // legacy alias of kind
+  contentRoot?: string;          // monorepo projects: subfolder the API roots at
   defaultBranch: string;
   protectedBranches: string[];
   syncedAt?: string;
