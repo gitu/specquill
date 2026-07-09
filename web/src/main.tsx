@@ -12,6 +12,7 @@ import { ModelView } from './views/ModelView';
 import { DiffView } from './views/DiffView';
 import { PRListView, PRView } from './views/PRView';
 import { LoginView } from './views/LoginView';
+import { AdminView } from './views/AdminView';
 import { useApp } from './state/AppContext';
 import './theme.css';
 
@@ -43,6 +44,7 @@ const router = createHashRouter([
       { path: 'diff', element: <DiffView /> },
       { path: 'prs', element: <PRListView /> },
       { path: 'prs/:n', element: <PRView /> },
+      { path: 'admin', element: <AdminView /> },
     ],
   },
 ]);

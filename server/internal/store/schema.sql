@@ -43,9 +43,11 @@ CREATE TABLE IF NOT EXISTS tenant_repos (
   remote         TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
   gh_full_name   TEXT NOT NULL DEFAULT '',
+  managed_by     TEXT NOT NULL DEFAULT 'config',  -- config rows reconcile at boot
   created_at     BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, repo_id)
 );
+ALTER TABLE tenant_repos ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'config';
 
 CREATE TABLE IF NOT EXISTS tenant_members (
   tenant_id BIGINT NOT NULL REFERENCES tenants(id),

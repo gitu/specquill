@@ -1,0 +1,2 @@
+// placeholder for product source code — proves the spec workspace and the
+// code can share one repository without SpecQuill touching the code.

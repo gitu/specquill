@@ -52,6 +52,20 @@ export function TopBar() {
         {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
       </div>
 
+      {/* project switcher (hidden with a single project) */}
+      {app.projects.length > 1 && (
+        <select
+          value={app.repoId || ''}
+          onChange={(e) => app.switchProject(e.target.value)}
+          title="Project"
+          style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;cursor:pointer;max-width:170px")}
+        >
+          {app.projects.map((p) => (
+            <option key={p.id} value={p.id}>{p.id}</option>
+          ))}
+        </select>
+      )}
+
       {/* branch switcher */}
       <div style={sx('position:relative')}>
         <div

@@ -1,0 +1,14 @@
+{
+  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "verifies", "updated"],
+  "fields": {
+    "id": { "label": "ID", "type": "mono" },
+    "type": { "label": "Type", "type": "text" },
+    "status": { "label": "Status", "type": "badge", "values": { "draft": "reg", "in_review": "reg", "approved": "data", "accepted": "data", "deprecated": "text" } },
+    "priority": { "label": "Priority", "type": "badge", "values": { "must": "reg", "should": "prod", "could": "text" } },
+    "owner": { "label": "Owner", "type": "text" },
+    "drivers": { "label": "Drivers", "type": "links" },
+    "implements": { "label": "Implements", "type": "links" },
+    "verifies": { "label": "Verified by", "type": "links" },
+    "updated": { "label": "Updated", "type": "date" }
+  }
+}

@@ -1,0 +1,15 @@
+# specquill workspace config — the SpecQuill product specs themselves
+version: 2
+project: specquill-docs
+default_branch: main
+
+ui:
+  default_view: editor
+
+statuses: [draft, in_review, approved, deprecated]
+
+# references select granted sources by name (stage 3 of the authorization
+# chain) — they can never mint access beyond what the tenant granted
+references:
+  - source: regulations
+    grounding: true

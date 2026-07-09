@@ -7,13 +7,18 @@ base_url: http://localhost:8643
 database:
   url: postgres://specquill:specquill@127.0.0.1:5433/specquill?sslmode=disable
 
-repos:
+projects:
   - id: trading-specs
-    mode: writable
     remote: ./data/origin/trading-specs.git
     default_branch: main
-  - id: regulations
-    mode: readonly
+  - id: specquill-docs                      # SpecQuill's own specs — monorepo
+    remote: ./data/origin/specquill-docs.git
+    content_root: docs/specs                # subfolder project
+    default_branch: main
+
+sources:
+  - name: regulations
+    kind: git
     remote: ./data/origin/regulations.git
     sync_interval: 1m
 

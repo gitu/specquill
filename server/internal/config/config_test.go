@@ -57,12 +57,16 @@ repos:
 
 // The two yml files shipped in the repo must keep loading.
 func TestShippedConfigsLoad(t *testing.T) {
-	for _, f := range []string{"specquill.dev.yml", "specquill.example.yml"} {
+	cases := map[string]struct{ projects, sources int }{
+		"specquill.dev.yml":     {2, 1}, // trading-specs + the monorepo specquill-docs example
+		"specquill.example.yml": {1, 1},
+	}
+	for f, want := range cases {
 		cfg, err := Load(filepath.Join("..", "..", "..", f))
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
-		if len(cfg.Projects) != 1 || len(cfg.Sources) != 1 {
+		if len(cfg.Projects) != want.projects || len(cfg.Sources) != want.sources {
 			t.Fatalf("%s: projects=%d sources=%d", f, len(cfg.Projects), len(cfg.Sources))
 		}
 	}

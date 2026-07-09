@@ -56,6 +56,11 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
 			s.devUser = u
+			// the dev user administers the default tenant (management API)
+			if def, err := opts.Store.TenantBySlug(gitx.DefaultTenant); err == nil {
+				_ = opts.Store.EnsureMember(def.ID, u.ID, "admin")
+				_ = opts.Store.SetMemberRole(def.ID, u.ID, "admin")
+			}
 			log.Printf("dev mode: auto-authenticating as %s <%s>", u.Name, u.Email)
 		}
 	}
@@ -63,6 +68,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /api/me", s.me)
 	apiMux.HandleFunc("GET /api/repos", s.listRepos)
+	apiMux.HandleFunc("GET /api/projects", s.listProjects)
+	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
+	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
 	apiMux.HandleFunc("GET /api/repos/{repo}/files/{path...}", s.repoH(s.getFile))

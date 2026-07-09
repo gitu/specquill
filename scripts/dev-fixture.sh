@@ -31,6 +31,10 @@ make_bare() { # $1=name  $2=src-dir
 
 # trading-specs: full workspace
 make_bare trading-specs repo
+
+# specquill-docs: SpecQuill's own product specs — a MONOREPO example whose
+# workspace lives in the docs/specs/ subfolder (content_root project)
+make_bare specquill-docs repo-product
 # feature branch so the branch switcher has something to show
 tmp="$(mktemp -d)"
 git clone -q "$ORIGIN/trading-specs.git" "$tmp"

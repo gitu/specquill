@@ -48,6 +48,8 @@ type Repo struct {
 
 	lastFetchL sync.Mutex
 	lastFetch  time.Time
+
+	done chan struct{} // closed by Manager.RemoveRepo; stops the sync loop
 }
 
 // DefaultTenant is the built-in tenant that mirrors the YAML repos list
@@ -78,6 +80,7 @@ func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
 		wtRoot:    filepath.Join(root, "worktrees"),
 		committer: m.committer,
 		branchMu:  map[string]*sync.Mutex{},
+		done:      make(chan struct{}),
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -86,17 +89,39 @@ func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
 	return r
 }
 
-// AddRepo registers a tenant repo at runtime and clones it. Idempotent per
-// (tenant, id): an existing registration is returned as-is.
+// AddRepo registers a tenant repo at runtime, clones it, and starts its
+// sync loop. Idempotent per (tenant, id): an existing registration is
+// returned as-is.
 func (m *Manager) AddRepo(tenant string, rc config.RepoConfig) (*Repo, error) {
 	if r, ok := m.Repo(tenant + "/" + rc.ID); ok {
 		return r, nil
 	}
 	r := m.add(tenant, rc)
 	if err := r.ensure(); err != nil {
+		m.RemoveRepo(r.key)
 		return nil, fmt.Errorf("repo %s: %w", r.key, err)
 	}
+	m.startSyncLoop(r)
 	return r, nil
+}
+
+// RemoveRepo drops a repo from the registry and stops its sync loop. The
+// clone stays on disk (it is a cache; re-adding reuses it).
+func (m *Manager) RemoveRepo(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.repos[key]
+	if !ok {
+		return
+	}
+	close(r.done)
+	delete(m.repos, key)
+	for i, k := range m.order {
+		if k == key {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
 }
 
 // Init clones any missing repos and prunes stale worktrees. Call at startup.

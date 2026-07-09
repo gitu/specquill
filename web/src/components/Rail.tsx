@@ -48,6 +48,12 @@ export function Rail() {
         {settingsOpen && (
           <div style={sx('position:absolute;left:48px;bottom:0;width:230px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow-lg);padding:12px 14px;z-index:30')}>
             <div style={sx('font-weight:700;font-size:12.5px;margin-bottom:10px')}>Settings</div>
+            <div
+              onClick={() => { setSettingsOpen(false); nav('/admin'); }}
+              style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;margin-bottom:11px')}
+            >
+              Administration — projects & sources
+            </div>
             <div style={sx('display:flex;align-items:center;gap:8px;margin-bottom:11px')}>
               <span style={sx('font-size:11.5px;color:var(--text-2);flex:1')}>Theme</span>
               <select

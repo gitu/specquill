@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -149,6 +150,26 @@ func serve(configPath string, dev bool) error {
 	git, err := gitx.NewManager(cfg)
 	if err != nil {
 		return err
+	}
+	// api-managed repos (added in-app) survive reconciliation — re-register
+	// them with the manager so their projects resolve after a restart
+	if repos, err := st.TenantRepos(def.ID); err == nil {
+		for _, tr := range repos {
+			if tr.ManagedBy != "api" {
+				continue
+			}
+			mode := config.ReadOnly
+			if tr.Mode == string(config.Writable) {
+				mode = config.Writable
+			}
+			if _, err := git.AddRepo(def.Slug, config.RepoConfig{
+				ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
+				SyncInterval:      2 * time.Minute,
+				ProtectedBranches: []string{tr.DefaultBranch},
+			}); err != nil {
+				log.Printf("api-managed repo %s: %v", tr.RepoID, err)
+			}
+		}
 	}
 	bus := events.New()
 	git.Notify = func(kind, repo, branch string) {

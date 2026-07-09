@@ -26,6 +26,7 @@ type TenantRepo struct {
 	Remote        string
 	DefaultBranch string
 	GhFullName    string // 'owner/name' when provider=github
+	ManagedBy     string // config (boot-reconciled) | api (persists)
 }
 
 type Membership struct {
@@ -131,7 +132,7 @@ func (s *Store) SyncTenantRepos(tenantID int64, repos []TenantRepo) error {
 		}
 		keep = append(keep, r.RepoID)
 	}
-	q := "DELETE FROM tenant_repos WHERE tenant_id = ?"
+	q := "DELETE FROM tenant_repos WHERE tenant_id = ? AND managed_by = 'config'"
 	if len(repos) > 0 {
 		q += " AND repo_id NOT IN (?" + repeat(",?", len(repos)-1) + ")"
 	}
@@ -142,7 +143,7 @@ func (s *Store) SyncTenantRepos(tenantID int64, repos []TenantRepo) error {
 }
 
 func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
-	rows, err := s.query(`SELECT tenant_id, repo_id, mode, remote, default_branch, gh_full_name
+	rows, err := s.query(`SELECT tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by
 		FROM tenant_repos WHERE tenant_id = ? ORDER BY created_at, repo_id`, tenantID)
 	if err != nil {
 		return nil, err
@@ -151,10 +152,21 @@ func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
 	out := []TenantRepo{}
 	for rows.Next() {
 		var r TenantRepo
-		if err := rows.Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.GhFullName); err != nil {
+		if err := rows.Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.GhFullName, &r.ManagedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// UpsertTenantRepo registers/updates a single repo row (runtime AddRepo path;
+// boot reconciliation uses SyncTenantRepos).
+func (s *Store) UpsertTenantRepo(tenantID int64, r TenantRepo) error {
+	_, err := s.exec(`INSERT INTO tenant_repos (tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'api', ?)
+		ON CONFLICT(tenant_id, repo_id) DO UPDATE SET
+		  mode = excluded.mode, remote = excluded.remote, default_branch = excluded.default_branch`,
+		tenantID, r.RepoID, r.Mode, r.Remote, r.DefaultBranch, r.GhFullName, time.Now().Unix())
+	return err
 }

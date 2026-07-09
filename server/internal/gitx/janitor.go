@@ -29,23 +29,36 @@ func LockDataDir(dataDir string) (release func(), err error) {
 
 // StartSyncLoops fetches every repo on its configured interval (writable
 // repos update remote-tracking refs; read-only repos fast-forward heads) and
-// evicts idle clean worktrees. Runs until the process exits.
+// evicts idle clean worktrees. Runs until the process exits. Repos added at
+// runtime (AddRepo) get their own loop there.
 func (m *Manager) StartSyncLoops() {
 	for _, r := range m.Repos() {
-		if r.Cfg.SyncInterval > 0 {
-			go func(r *Repo) {
-				t := time.NewTicker(r.Cfg.SyncInterval)
-				for range t.C {
-					if err := r.Fetch(); err != nil {
-						log.Printf("sync %s: %v", r.Cfg.ID, err)
-						continue
-					}
-					m.notify("fetch", r.Key(), "")
-				}
-			}(r)
-		}
+		m.startSyncLoop(r)
 	}
 	go m.worktreeJanitor()
+}
+
+// startSyncLoop fetches one repo on its interval until the repo is removed.
+func (m *Manager) startSyncLoop(r *Repo) {
+	if r.Cfg.SyncInterval <= 0 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(r.Cfg.SyncInterval)
+		defer t.Stop()
+		for range t.C {
+			select {
+			case <-r.done:
+				return
+			default:
+			}
+			if err := r.Fetch(); err != nil {
+				log.Printf("sync %s: %v", r.Cfg.ID, err)
+				continue
+			}
+			m.notify("fetch", r.Key(), "")
+		}
+	}()
 }
 
 const worktreeIdleEviction = 24 * time.Hour

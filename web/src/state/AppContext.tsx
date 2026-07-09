@@ -15,7 +15,9 @@ export type ViewName = (typeof VIEWS)[number];
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 interface AppState {
-  repoId?: string;                // the writable workspace repo
+  repoId?: string;                // the active project
+  projects: { id: string; contentRoot?: string }[];
+  switchProject: (id: string) => void;
   branch: string;
   setBranch: (b: string) => void;
   /** switch branches; flushes open drafts first unless carrying them along */
@@ -46,7 +48,10 @@ export const useApp = () => useContext(Ctx);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
-  const writable = repos.data?.find((r) => r.kind === 'project'); // sole project until the switcher (P2)
+  const projects = (repos.data || []).filter((r) => r.kind === 'project');
+  const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('specquill-project') || '');
+  // the active project: the stored choice when it still exists, else the first
+  const writable = projects.find((r) => r.id === projectId) || projects[0];
   const [branch, setBranch] = useState('');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const v = localStorage.getItem('specquill-theme');
@@ -95,6 +100,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const protectedBranches = writable?.protectedBranches || [];
     return {
       repoId: writable?.id,
+      projects: projects.map((p) => ({ id: p.id, contentRoot: p.contentRoot })),
+      switchProject: (id: string) => {
+        if (id === writable?.id) return;
+        // same discipline as switchBranch: never lose an open draft
+        void flushAllDrafts().finally(() => {
+          localStorage.setItem('specquill-project', id);
+          setProjectId(id);
+          setBranch(''); // back to the new project's default branch
+        });
+      },
       branch: effBranch,
       setBranch,
       switchBranch: (b: string, opts?: { carryDraft?: boolean }) => {
@@ -129,7 +144,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       configYml: files?.['.specquill/config.yml'],
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
-  }, [writable?.id, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writable?.id, repos.data, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
