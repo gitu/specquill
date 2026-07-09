@@ -26,8 +26,9 @@ Grounded references join the copilot context under `~<source>/<path>`
 headings inside a budget; draft edits remain restricted to project files —
 a reference path in a model reply is refused.
 
-## Worked example
+## Cross-repo traceability
 
-This workspace itself references the regulations source: see
-[MiFID II](~regulations/regulations/mifid-ii.md) — a cross-repo reference
-that shows up as an external node in the traceability graph.
+A document may link a granted source's file with a `~<source>/<path>` link;
+these render as external nodes in the traceability graph, so a spec's
+dependency on an upstream regulation or API contract stays visible without
+importing that content into the project.

@@ -31,6 +31,7 @@ flowchart LR
 ## Timing & precision
 - Execution timestamp recorded to the **microsecond** (RTS 22 §2, 2026-06).
 - Applies to mapping `trade.executionTimestamp`.
+- Authoritative text: the grounded [MiFID II source](~regulations/regulations/mifid-ii.md).
 
 ## Data mapping
 

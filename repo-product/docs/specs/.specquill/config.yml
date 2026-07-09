@@ -8,8 +8,7 @@ ui:
 
 statuses: [draft, in_review, approved, deprecated]
 
-# references select granted sources by name (stage 3 of the authorization
-# chain) — they can never mint access beyond what the tenant granted
-references:
-  - source: regulations
-    grounding: true
+# The SpecQuill product specs are self-contained — they reference no external
+# sources. (References select granted catalog sources by name; see
+# specs/references.md for how the mechanism works.)
+references: []

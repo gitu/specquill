@@ -57,20 +57,14 @@ test('management api: role-gated project lifecycle', async ({ request }) => {
 });
 
 test('cross-repo reference renders as an external graph node', async ({ page }) => {
-  await page.goto('/#/editor');
-  await page.getByTitle('Project').selectOption('specquill-docs');
-  await expect(page.locator('aside').getByText('SPECQUILL-DOCS', { exact: true })).toBeVisible({ timeout: 10_000 });
-
+  // trading-specs grounds on the external regulations source; its txn-report
+  // spec links ~regulations/regulations/mifid-ii.md (specquill-docs, by
+  // contrast, is self-contained and references nothing).
   await page.goto('/#/graph');
-  // the ~regulations link in specs/references.md becomes an external node…
+  // the ~regulations link becomes an external node…
   // (scoped to the graph canvas — the copilot panel also shows a ~regulations chip)
   await expect(page.getByRole('main').getByText('~regulations')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('mifid-ii').first()).toBeVisible();
   // …connected by a dashed edge
   await expect(page.locator('svg path[stroke-dasharray]').first()).toBeVisible();
-
-  // back to the default project for the rest of the suite
-  await page.goto('/#/editor');
-  await page.getByTitle('Project').selectOption('trading-specs');
-  await expect(page.locator('aside').getByText('TRADING-SPECS', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
