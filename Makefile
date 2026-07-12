@@ -1,4 +1,4 @@
-.PHONY: build web server dev-fixture test clean
+.PHONY: build web server dev dev-fixture test e2e dev-server clean
 
 build: web server                ## release build: SPA embedded in single binary
 
@@ -7,6 +7,9 @@ web:                             ## build the SPA into the server's embed dir
 
 server:                          ## build the Go server (embeds web build)
 	cd server && CGO_ENABLED=0 go build -o specquill ./cmd/specquill
+
+dev:                             ## hot-reload dev loop: postgres + air (Go rebuild) + vite (web HMR on :5173)
+	./scripts/dev.sh
 
 dev-fixture:                     ## create local bare origin repos under data/origin/
 	./scripts/dev-fixture.sh

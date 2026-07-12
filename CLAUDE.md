@@ -12,6 +12,12 @@ from the code.
 - Start: `./server/specquill -config specquill.dev.yml -dev` — the `-dev` flag
   auto-authenticates every request as `auth.dev_user` ("Flo Dev", workspace
   branch `ws/dev`) and bypasses session TTLs.
+- **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts postgres, `air`
+  (rebuilds/restarts the Go server on save; a bare `touch` does NOT trigger it,
+  air ignores chmod-only events), and vite HMR on :5173 (proxies /api+/auth,
+  ws included). In this mode browse the **vite port** — :8643 still serves
+  whatever SPA was last embedded. E2E still needs the embedded build
+  (`make build`).
 - **The SPA is embedded in the Go binary.** After `cd web && npm run build`
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.

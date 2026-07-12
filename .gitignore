@@ -4,6 +4,7 @@ web/dist/
 server/internal/webui/dist/*
 !server/internal/webui/dist/.gitkeep
 server/specquill
+server/tmp/
 *.log
 test-results/
 playwright-report/
