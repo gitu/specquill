@@ -14,3 +14,5 @@
 - [Self-describing, extensible entity model](REQ-012.md)
 - [Verifiable link integrity](REQ-013.md)
 - [Traceable document lifecycle](REQ-014.md)
+- [Guided document creation with collision-free IDs](REQ-015.md)
+- [Unauthenticated OKF-bundle share links](REQ-016.md)

@@ -31,6 +31,8 @@ okf_version: "0.1"
 - [Self-describing, extensible entity model](requirements/REQ-012.md)
 - [Verifiable link integrity](requirements/REQ-013.md)
 - [Traceable document lifecycle](requirements/REQ-014.md)
+- [Guided document creation with collision-free IDs](requirements/REQ-015.md)
+- [Unauthenticated OKF-bundle share links](requirements/REQ-016.md)
 
 ## specs
 
@@ -46,3 +48,5 @@ okf_version: "0.1"
 - [Entity model — document families](specs/entity-model.md)
 - [Links — resolution and verification](specs/links.md)
 - [Document lifecycle — moves and history](specs/document-lifecycle.md)
+- [Document creation — guided flow and ID schemes](specs/document-creation.md)
+- [Share links — unauthenticated OKF-bundle downloads](specs/share-links.md)

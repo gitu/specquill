@@ -12,3 +12,5 @@
 - [Entity model — document families](entity-model.md)
 - [Links — resolution and verification](links.md)
 - [Document lifecycle — moves and history](document-lifecycle.md)
+- [Document creation — guided flow and ID schemes](document-creation.md)
+- [Share links — unauthenticated OKF-bundle downloads](share-links.md)

@@ -32,8 +32,9 @@ entities:
 - Overriding a built-in changes only the fields provided.
 - The tree lists entity folders first (config order), then any other folder —
   unknown folders render with generic styling, never hidden.
-- "New file" derives the frontmatter `type` from the family (custom kinds are
-  title-cased: `decision` → `Decision`).
+- "New document" derives the frontmatter `type` from the family (custom kinds
+  are title-cased: `decision` → `Decision`); families also carry ID schemes —
+  see [document creation](document-creation.md).
 
 This workspace dogfoods the mechanism: `decisions/` and `glossary/` are
 custom entities in its own `.specquill/config.yml`.
