@@ -61,6 +61,27 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, repo *projec
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
+// postMove renames a file in the branch worktree via git mv; the reference
+// rewrite that usually follows is a series of ordinary PUTs from the client.
+func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	var body struct{ From, To string }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From == "" || body.To == "" {
+		jsonError(w, http.StatusBadRequest, "from and to are required")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	if full, err := repo.MapIn(body.From); err == nil && s.hub.RoomActive(repo.Key(), branch, full) {
+		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
+		return
+	}
+	if err := repo.MoveFile(r.URL.Query().Get("branch"), body.From, body.To); err != nil {
+		gitFail(w, err)
+		return
+	}
+	s.publish("save", repo.Key(), branch)
+	jsonOK(w, map[string]string{"from": body.From, "to": body.To})
+}
+
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	st, err := repo.Status(r.URL.Query().Get("branch"))
 	if err != nil {

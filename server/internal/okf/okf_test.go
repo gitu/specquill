@@ -53,10 +53,10 @@ func TestGenerateIndexes(t *testing.T) {
 	s := string(rootIdx)
 	for _, want := range []string{
 		"okf_version", "custom: kept", // existing frontmatter preserved
-		"- [Readme](/README.md)",
+		"- [Readme](README.md)",
 		"## requirements",
-		"- [Login](/requirements/REQ-001.md) — Users can log in.",
-		"- [REQ-002](/requirements/REQ-002.md)",
+		"- [Login](requirements/REQ-001.md) — Users can log in.",
+		"- [REQ-002](requirements/REQ-002.md)",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("root index missing %q:\n%s", want, s)

@@ -138,18 +138,29 @@ func parse(rel, content string) Doc {
 		if t == "" || !strings.HasSuffix(t, ".md") || regexp.MustCompile(`^[a-zA-Z][a-zA-Z+.-]*:`).MatchString(t) {
 			continue
 		}
-		target := t
-		if strings.HasPrefix(t, "/") {
-			target = t[1:]
-		} else {
-			target = resolve(dir, t)
-		}
+		target := ResolveHref(dir, t)
 		if target != rel && !seen[target] {
 			seen[target] = true
 			doc.References = append(doc.References, target)
 		}
 	}
 	return doc
+}
+
+// ResolveHref resolves a markdown href against the linking document's
+// directory, mirroring the SPA: `~source/…` passes through (cross-repo), a
+// leading `/` is bundle-root-relative (the form OKF recommends), everything
+// else is standard markdown RELATIVE. Anchors are stripped.
+func ResolveHref(dir, href string) string {
+	t := strings.SplitN(href, "#", 2)[0]
+	switch {
+	case strings.HasPrefix(t, "~"):
+		return t
+	case strings.HasPrefix(t, "/"):
+		return strings.TrimLeft(t, "/")
+	default:
+		return resolve(dir, t)
+	}
 }
 
 func resolve(dir, rel string) string {
@@ -184,6 +195,9 @@ func BrokenLinks(root string, docs []Doc) []string {
 		t := strings.SplitN(target, "#", 2)[0]
 		if !strings.HasSuffix(t, ".md") {
 			return // prose refs and field anchors are not files
+		}
+		if strings.HasPrefix(t, "~") {
+			return // cross-repo reference — needs source access to verify
 		}
 		if !exists(t) {
 			out = append(out, from+": "+field+" -> "+t)

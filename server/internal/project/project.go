@@ -137,6 +137,11 @@ func (p *Project) FileAt(ref, rel string) (string, string, error) {
 
 // ---------------------------------------------------------------- writes
 
+// ArchiveZip zips the project's content at ref (paths project-relative).
+func (p *Project) ArchiveZip(ref string) ([]byte, error) {
+	return p.Repo.ArchiveZip(ref, p.ContentRoot)
+}
+
 func (p *Project) writeGuard() error {
 	if p.ReadOnly {
 		return fmt.Errorf("repo %s is read-only", p.ID)
@@ -153,6 +158,29 @@ func (p *Project) SaveFile(branch, rel, content, baseSha string) (string, error)
 		return "", err
 	}
 	return p.Repo.SaveFile(branch, full, content, baseSha)
+}
+
+func (p *Project) MoveFile(branch, from, to string) error {
+	if err := p.writeGuard(); err != nil {
+		return err
+	}
+	fullFrom, err := p.MapIn(from)
+	if err != nil {
+		return err
+	}
+	fullTo, err := p.MapIn(to)
+	if err != nil {
+		return err
+	}
+	return p.Repo.MoveFile(branch, fullFrom, fullTo)
+}
+
+func (p *Project) FileHistory(ref, rel string, limit int) ([]gitx.HistoryEntry, error) {
+	full, err := p.MapIn(rel)
+	if err != nil {
+		return nil, err
+	}
+	return p.Repo.FileHistory(ref, full, limit)
 }
 
 func (p *Project) DeleteFile(branch, rel string) error {

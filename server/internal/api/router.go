@@ -77,6 +77,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
 	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
+	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
 	apiMux.HandleFunc("GET /api/repos/{repo}/files/{path...}", s.repoH(s.getFile))
 	apiMux.HandleFunc("GET /api/repos/{repo}/raw/{path...}", s.repoH(s.getRaw))
@@ -85,6 +86,8 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/repos/{repo}/branches", s.repoH(s.listBranches))
 	apiMux.HandleFunc("PUT /api/repos/{repo}/files/{path...}", s.writableH(s.putFile))
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/files/{path...}", s.writableH(s.deleteFile))
+	apiMux.HandleFunc("POST /api/repos/{repo}/move", s.writableH(s.postMove))
+	apiMux.HandleFunc("GET /api/repos/{repo}/history", s.repoH(s.getHistory))
 	apiMux.HandleFunc("GET /api/repos/{repo}/status", s.writableH(s.getStatus))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit", s.writableH(s.postCommit))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit-message", s.writableH(s.postCommitMessage))
@@ -105,6 +108,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/approve", s.writableH(s.approvePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/merge", s.writableH(s.mergePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/close", s.writableH(s.closePR))
+	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
+	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.roleH("member", s.createShare))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.roleH("member", s.deleteShare))
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
 	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
@@ -114,6 +120,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.requireAuth(apiMux))
+	// public OKF-bundle download — the share token in the URL is the only
+	// credential; {name} is the cosmetic filename and is not checked
+	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
 	mux.HandleFunc("GET /auth/callback", s.authCallback)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)

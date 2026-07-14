@@ -37,7 +37,7 @@ func TestCommitRegeneratesOKF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(idx, "okf_version") || !strings.Contains(idx, "(/specs/a.md)") {
+	if !strings.Contains(idx, "okf_version") || !strings.Contains(idx, "(specs/a.md)") {
 		t.Fatalf("root index not regenerated:\n%s", idx)
 	}
 	dirIdx, _, err := repo.File("main", "specs/index.md")

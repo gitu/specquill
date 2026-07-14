@@ -48,6 +48,18 @@ func (s *Store) EnsureTenant(slug, provider string, installation int64, displayN
 	return s.TenantBySlug(slug)
 }
 
+func (s *Store) TenantByID(id int64) (*Tenant, error) {
+	t := &Tenant{}
+	var inst sql.NullInt64
+	err := s.queryRow(`SELECT id, slug, provider, installation_id, display_name FROM tenants WHERE id = ?`, id).
+		Scan(&t.ID, &t.Slug, &t.Provider, &inst, &t.DisplayName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	t.Installation = inst.Int64
+	return t, err
+}
+
 func (s *Store) TenantBySlug(slug string) (*Tenant, error) {
 	t := &Tenant{}
 	var inst sql.NullInt64

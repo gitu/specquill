@@ -192,6 +192,40 @@ func (r *Repo) File(ref, path string) (content string, sha string, err error) {
 	return blob, strings.TrimSpace(oid), nil
 }
 
+// HistoryEntry is one commit touching a file.
+type HistoryEntry struct {
+	SHA     string `json:"sha"`
+	Author  string `json:"author"`
+	Email   string `json:"email"`
+	Date    string `json:"date"` // ISO 8601 author date
+	Subject string `json:"subject"`
+}
+
+// FileHistory lists the commits touching path on ref, newest first, renames
+// followed (--follow), capped at limit (default 100).
+func (r *Repo) FileHistory(ref, path string, limit int) ([]HistoryEntry, error) {
+	ref = r.ResolveRef(ref)
+	path, err := safeRelPath(path)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	out, err := run(r.gitDir, nil, "log", "--follow", fmt.Sprintf("-n%d", limit),
+		"--pretty=format:%H%x1f%an%x1f%ae%x1f%aI%x1f%s", ref, "--", path)
+	if err != nil {
+		return nil, err
+	}
+	var entries []HistoryEntry
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if f := strings.SplitN(line, "\x1f", 5); len(f) == 5 {
+			entries = append(entries, HistoryEntry{SHA: f[0], Author: f[1], Email: f[2], Date: f[3], Subject: f[4]})
+		}
+	}
+	return entries, nil
+}
+
 // FileAt reads a file from the object database at ref — never the worktree.
 // Used as the committed baseline for uncommitted-change visualization.
 func (r *Repo) FileAt(ref, path string) (content string, sha string, err error) {
@@ -209,6 +243,22 @@ func (r *Repo) FileAt(ref, path string) (content string, sha string, err error) 
 		return "", "", err
 	}
 	return blob, strings.TrimSpace(oid), nil
+}
+
+// ArchiveZip returns the tree at ref as a zip archive, produced by git
+// itself (binaries included, no worktree needed). A non-empty subdir scopes
+// the archive to that subtree with paths relative to it — the OKF-bundle
+// download for content-root (monorepo) projects.
+func (r *Repo) ArchiveZip(ref, subdir string) ([]byte, error) {
+	tree := ref
+	if subdir != "" {
+		tree = ref + ":" + subdir
+	}
+	out, err := run(r.gitDir, nil, "archive", "--format=zip", tree)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
 }
 
 func runFull2(dir string, env []string, stdin []byte, args ...string) (string, error) {

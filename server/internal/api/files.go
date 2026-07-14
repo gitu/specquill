@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
-	"specquill/server/internal/project"
 	"time"
+
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/project"
 )
 
 func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +112,23 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request, repo *project.P
 		return
 	}
 	jsonOK(w, map[string]string{"content": content, "sha": sha})
+}
+
+func (s *Server) getHistory(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	entries, err := repo.FileHistory(r.URL.Query().Get("ref"), path, 0)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+	if entries == nil {
+		entries = []gitx.HistoryEntry{}
+	}
+	jsonOK(w, entries)
 }
 
 func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, repo *project.Project) {

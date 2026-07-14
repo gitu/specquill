@@ -110,11 +110,18 @@ func GenerateIndexes(root string) ([]string, error) {
 		return nil, err
 	}
 
-	entry := func(c concept) string {
-		if c.desc != "" {
-			return fmt.Sprintf("- [%s](/%s) — %s\n", c.title, c.rel, c.desc)
+	// links are RELATIVE to the index that carries them (plain-markdown
+	// compatibility: renders on any forge). OKF v0.1 permits both styles;
+	// consumers still accept the /-absolute form in existing content.
+	entry := func(c concept, fromDir string) string {
+		link := c.rel
+		if fromDir != "" {
+			link = strings.TrimPrefix(c.rel, fromDir+"/")
 		}
-		return fmt.Sprintf("- [%s](/%s)\n", c.title, c.rel)
+		if c.desc != "" {
+			return fmt.Sprintf("- [%s](%s) — %s\n", c.title, link, c.desc)
+		}
+		return fmt.Sprintf("- [%s](%s)\n", c.title, link)
 	}
 
 	dirs := make([]string, 0, len(byDir))
@@ -155,13 +162,13 @@ func GenerateIndexes(root string) ([]string, error) {
 	if rootDocs := byDir[""]; len(rootDocs) > 0 {
 		b.WriteString("\n")
 		for _, c := range rootDocs {
-			b.WriteString(entry(c))
+			b.WriteString(entry(c, ""))
 		}
 	}
 	for _, d := range dirs {
 		fmt.Fprintf(&b, "\n## %s\n\n", d)
 		for _, c := range byDir[d] {
-			b.WriteString(entry(c))
+			b.WriteString(entry(c, ""))
 		}
 	}
 	if err := write("index.md", b.String()); err != nil {
@@ -173,7 +180,7 @@ func GenerateIndexes(root string) ([]string, error) {
 		var s strings.Builder
 		fmt.Fprintf(&s, "# %s\n\n", d)
 		for _, c := range byDir[d] {
-			s.WriteString(entry(c))
+			s.WriteString(entry(c, d))
 		}
 		if err := write(d+"/index.md", s.String()); err != nil {
 			return changed, err

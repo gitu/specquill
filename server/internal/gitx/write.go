@@ -184,6 +184,49 @@ func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err erro
 	return strings.TrimSpace(newSha), nil
 }
 
+// MoveFile renames a file inside the branch worktree. Tracked files move via
+// `git mv` so the rename is staged explicitly; untracked drafts (not yet
+// known to git) fall back to a plain filesystem rename.
+func (r *Repo) MoveFile(branch, from, to string) error {
+	branch = r.ResolveRef(branch)
+	if err := r.protectedErr(branch); err != nil {
+		return err
+	}
+	from, err := safeRelPath(from)
+	if err != nil {
+		return err
+	}
+	to, err = safeRelPath(to)
+	if err != nil {
+		return err
+	}
+	wt, err := r.Worktree(branch)
+	if err != nil {
+		return err
+	}
+	mu := r.lockBranch(branch)
+	mu.Lock()
+	defer mu.Unlock()
+	absFrom := filepath.Join(wt, filepath.FromSlash(from))
+	absTo := filepath.Join(wt, filepath.FromSlash(to))
+	if _, err := os.Stat(absFrom); err != nil {
+		return fmt.Errorf("not found: %s", from)
+	}
+	if _, err := os.Stat(absTo); err == nil {
+		return fmt.Errorf("destination exists: %s", to)
+	}
+	if err := os.MkdirAll(filepath.Dir(absTo), 0o755); err != nil {
+		return err
+	}
+	if _, mvErr := run(wt, nil, "mv", "--", from, to); mvErr != nil {
+		// untracked file — git mv refuses; a plain rename is the same move
+		if err := os.Rename(absFrom, absTo); err != nil {
+			return fmt.Errorf("move %s -> %s: %v", from, to, mvErr)
+		}
+	}
+	return nil
+}
+
 func (r *Repo) DeleteFile(branch, path string) error {
 	branch = r.ResolveRef(branch)
 	if err := r.protectedErr(branch); err != nil {

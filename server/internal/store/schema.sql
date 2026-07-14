@@ -179,3 +179,15 @@ CREATE TABLE IF NOT EXISTS source_syncs (
   synced_at  BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, name)
 );
+
+-- unauthenticated OKF-bundle share links: the URL token is the only
+-- credential (LLM copy-paste use case). One active link per project;
+-- minting again rotates the token, deleting revokes access.
+CREATE TABLE IF NOT EXISTS share_links (
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
+  project_id TEXT NOT NULL,
+  token      TEXT NOT NULL UNIQUE,
+  created_by BIGINT NOT NULL REFERENCES users(id),
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, project_id)
+);
