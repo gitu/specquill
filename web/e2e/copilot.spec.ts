@@ -9,7 +9,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 test('chat streams a grounded reply', async ({ page }) => {
-  await page.goto('/#/editor/specs/txn-report.md');
+  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
   const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('Enter');
@@ -22,7 +22,7 @@ test('chat streams a grounded reply', async ({ page }) => {
 });
 
 test('draft edits land on a copilot branch for review', async ({ page }) => {
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await page.getByRole('button', { name: /Draft edits & open as diff/ }).click();
   await expect(page.getByText('Edits drafted on')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('copilot/2026-06-mifid-rts22').first()).toBeVisible();
@@ -30,6 +30,6 @@ test('draft edits land on a copilot branch for review', async ({ page }) => {
 
   // review switches to the copilot branch; the tree shows uncommitted changes
   await page.getByRole('button', { name: /Review on copilot\// }).click();
-  await expect(page).toHaveURL(/#\/editor\//);
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/editor\//);
   await expect(page.getByRole('button', { name: 'Commit' })).toBeVisible({ timeout: 10_000 });
 });

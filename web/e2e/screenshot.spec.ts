@@ -4,7 +4,7 @@ import { test } from '@playwright/test';
 
 test('capture excalidraw modal screenshot', async ({ page }) => {
   test.skip(!process.env.SHOT, 'set SHOT=1 to capture');
-  await page.goto('/#/editor/diagrams/data-flow.excalidraw');
+  await page.goto('/p/trading-specs/editor/diagrams/data-flow.excalidraw');
   await page.getByTitle('Click to edit the sketch').click();
   await page.locator('.excalidraw [title*="Rectangle"]').waitFor({ timeout: 20_000 });
   await page.waitForTimeout(600);
@@ -15,7 +15,7 @@ test('capture copilot demo screenshot', async ({ page, request }) => {
   test.skip(!process.env.SHOT, 'set SHOT=1 to capture');
   const info = (await (await request.get('/api/copilot/info')).json()) as { model?: string };
   test.skip(info.model !== 'mock-1', 'needs the deterministic mock provider');
-  await page.goto('/#/editor/specs/txn-report.md');
+  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
   const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('Enter');

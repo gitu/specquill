@@ -9,7 +9,7 @@ const H = { 'X-SpecQuill': '1' };
 const DOC = 'requirements/REQ-095.md';
 
 async function openEditor(page: Page, branch: string) {
-  await page.goto(`/#/editor/${DOC}`);
+  await page.goto(`/p/trading-specs/editor/${DOC}`);
   await expect(page.getByText('ICT Incident Reporting').first()).toBeVisible();
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
@@ -68,8 +68,8 @@ test('two browsers co-edit the same document live', async ({ page, request, brow
   expect(room!.users.length).toBe(2);
 
   // restore the doc for other tests
-  await b.goto('/#/dashboard');
-  await page.goto('/#/dashboard');
+  await b.goto('/p/trading-specs/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   // live rooms only — orphaned rooms (unflushed logs) linger by design
   await expect
     .poll(async () => {

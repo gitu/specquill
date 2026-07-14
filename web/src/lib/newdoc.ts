@@ -2,6 +2,8 @@
 // an OKF `type` (the only frontmatter field the format requires), derived
 // from the folder family it lands in.
 
+import type { EntityDef } from './entities';
+
 export const DOC_TYPES: Record<string, string> = {
   requirements: 'Requirement',
   specs: 'Specification',
@@ -12,9 +14,14 @@ export const DOC_TYPES: Record<string, string> = {
   glossary: 'Glossary',
 };
 
-export function newDocTemplate(path: string): string {
+const titleCase = (s: string) => s.split(/[_-]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+export function newDocTemplate(path: string, entities?: EntityDef[], opts?: { id?: string; title?: string }): string {
   const family = path.includes('/') ? path.split('/')[0] : '';
-  const type = DOC_TYPES[family] || 'Document';
-  const name = path.split('/').pop()!.replace(/\.md$/, '');
-  return `---\ntype: ${type}\ntitle: ${name}\nstatus: draft\n---\n\n# ${name}\n`;
+  // custom entity families type their documents after the entity kind
+  const ent = entities?.find((e) => e.folder === family + '/');
+  const type = DOC_TYPES[family] || (ent ? titleCase(ent.kind) : 'Document');
+  const name = opts?.title || path.split('/').pop()!.replace(/\.md$/, '');
+  const idLine = opts?.id ? `id: ${opts.id}\n` : '';
+  return `---\n${idLine}type: ${type}\ntitle: ${name}\nstatus: draft\n---\n\n# ${name}\n`;
 }

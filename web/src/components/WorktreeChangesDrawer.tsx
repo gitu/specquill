@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useFileAtHead, useFileQuery, useStatus, useWorktreeDiff } from '../api/hooks';
@@ -32,7 +32,7 @@ function WorktreeArtifact({ path }: { path: string }) {
 
 /** Right-side drawer showing every uncommitted change on the current branch. */
 export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const diff = useWorktreeDiff(app.repoId, app.branch, true);
   const status = useStatus(app.repoId, app.branch);

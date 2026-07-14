@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { sx } from './lib/sx';
 import { WorktreeChangesDrawer } from './components/WorktreeChangesDrawer';
 import { AppProvider, useApp } from './state/AppContext';
+import { appPath } from './state/nav';
 import { ToastProvider } from './components/Toast';
 import { TopBar } from './components/TopBar';
 import { Rail } from './components/Rail';
@@ -16,7 +17,8 @@ function Shell() {
   const app = useApp();
   const { pathname } = useLocation();
   const narrow = useNarrow();
-  const showTree = pathname.startsWith('/editor') || pathname.startsWith('/diff');
+  const view = appPath(pathname);
+  const showTree = view.startsWith('/editor') || view.startsWith('/diff');
   const [changesOpen, setChangesOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   useEffect(() => {

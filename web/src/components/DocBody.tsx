@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import mermaid from 'mermaid';
-import { EXCALIDRAW_CMAP, excalidrawToSvg, resolvePath } from '../lib/model';
+import { EXCALIDRAW_CMAP, excalidrawToSvg, resolveDocHref } from '../lib/model';
 import { rawUrl } from '../api/client';
 import { useApp } from '../state/AppContext';
 
@@ -14,7 +14,7 @@ let mermaidSeq = 0;
  */
 export function DocBody({ html, docPath }: { html: string; docPath: string }) {
   const host = useRef<HTMLDivElement>(null);
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const files = app.files;
 
@@ -58,11 +58,11 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
     };
     el.querySelectorAll('img').forEach((img) => {
       const src = img.getAttribute('src') || '';
-      if (/\.excalidraw$/.test(src)) { drawExc(files?.[resolvePath(dir, src)], img); return; }
+      if (/\.excalidraw$/.test(src)) { drawExc(files?.[resolveDocHref(dir, src)], img); return; }
       if (/^(https?:|data:|blob:)/.test(src)) return;
       // repo-relative image: serve through the raw endpoint (reference-repo
       // docs carry a ~repo/ prefix and read at their default branch)
-      const resolved = resolvePath(dir, src);
+      const resolved = resolveDocHref(dir, src);
       const m = resolved.match(/^~([^/]+)\/(.*)$/);
       img.src = m ? rawUrl(m[1], '', m[2]) : rawUrl(app.repoId || '', app.branch, resolved);
       img.style.maxWidth = '100%';
@@ -76,7 +76,7 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
       (a as HTMLElement).style.cursor = 'pointer';
       a.addEventListener('click', (e) => {
         e.preventDefault();
-        nav('/editor/' + resolvePath(dir, href.split('#')[0]));
+        nav('/editor/' + resolveDocHref(dir, href));
       });
     });
   }, [html, docPath, app.theme, app.repoId, app.branch, files, nav]);

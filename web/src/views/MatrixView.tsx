@@ -1,11 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { buildMatrix } from '../lib/derive';
 import { Loading } from './Dashboard';
 
 export function MatrixView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   if (!app.model) return <Loading />;
   const mx = buildMatrix(app.model);

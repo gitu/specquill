@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useCreatePR, useStatus } from '../api/hooks';
@@ -10,7 +10,7 @@ import { CommitDialog } from './CommitDialog';
  * commit model), then creates a branch-based PR against the target.
  */
 export function CreatePRDialog({ onClose }: { onClose: () => void }) {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const branches = useBranches(app.repoId);
   const status = useStatus(app.repoId, app.branch);

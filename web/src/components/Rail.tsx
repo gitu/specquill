@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
+import { useAppPath, useNav } from '../state/nav';
 import { buildDashboard } from '../lib/derive';
 import { IconChanges, IconDash, IconFolder, IconGear, IconMatrix, IconModel, IconSpark, IconTrace } from './icons';
 
@@ -15,8 +15,8 @@ const I = 'background:transparent;color:var(--text-2)';
 const BTN = 'width:40px;height:40px;border-radius:9px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;';
 
 export function Rail() {
-  const nav = useNavigate();
-  const { pathname } = useLocation();
+  const nav = useNav();
+  const pathname = useAppPath();
   const app = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openCount = app.model ? buildDashboard(app.model).openCount : 0;

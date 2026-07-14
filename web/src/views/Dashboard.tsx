@@ -1,14 +1,53 @@
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
+import { useMe, usePRs } from '../api/hooks';
 import { buildDashboard, srcMeta } from '../lib/derive';
+import { LinkCheckCard } from '../components/LinkCheck';
+import { NewDocDialog } from '../components/NewDocDialog';
+
+// one row in the "Needs your review" card — derived, never hard-coded
+interface ReviewItem { key: string; icon: string; fg: string; bg: string; title: string; sub: string; go?: string }
 
 export function Dashboard() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
+  const me = useMe();
+  const prs = usePRs(app.repoId);
+  const [newDoc, setNewDoc] = useState(false);
   if (!app.model) return <Loading />;
   const d = buildDashboard(app.model);
   const covColor = d.cov > 80 ? 'var(--data)' : d.cov > 60 ? 'var(--prod)' : 'var(--reg)';
+
+  // needs-your-review: open PRs (yours vs. awaiting your approval), mapping
+  // docs with drifted fields, and change records still in triage
+  const review: ReviewItem[] = [];
+  for (const p of prs.data || []) {
+    const mine = p.author.id === me.data?.id;
+    const approvedByMe = p.approvals.some((a) => a.current && a.user.id === me.data?.id);
+    const state = mine ? (p.approvals.some((a) => a.current) ? 'approved — ready to merge' : 'your open PR')
+      : approvedByMe ? 'you approved' : 'awaiting your review';
+    const comments = p.commentCount ? ` · ${p.commentCount} comment${p.commentCount === 1 ? '' : 's'}` : '';
+    review.push({
+      key: 'pr' + p.number, icon: '⑂', fg: 'var(--prod)', bg: 'var(--prod-bg)',
+      title: `PR #${p.number} · ${p.title}`,
+      sub: state + comments,
+      go: `/prs/${p.number}`,
+    });
+  }
+  const driftByMap: Record<string, number> = {};
+  app.model.fields.forEach((f) => { if (f.drift) driftByMap[f.map] = (driftByMap[f.map] || 0) + 1; });
+  Object.entries(driftByMap).forEach(([map, n]) => review.push({
+    key: 'drift' + map, icon: '⇄', fg: 'var(--data)', bg: 'var(--data-bg)',
+    title: (map.split('/').pop() || map) + ' mapping',
+    sub: `${n} drift${n === 1 ? '' : 's'} to confirm`,
+    go: '/editor/' + map,
+  }));
+  app.model.changes.filter((c) => c.status === 'triage').forEach((c) => review.push({
+    key: 'chg' + c.path, icon: '⚑', fg: 'var(--reg)', bg: 'var(--reg-bg)',
+    title: c.name, sub: 'change in triage', go: '/changes?sel=' + encodeURIComponent(c.path),
+  }));
 
   return (
     <div style={sx('flex:1;min-height:0;overflow-y:auto;background:var(--bg)')}>
@@ -19,7 +58,7 @@ export function Dashboard() {
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Overview</h1>
           </div>
           <div style={sx('display:flex;gap:8px')}>
-            <button style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New requirement</button>
+            <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New requirement</button>
             <button onClick={() => nav('/changes')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
               Review changes · {d.openCount}
             </button>
@@ -74,29 +113,23 @@ export function Dashboard() {
           <div style={sx('display:flex;flex-direction:column;gap:18px')}>
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
               <div style={sx('padding:13px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:13.5px')}>Needs your review</div>
-              <div style={sx('display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border)')}>
-                <span style={sx('width:22px;height:22px;border-radius:6px;background:var(--reg-bg);color:var(--reg);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none')}>◈</span>
-                <div style={sx('flex:1;min-width:0')}>
-                  <div style={sx('font-size:12.5px;font-weight:600')}>mifid-ii.md</div>
-                  <div style={sx('font-size:11px;color:var(--text-3)')}>2 unresolved comments</div>
+              {review.slice(0, 5).map((it, i) => (
+                <div key={it.key} onClick={it.go ? () => nav(it.go!) : undefined}
+                  style={sx('display:flex;align-items:center;gap:10px;padding:11px 16px;' +
+                    (i < Math.min(review.length, 5) - 1 ? 'border-bottom:1px solid var(--border);' : '') + (it.go ? 'cursor:pointer' : ''))}>
+                  <span style={sx(`width:22px;height:22px;border-radius:6px;background:${it.bg};color:${it.fg};display:flex;align-items:center;justify-content:center;font-size:12px;flex:none`)}>{it.icon}</span>
+                  <div style={sx('flex:1;min-width:0')}>
+                    <div style={sx('font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{it.title}</div>
+                    <div style={sx('font-size:11px;color:var(--text-3)')}>{it.sub}</div>
+                  </div>
+                  {it.go && <span style={sx('font-size:11px;color:var(--prod);font-weight:600')}>Open</span>}
                 </div>
-                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--reg)")}>M</span>
-              </div>
-              <div style={sx('display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border)')}>
-                <span style={sx('width:22px;height:22px;border-radius:6px;background:var(--prod-bg);color:var(--prod);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none')}>⑂</span>
-                <div style={sx('flex:1;min-width:0')}>
-                  <div style={sx('font-size:12.5px;font-weight:600')}>PR #128 · RTS 22 edits</div>
-                  <div style={sx('font-size:11px;color:var(--text-3)')}>you were requested</div>
+              ))}
+              {review.length === 0 && (
+                <div style={sx('padding:14px 16px;font-size:12px;color:var(--text-3)')}>
+                  <span style={sx('color:var(--data)')}>✓</span> nothing needs you right now
                 </div>
-                <span onClick={() => nav('/diff')} style={sx('font-size:11px;color:var(--prod);cursor:pointer;font-weight:600')}>Open</span>
-              </div>
-              <div style={sx('display:flex;align-items:center;gap:10px;padding:11px 16px')}>
-                <span style={sx('width:22px;height:22px;border-radius:6px;background:var(--data-bg);color:var(--data);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none')}>⇄</span>
-                <div style={sx('flex:1;min-width:0')}>
-                  <div style={sx('font-size:12.5px;font-weight:600')}>trade.md mapping</div>
-                  <div style={sx('font-size:11px;color:var(--text-3)')}>1 drift to confirm</div>
-                </div>
-              </div>
+              )}
             </div>
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);padding:14px 16px')}>
               <div style={sx('font-weight:700;font-size:13.5px;margin-bottom:12px')}>Traceability health</div>
@@ -114,9 +147,11 @@ export function Dashboard() {
                 ))}
               </div>
             </div>
+            <LinkCheckCard />
           </div>
         </div>
       </div>
+      {newDoc && <NewDocDialog initialKind="requirement" onClose={() => setNewDoc(false)} />}
     </div>
   );
 }

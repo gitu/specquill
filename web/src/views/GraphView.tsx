@@ -1,15 +1,28 @@
-import { useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { buildGraph } from '../lib/derive';
 import { Loading } from './Dashboard';
 import { docTabsStrip } from './EditorView';
 
+const ZOOMS = [0.5, 0.65, 0.8, 1, 1.2, 1.45, 1.75];
+
 export function GraphView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
-  if (!app.model) return <Loading />;
-  const g = buildGraph(app.model);
+  const [hover, setHover] = useState<string | null>(null);
+  const [zi, setZi] = useState(3); // index into ZOOMS, 1 = 100%
+  const g = useMemo(() => (app.model ? buildGraph(app.model) : null), [app.model]);
+  // the hovered node's lineage: itself plus every node it shares an edge with
+  const linked = useMemo(() => {
+    if (!hover || !g) return null;
+    const s = new Set([hover]);
+    g.edges.forEach((e) => { if (e.a === hover) s.add(e.b); if (e.b === hover) s.add(e.a); });
+    return s;
+  }, [hover, g]);
+  if (!app.model || !g) return <Loading />;
+  const zoom = ZOOMS[zi];
   const seg = (on: boolean) => (on ? 'background:var(--text);color:var(--surface)' : 'color:var(--text-2);cursor:pointer');
 
   return (
@@ -35,16 +48,40 @@ export function GraphView() {
           </span>
         </div>
 
-        <div style={{ ...sx('position:relative;width:900px;margin:70px auto 40px;min-width:900px'), height: g.H }}>
-          <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
-            {g.edges.map((e, i) => <path key={i} d={e.d} fill="none" stroke={e.stroke} strokeWidth="1.8" strokeDasharray={e.dash ? '5 4' : undefined} />)}
-          </svg>
-          {g.nodes.map((n) => (
-            <div key={n.id} style={sx(n.boxStyle)}>
-              <div style={sx(n.labelStyle)}>{n.label}</div>
-              <div style={sx(n.subStyle)}>{n.sub}</div>
-            </div>
-          ))}
+        <div style={{ width: 900 * zoom, height: g.H * zoom + 110, margin: '0 auto' }}>
+          <div style={{ ...sx('position:relative;width:900px;min-width:900px;transform-origin:0 0'), height: g.H, marginTop: 70, transform: `scale(${zoom})` }}>
+            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
+              {g.edges.map((e, i) => {
+                const hot = !!hover && (e.a === hover || e.b === hover);
+                return (
+                  <path key={i} d={e.d} fill="none" stroke={e.stroke}
+                    strokeWidth={hot ? 2.6 : 1.8}
+                    strokeDasharray={e.dash ? '5 4' : undefined}
+                    opacity={hover ? (hot ? 1 : 0.12) : 0.9}
+                    style={{ transition: 'opacity .12s' }} />
+                );
+              })}
+            </svg>
+            {g.nodes.map((n) => (
+              <div
+                key={n.id}
+                title={n.go ? 'open ' + n.go : undefined}
+                onMouseEnter={() => setHover(n.id)}
+                onMouseLeave={() => setHover(null)}
+                onClick={n.go ? () => nav('/editor/' + n.go) : undefined}
+                style={{
+                  ...sx(n.boxStyle),
+                  opacity: linked && !linked.has(n.id) ? 0.3 : 1,
+                  cursor: n.go ? 'pointer' : 'default',
+                  transition: 'opacity .12s, box-shadow .12s',
+                  boxShadow: hover === n.id ? '0 0 0 2px var(--prod-line), var(--shadow-lg)' : undefined,
+                }}
+              >
+                <div style={sx(n.labelStyle)}>{n.label}</div>
+                <div style={sx(n.subStyle)}>{n.sub}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div style={sx('position:absolute;right:16px;top:14px;z-index:3;width:210px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow-lg);overflow:hidden')}>
@@ -64,9 +101,12 @@ export function GraphView() {
           </span>
         </div>
         <div style={sx('position:absolute;right:16px;bottom:14px;z-index:3;display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);overflow:hidden')}>
-          <span style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-right:1px solid var(--border)')}>−</span>
-          <span style={sx("padding:0 10px;font-family:'JetBrains Mono',monospace;font-size:11px")}>100%</span>
-          <span style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-left:1px solid var(--border)')}>+</span>
+          <span onClick={() => setZi((i) => Math.max(0, i - 1))}
+            style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-right:1px solid var(--border);user-select:none')}>−</span>
+          <span onClick={() => setZi(3)} title="reset zoom"
+            style={sx("padding:0 10px;font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;user-select:none")}>{Math.round(zoom * 100)}%</span>
+          <span onClick={() => setZi((i) => Math.min(ZOOMS.length - 1, i + 1))}
+            style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-left:1px solid var(--border);user-select:none')}>+</span>
         </div>
       </div>
     </div>

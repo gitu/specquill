@@ -1,4 +1,5 @@
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { diffLines } from '../lib/derive';
@@ -9,7 +10,7 @@ import { IconSpark } from '../components/icons';
 // M2: renders the proposed-edit diff embedded in a change record.
 // M7 replaces this with real branch-vs-branch PR diffs from the server.
 export function DiffView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const [params] = useSearchParams();
   if (!app.model) return <Loading />;

@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
 import { useNarrow } from '../hooks/useMediaQuery';
 import { useApp } from '../state/AppContext';
+import { useAppPath, useNav } from '../state/nav';
 import { useBranches, useCreateBranch, useMe, usePRs, useStatus, useSync } from '../api/hooks';
 import { api } from '../api/client';
 import { CreatePRDialog } from './CreatePRDialog';
 import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const branches = useBranches(app.repoId);
   const me = useMe();
@@ -20,7 +20,7 @@ export function TopBar() {
   const [open, setOpen] = useState(false);
   const [prDialog, setPrDialog] = useState(false);
   const narrow = useNarrow();
-  const { pathname } = useLocation();
+  const pathname = useAppPath();
   const onTreeRoute = pathname.startsWith('/editor') || pathname.startsWith('/diff');
   const branchPR = prs.data?.find((p) => p.source === app.branch);
   const ahead = status.data?.ahead ?? 0;
@@ -67,19 +67,20 @@ export function TopBar() {
       )}
 
       {/* branch switcher */}
-      <div style={sx('position:relative')}>
+      <div style={sx('position:relative;flex:none')}>
         <div
           onClick={() => setOpen((v) => !v)}
           style={sx('display:flex;align-items:center;gap:6px;padding:4px 9px;border:1px solid var(--border-2);border-radius:7px;cursor:pointer;background:var(--surface-2)')}
         >
           <IconBranch />
-          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500")}>{app.branch}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{app.branch}</span>
+          {/* inline chip — an absolutely-positioned label below the pill overlapped the content under the header */}
+          {app.branch.startsWith('ws/') && (
+            <span title="personal workspace" style={sx('flex:none;font-size:8.5px;font-weight:700;letter-spacing:.4px;color:var(--ai);background:var(--ai-bg);padding:2px 5px;border-radius:4px')}>PERSONAL</span>
+          )}
           {app.isProtectedBranch && <span title="protected — edits move to your workspace" style={sx('display:inline-flex;color:var(--text-3)')}><IconLock /></span>}
           <span style={sx('color:var(--text-3)')}><IconChevD /></span>
         </div>
-        {app.branch.startsWith('ws/') && (
-          <span style={sx('position:absolute;left:0;top:32px;font-size:9px;color:var(--ai);font-weight:700;letter-spacing:.4px;white-space:nowrap')}>PERSONAL WORKSPACE</span>
-        )}
         {open && (
           <div style={sx('position:absolute;left:0;top:34px;min-width:230px;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);overflow:hidden;z-index:20')}>
             {(branches.data || []).map((b) => (
@@ -109,12 +110,14 @@ export function TopBar() {
       ) : (
         <div
           onClick={() => window.dispatchEvent(new CustomEvent('specquill:search'))}
-          style={sx('width:340px;height:30px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer')}
+          // the search bar is the header's designated shrink element — a fixed
+          // width made it overlap its neighbours on mid-size windows
+          style={sx('flex:0 1 340px;min-width:110px;height:30px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer;overflow:hidden')}
         >
-          <IconSearch />
-          <span style={sx('font-size:12.5px')}>Search requirements, specs, fields, changes…</span>
+          <span style={sx('flex:none;display:inline-flex')}><IconSearch /></span>
+          <span style={sx('font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>Search requirements, specs, fields, changes…</span>
           <div style={sx('flex:1')} />
-          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
+          <span style={sx("flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
         </div>
       )}
       <div style={sx('flex:1')} />

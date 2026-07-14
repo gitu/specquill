@@ -18,7 +18,7 @@ test('slash menu, selection toolbar, link dialog and outline', async ({ page, re
     headers: H, data: { content: BODY, baseSha: '' },
   });
 
-  await page.goto(`/#/editor/${DOC}`);
+  await page.goto(`/p/trading-specs/editor/${DOC}`);
   // the scratch doc lives on the workspace branch only
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
@@ -75,7 +75,7 @@ test('slash menu, selection toolbar, link dialog and outline', async ({ page, re
   await expect(page.locator('[data-outline]')).toBeVisible();
 
   // cleanup: close the room, delete the scratch file
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await expect
     .poll(async () => {
       const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];

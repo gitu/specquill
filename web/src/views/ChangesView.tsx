@@ -1,4 +1,5 @@
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { buildChanges, reqByName, srcMeta, statusMeta } from '../lib/derive';
@@ -6,7 +7,7 @@ import { Loading } from './Dashboard';
 import { IconSpark } from '../components/icons';
 
 export function ChangesView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const [params, setParams] = useSearchParams();
   if (!app.model) return <Loading />;

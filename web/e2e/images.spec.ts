@@ -68,7 +68,7 @@ async function restoreDoc(request: APIRequestContext, branch: string) {
 test('editor: upload button embeds an image; bold toolbar formats text', async ({ page, request }) => {
   const branch = await wsBranch(request);
   await restoreDoc(request, branch); // clean slate (prior runs may have left embeds)
-  await page.goto(`/#/editor/${DOC}`);
+  await page.goto(`/p/trading-specs/editor/${DOC}`);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.locator('.milkdown-editable')).toBeVisible({ timeout: 15_000 });
 
@@ -92,6 +92,6 @@ test('editor: upload button embeds an image; bold toolbar formats text', async (
   await expect(page.locator('#specquill-doc img[src*="/raw/requirements/assets/shot"]').first()).toBeVisible({ timeout: 10_000 });
 
   // restore: close the room, put the committed content back, drop the asset
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await restoreDoc(request, branch);
 });

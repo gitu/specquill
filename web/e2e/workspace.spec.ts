@@ -18,7 +18,16 @@ async function cleanWorkspace(request: import('@playwright/test').APIRequestCont
     { dirty: { path: string; state: string }[] };
   for (const f of st.dirty) {
     if (f.state === 'A') {
-      await request.delete(`/api/repos/${REPO}/files/${f.path}?branch=${encodeURIComponent(branch)}`, { headers: H });
+      // untracked directories come collapsed ('requirements/assets/') —
+      // expand them via the worktree tree so leftovers from aborted runs
+      // (e.g. a failed images test) actually get removed
+      const paths = f.path.endsWith('/')
+        ? ((await (await request.get(`/api/repos/${REPO}/tree?ref=${encodeURIComponent(branch)}`)).json()) as
+            { path: string }[]).map((e) => e.path).filter((p) => p.startsWith(f.path))
+        : [f.path];
+      for (const p of paths) {
+        await request.delete(`/api/repos/${REPO}/files/${p}?branch=${encodeURIComponent(branch)}`, { headers: H });
+      }
     } else {
       const head = (await (await request.get(`/api/repos/${REPO}/files/${f.path}?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
       const cur = (await (await request.get(`/api/repos/${REPO}/files/${f.path}?ref=${encodeURIComponent(branch)}`)).json()) as { sha: string };
@@ -33,7 +42,7 @@ async function cleanWorkspace(request: import('@playwright/test').APIRequestCont
 test.beforeEach(async ({ request }) => { await cleanWorkspace(request); });
 
 test('editing on protected main auto-switches to the personal workspace', async ({ page }) => {
-  await page.goto('/#/editor/specs/venue.md');
+  await page.goto('/p/trading-specs/editor/specs/venue.md');
   await expect(page.getByText('Venue Identification').first()).toBeVisible();
   // main shows the protection lock
   await expect(page.locator('header').getByTitle(/protected/)).toBeVisible();
@@ -60,7 +69,7 @@ test('direct API writes to main are rejected', async ({ request }) => {
 
 test('drafts survive navigation away and back', async ({ page, request }) => {
   const branch = await wsBranch(request);
-  await page.goto('/#/editor/requirements/REQ-063.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-063.md');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.locator('.milkdown-editable').click();
   await page.keyboard.press('Control+End');
@@ -70,7 +79,7 @@ test('drafts survive navigation away and back', async ({ page, request }) => {
   // navigate away immediately (before the 1.5s debounce) — the blocker flushes
   await page.getByTitle('Overview').click();
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
-  await page.goto('/#/editor/requirements/REQ-063.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-063.md');
   await expect(page.getByText(marker)).toBeVisible({ timeout: 10_000 });
 
   // and it is on the workspace worktree server-side
@@ -85,7 +94,7 @@ test('changes drawer shows the uncommitted diff', async ({ page, request }) => {
     headers: H, data: { content: cur.content + '\nDrawer marker line.\n', baseSha: cur.sha },
   });
 
-  await page.goto('/#/editor/specs/venue.md');
+  await page.goto('/p/trading-specs/editor/specs/venue.md');
   // switch onto the workspace to see its status
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
@@ -124,7 +133,7 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
   await request.post(`/api/repos/${REPO}/prs/${pr.number}/merge`, { headers: H, data: {} });
 
   // sit on the (now stale) workspace → banner appears → update clears it
-  await page.goto('/#/editor/specs/venue.md');
+  await page.goto('/p/trading-specs/editor/specs/venue.md');
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
   await expect(page.locator('[data-banner]')).toBeVisible({ timeout: 20_000 });

@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 const H = { 'X-SpecQuill': '1' };
 
 test('openapi importer source syncs and becomes browsable', async ({ page, request }) => {
-  await page.goto('/#/admin');
+  await page.goto('/admin');
 
   // the openapi source appears in the reference-sources section with its kind
   const row = page.locator('div').filter({ hasText: /^platform-api/ }).first();

@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 test.use({ viewport: { width: 390, height: 844 } });
 
 test('narrow viewport: doc reads full-width, tree opens as a drawer', async ({ page }) => {
-  await page.goto('/#/editor/requirements/REQ-051.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-051.md');
   await expect(page.getByText('Exception Handling').first()).toBeVisible();
 
   // rail and inline tree are gone; the copilot panel is closed

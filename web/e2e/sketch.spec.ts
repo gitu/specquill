@@ -18,7 +18,7 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
     headers: H, data: { content: '# Sketch scratch\n\nsome text here\n', baseSha: '' },
   });
 
-  await page.goto(`/#/editor/${DOC}`);
+  await page.goto(`/p/trading-specs/editor/${DOC}`);
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).first().click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -63,7 +63,7 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
   await expect(page.locator(`#specquill-doc img[src*="${SLUG}.excalidraw.png"]`).first()).toBeVisible({ timeout: 10_000 });
 
   // cleanup
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await expect
     .poll(async () => {
       const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];

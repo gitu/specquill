@@ -1,14 +1,12 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useMe, usePresence, useProjects, useRepos, useStatus, useTree } from '../api/hooks';
 import { buildTree } from '../lib/derive';
-import { newDocTemplate } from '../lib/newdoc';
-import { api } from '../api/client';
-import { useWorkspace } from '../hooks/useWorkspace';
 import { CommitDialog } from './CommitDialog';
+import { NewDocDialog } from './NewDocDialog';
 import { IconChevD, IconChevR, IconLock, IconPlus, IconSync } from './icons';
 
 function agoLabel(iso?: string): string {
@@ -21,7 +19,7 @@ function agoLabel(iso?: string): string {
 
 // Read-only input repo: lock glyph, files open read-only, footer shows sync age.
 function ReadOnlyRepoSection({ repoId, syncedAt, okf, openPath }: { repoId: string; syncedAt?: string; okf?: boolean; openPath?: string }) {
-  const nav = useNavigate();
+  const nav = useNav();
   const tree = useTree(repoId, '');
   return (
     <div style={sx('margin-top:10px;border-top:1px solid var(--border);padding-top:6px')}>
@@ -51,7 +49,7 @@ function ReadOnlyRepoSection({ repoId, syncedAt, okf, openPath }: { repoId: stri
 }
 
 export function Tree() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const { '*': openPath } = useParams();
   const status = useStatus(app.repoId, app.branch);
@@ -68,30 +66,9 @@ export function Tree() {
   const readOnlyRepos = (repos.data || []).filter(
     (r) => r.kind === 'source' && (refNames.length === 0 || refNames.includes(r.id)),
   );
-  const qc = useQueryClient();
-  const { ensureWritableBranch } = useWorkspace();
-
-  // new markdown document: family-typed frontmatter, saved as a draft on the
-  // (auto-created) writable branch, opened in the editor
-  const newFile = async () => {
-    const raw = window.prompt('New file path (e.g. requirements/REQ-101.md):');
-    if (!raw) return;
-    let path = raw.trim().replace(/^\/+/, '');
-    if (!path) return;
-    if (!path.endsWith('.md')) path += '.md';
-    try {
-      const branch = await ensureWritableBranch();
-      await api<{ sha: string }>(`/api/repos/${app.repoId}/files/${path}?branch=${encodeURIComponent(branch)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ content: newDocTemplate(path), baseSha: '' }),
-      });
-      qc.invalidateQueries({ queryKey: ['status', app.repoId] });
-      qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
-      nav('/editor/' + path);
-    } catch (e) {
-      window.alert('create failed: ' + String((e as Error).message || e));
-    }
-  };
+  // guided document creation (family, subfolder, auto-ID) lives in the
+  // dialog; a string preselects that entity family
+  const [newDoc, setNewDoc] = useState<{ kind?: string } | null>(null);
 
   // who is co-editing what: dots on files roomed on this branch, a status
   // line for live sessions on other branches (discoverability)
@@ -109,7 +86,7 @@ export function Tree() {
 
   const gitStatus: Record<string, string> = {};
   status.data?.dirty.forEach((f) => { gitStatus[f.path] = f.state; });
-  const folders = app.files ? buildTree(app.files, openPath, gitStatus) : [];
+  const folders = app.files ? buildTree(app.files, openPath, gitStatus, app.entities) : [];
   const nDirty = status.data?.dirty.length ?? 0;
 
   return (
@@ -119,15 +96,21 @@ export function Tree() {
           <IconChevR />{(app.repoId || '').toUpperCase()}
         </div>
         <div style={sx('display:flex;gap:2px;color:var(--text-3)')}>
-          <span title="New file" onClick={newFile} style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconPlus /></span>
+          <span title="New document" onClick={() => setNewDoc({})} style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconPlus /></span>
           <span title="Refresh" onClick={() => status.refetch()} style={sx('width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer')}><IconSync /></span>
         </div>
       </div>
       <div style={sx('flex:1;overflow-y:auto;padding:8px 6px;font-size:12.5px;user-select:none')}>
         {folders.map((folder) => (
           <div key={folder.name}>
-            <div style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;margin-top:3px;color:var(--text-2);font-weight:600')}>
+            <div title={folder.desc || undefined} style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;margin-top:3px;color:var(--text-2);font-weight:600')}>
               <IconChevD /><span style={sx('opacity:.9')}>{folder.name}</span>
+              <div style={sx('flex:1')} />
+              <span title={`New document in ${folder.name}/`}
+                onClick={() => setNewDoc({ kind: app.entities.find((e) => e.folder === folder.name + '/')?.kind })}
+                style={sx('width:18px;height:18px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer;color:var(--text-3);opacity:.6')}>
+                <IconPlus />
+              </span>
             </div>
             {folder.files.map((f) => (
               <div
@@ -196,6 +179,7 @@ export function Tree() {
         )}
       </div>
       {commitOpen && status.data && <CommitDialog status={status.data} onClose={() => setCommitOpen(false)} />}
+      {newDoc && <NewDocDialog initialKind={newDoc.kind} onClose={() => setNewDoc(null)} />}
     </aside>
   );
 }

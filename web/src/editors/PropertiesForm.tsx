@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { sx } from '../lib/sx';
 import { fmToJS, setFmValue } from '../lib/frontmatter';
+import { parseTaxonomy } from '../lib/derive';
+import { useApp } from '../state/AppContext';
 import type { PropertySchema } from '../state/AppContext';
 
 const PAL: Record<string, { fg: string; bg: string }> = {
@@ -67,7 +69,19 @@ function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: 
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
-  // complex structures (e.g. drivers: [{type, ref}]) stay read-only
+  // drivers ([{type, ref}]) get a dedicated editor
+  if (fieldKey === 'drivers' && Array.isArray(value) && value.every((v) => v !== null && typeof v === 'object')) {
+    return (
+      <DriversField
+        items={value as { type?: string; ref?: string }[]}
+        files={files}
+        onSet={onSet}
+        onOpenPath={onOpenPath}
+      />
+    );
+  }
+
+  // other complex structures stay read-only
   if (Array.isArray(value) && value.some((v) => v !== null && typeof v === 'object')) {
     return (
       <>
@@ -130,6 +144,69 @@ function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: 
       onBlur={(e) => { if (e.target.value !== String(value ?? '')) onSet(e.target.value); }}
       style={{ ...sx(INPUT), minWidth: 180 }}
     />
+  );
+}
+
+// DriversField edits `drivers: [{type, ref}]` in place: the type comes from
+// the workspace driver taxonomy, the ref is free text or a document path.
+function DriversField({ items, files, onSet, onOpenPath }: {
+  items: { type?: string; ref?: string }[];
+  files: Record<string, string> | undefined;
+  onSet: (v: unknown) => void;
+  onOpenPath: (path: string) => void;
+}) {
+  const app = useApp();
+  const types = parseTaxonomy(app.configYml || '').drivers;
+  const effTypes = types.length ? types : [
+    { key: 'regulatory', label: 'Regulatory', icon: '⚖', color: 'var(--reg)' },
+    { key: 'product', label: 'Product', icon: '◆', color: 'var(--prod)' },
+    { key: 'technical', label: 'Technical', icon: '⚙', color: 'var(--text-2)' },
+  ];
+  const isLink = (t: string) => /([\w-]+\/[\w.\/-]+\.md)/.test(t);
+  const update = (i: number, patch: { type?: string; ref?: string }) =>
+    onSet(items.map((d, j) => (j === i ? { ...d, ...patch } : d)));
+  return (
+    <>
+      {items.map((d, i) => {
+        const meta = effTypes.find((t) => t.key === d.type);
+        const ref = String(d.ref ?? '');
+        return (
+          <span key={i + ':' + (d.type || '') + ':' + ref}
+            style={sx('display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border:1px solid var(--border);border-left:3px solid ' + (meta?.color || 'var(--border-2)') + ';border-radius:7px;background:var(--surface-2)')}>
+            <select
+              value={d.type || ''}
+              onChange={(e) => update(i, { type: e.target.value })}
+              style={{ ...sx(INPUT), height: 22, padding: '0 4px', fontWeight: 600, color: meta?.color || 'var(--text-2)', border: 'none', background: 'transparent' }}
+            >
+              {!effTypes.some((t) => t.key === d.type) && <option value={d.type || ''}>{d.type || '?'}</option>}
+              {effTypes.map((t) => <option key={t.key} value={t.key}>{t.icon} {t.label}</option>)}
+            </select>
+            <input
+              defaultValue={ref}
+              placeholder="doc path or free text"
+              list="paths-drivers"
+              onBlur={(e) => { if (e.target.value !== ref) update(i, { ref: e.target.value }); }}
+              style={{ ...sx(INPUT), height: 22, width: Math.max(180, ref.length * 6.6), border: 'none', background: 'transparent', color: isLink(ref) ? 'var(--prod)' : 'var(--text)' }}
+            />
+            {isLink(ref) && (
+              <span title={'open ' + ref.split('#')[0]} onClick={() => onOpenPath(ref.split('#')[0])}
+                style={sx('cursor:pointer;color:var(--prod);font-size:11px')}>↗</span>
+            )}
+            <span title="remove driver" onClick={() => onSet(items.filter((_, j) => j !== i))}
+              style={sx('cursor:pointer;color:var(--text-3);font-size:12px;line-height:1')}>×</span>
+          </span>
+        );
+      })}
+      <button
+        onClick={() => onSet([...items, { type: effTypes[0].key, ref: '' }])}
+        style={{ ...sx(INPUT), borderStyle: 'dashed', cursor: 'pointer' }}
+      >
+        + add driver
+      </button>
+      <datalist id="paths-drivers">
+        {Object.keys(files || {}).filter((p) => p.endsWith('.md')).map((p) => <option key={p} value={p} />)}
+      </datalist>
+    </>
   );
 }
 

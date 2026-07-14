@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { srcMeta } from '../lib/derive';
@@ -16,7 +16,7 @@ interface Hit {
 // ⌘K command palette over the workspace model: requirements, specs,
 // regulations, mappings, data fields and changes.
 export function SearchPalette() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
+import { useAppPath, useNav } from '../state/nav';
 import { reqByName } from '../lib/derive';
 import { ChatMessage, DraftResult, draftEdits, streamChat, useCopilotInfo } from '../api/copilot';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,10 +15,10 @@ const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'C
 // The Copilot panel: streaming chat grounded on the branch snapshot, plus the
 // "draft edits" flow that applies model-proposed edits to a copilot branch.
 export function Copilot() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
-  const { pathname } = useLocation();
+  const pathname = useAppPath();
   const info = useCopilotInfo(app.repoId);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [input, setInput] = useState('');

@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useFileQuery, usePR, usePRAction, usePRComments, usePRDiff, usePRs, DiffFile, PRComment } from '../api/hooks';
@@ -15,7 +16,7 @@ const STATE_CHIP: Record<string, string> = {
 };
 
 export function PRView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const { n } = useParams();
   const num = Number(n);
@@ -191,7 +192,7 @@ function ArtifactDiff({ path, pr }: { path: string; pr: { source: string; target
 }
 
 export function PRListView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const [state, setState] = useState('open');
   const prs = usePRs(app.repoId, state);

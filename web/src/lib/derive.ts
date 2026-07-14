@@ -2,7 +2,8 @@
 // build*/renderVals methods. Styles are composed as strings (rendered via sx())
 // exactly like the design; navigation is carried as paths, not callbacks.
 
-import { Change, DataField, PropEntry, Requirement, WorkspaceModel, parseProps } from './model';
+import { Change, DataField, PropEntry, Requirement, WorkspaceModel, isReservedMd, parseProps } from './model';
+import type { EntityDef } from './entities';
 import type { PropertySchema } from '../state/AppContext';
 
 export const srcMeta = (s: string) =>
@@ -34,44 +35,63 @@ export function daysAgo(d: string): string {
 
 // ---------------------------------------------------------------- tree
 
+/**
+ * The document the editor opens when the URL names none: the first document
+ * in entity-family order, else the workspace index, else the first markdown
+ * file. '' while the snapshot is still loading (the file query stays idle).
+ */
+export function defaultDoc(files: Record<string, string> | undefined, entities: EntityDef[]): string {
+  if (!files) return '';
+  for (const e of entities) {
+    const hit = Object.keys(files).filter((p) => p.startsWith(e.folder) && p.endsWith('.md') && !isReservedMd(p)).sort()[0];
+    if (hit) return hit;
+  }
+  if (files['index.md'] !== undefined) return 'index.md';
+  return Object.keys(files).filter((p) => p.endsWith('.md')).sort()[0] || '';
+}
+
 export interface TreeFile {
   path: string; name: string; icon: string; color: string;
   badge: string; badgeStyle: string; active: boolean;
 }
-export interface TreeFolder { name: string; files: TreeFile[] }
+export interface TreeFolder { name: string; desc?: string; files: TreeFile[] }
 
-const FOLDER_META: Record<string, { icon: string; color: string }> = {
-  regulations: { icon: '◈', color: 'var(--reg)' },
-  requirements: { icon: '▤', color: 'var(--prod)' },
-  specs: { icon: '◈', color: 'var(--text-2)' },
-  'data-mappings': { icon: '⇄', color: 'var(--data)' },
-  diagrams: { icon: '✎', color: 'var(--ai)' },
-  changes: { icon: '⚑', color: 'var(--reg)' },
-};
-const FOLDER_ORDER = ['regulations', 'requirements', 'specs', 'data-mappings', 'diagrams', 'changes'];
-
-export function buildTree(files: Record<string, string>, openPath: string | undefined, gitStatus: Record<string, string>): TreeFolder[] {
+export function buildTree(files: Record<string, string>, openPath: string | undefined, gitStatus: Record<string, string>, entities: EntityDef[]): TreeFolder[] {
+  const meta: Record<string, { icon: string; color: string; desc: string }> = {};
+  const order: string[] = [];
+  entities.forEach((e) => {
+    const name = e.folder.replace(/\/$/, '');
+    meta[name] = { icon: e.icon, color: e.color, desc: e.description };
+    order.push(name);
+  });
   const byFolder: Record<string, string[]> = {};
   Object.keys(files).forEach((p) => {
     const folder = p.split('/')[0];
-    if (!FOLDER_META[folder]) return;
+    // root files and dot-folders (.specquill) stay out of the tree
+    if (!p.includes('/') || folder.startsWith('.')) return;
     (byFolder[folder] = byFolder[folder] || []).push(p);
   });
-  return FOLDER_ORDER.filter((f) => byFolder[f]).map((folder) => ({
-    name: folder,
-    files: byFolder[folder].sort().map((path) => {
-      const n = path.split('/').pop()!;
-      const badge = gitStatus[path] || '';
-      return {
-        path, name: n,
-        icon: folder === 'diagrams' ? (n.endsWith('.mermaid') ? '⌗' : '✎') : FOLDER_META[folder].icon,
-        color: FOLDER_META[folder].color,
-        badge,
-        badgeStyle: badge === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
-        active: path === openPath,
-      };
-    }),
-  }));
+  // entity folders first (config order), then any other folder alphabetically
+  const names = [...order.filter((f) => byFolder[f]), ...Object.keys(byFolder).filter((f) => !meta[f]).sort()];
+  return names.map((folder) => {
+    const fm = meta[folder] || { icon: '▢', color: 'var(--text-2)', desc: '' };
+    return {
+      name: folder,
+      desc: fm.desc,
+      files: byFolder[folder].sort().map((path) => {
+        const n = path.split('/').pop()!;
+        const badge = gitStatus[path] || '';
+        return {
+          path, name: n,
+          icon: n.endsWith('.mermaid') ? '⌗' : fm.icon,
+          color: fm.color,
+          badge,
+          badgeStyle: badge === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
+          active: path === openPath,
+        };
+      }),
+    };
+  });
 }
 
 // ---------------------------------------------------------------- properties
@@ -175,8 +195,9 @@ export function buildDashboard(model: WorkspaceModel) {
 export interface GraphNode {
   id: string; col: number; label: string; sub: string; kind: string;
   x: number; y: number; w: number; boxStyle: string; labelStyle: string; subStyle: string;
+  go?: string; // editor path this node opens (documents only)
 }
-export interface GraphEdge { d: string; stroke: string; dash?: boolean }
+export interface GraphEdge { d: string; stroke: string; dash?: boolean; a: string; b: string }
 
 export function buildGraph(model: WorkspaceModel) {
   const reqs = model.requirements, specs = model.specs, fields = model.fields;
@@ -189,17 +210,32 @@ export function buildGraph(model: WorkspaceModel) {
   const colX = [16, 250, 486, 712], colW = [156, 150, 150, 176], H = 540;
   const nodes: GraphNode[] = [];
   const idOf: Record<string, GraphNode> = {};
+  // deterministic per-node/per-edge variation (FNV-1a → [0,1)) — the layout
+  // reads organic instead of grid-locked, yet never moves between renders
+  const h01 = (s: string, salt = 0) => {
+    let h = 2166136261 ^ salt;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return ((h >>> 0) % 1024) / 1024;
+  };
+  const scatter = (o: GraphNode, c: number, i: number, count: number) => {
+    const gap = H / (count + 1);
+    o.x = colX[c] + Math.round((h01(o.id) - 0.5) * 22);
+    o.w = colW[c];
+    o.y = Math.round(gap * (i + 1) + (h01(o.id, 7) - 0.5) * Math.min(26, gap * 0.5));
+  };
   const push = (id: string, col: number, o: Partial<GraphNode> & { label: string; sub: string; kind: string; color?: string; drift?: boolean }) => {
     const node = { ...o, id, col, x: 0, y: 0, w: 0, boxStyle: '', labelStyle: '', subStyle: '' } as GraphNode & { color?: string; drift?: boolean };
     nodes.push(node); idOf[id] = node;
   };
-  sources.forEach((s) => push('src:' + s.key, 0, { label: sIcon(s.type) + ' ' + short(s.ref), sub: s.type, kind: 'src', color: sColor(s.type) }));
-  reqs.forEach((r) => push('req:' + r.path, 1, { label: r.id, sub: r.title, kind: 'req' }));
-  specs.forEach((sp) => push('spec:' + sp.path, 2, { label: sp.name, sub: 'spec', kind: 'spec' }));
-  fields.forEach((f) => push('field:' + f.name, 3, { label: f.name, sub: f.drift ? '⚠ drift' : '', kind: 'field', drift: f.drift }));
+  // clicking a node opens its document; only refs that are workspace docs get one
+  const docRef = (ref: string) => { const p = ref.split('#')[0]; return /\.md$/.test(p) ? p : undefined; };
+  sources.forEach((s) => push('src:' + s.key, 0, { label: sIcon(s.type) + ' ' + short(s.ref), sub: s.type, kind: 'src', color: sColor(s.type), go: docRef(s.ref) }));
+  reqs.forEach((r) => push('req:' + r.path, 1, { label: r.id, sub: r.title, kind: 'req', go: r.path }));
+  specs.forEach((sp) => push('spec:' + sp.path, 2, { label: sp.name, sub: 'spec', kind: 'spec', go: sp.path }));
+  fields.forEach((f) => push('field:' + f.name, 3, { label: f.name, sub: f.drift ? '⚠ drift' : '', kind: 'field', drift: f.drift, go: f.map }));
   [0, 1, 2, 3].forEach((c) => {
     const col = nodes.filter((n) => n.col === c);
-    col.forEach((o, i) => { o.x = colX[c]; o.w = colW[c]; o.y = Math.round((H / (col.length + 1)) * (i + 1)); });
+    col.forEach((o, i) => scatter(o, c, i, col.length));
   });
   nodes.forEach((o) => {
     const n = o as GraphNode & { color?: string; drift?: boolean };
@@ -219,8 +255,14 @@ export function buildGraph(model: WorkspaceModel) {
   const edge = (a: string, b: string, stroke: string, dash?: boolean) => {
     const p = idOf[a], q = idOf[b];
     if (!p || !q) return;
-    const x1 = p.x + p.w, y1 = p.y, x2 = q.x, y2 = q.y, mx = (x1 + x2) / 2;
-    edges.push({ d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, stroke, dash });
+    const x1 = p.x + p.w, y1 = p.y, x2 = q.x, y2 = q.y;
+    // asymmetric control points + a slight bow per edge — flowing strands
+    // instead of uniform S-curves; t is stable per (from,to) pair
+    const t = h01(a + '>' + b, 3);
+    const dx = Math.max(24, x2 - x1);
+    const c1x = x1 + dx * (0.3 + t * 0.25), c2x = x2 - dx * (0.3 + (1 - t) * 0.25);
+    const bow = (t - 0.5) * Math.min(28, Math.abs(y2 - y1) * 0.35 + 10);
+    edges.push({ d: `M${x1} ${y1} C${c1x} ${y1 + bow} ${c2x} ${y2 - bow} ${x2} ${y2}`, stroke, dash, a, b });
   };
   const resolveField = (ref: string): DataField | undefined => {
     const a = ref.split('#')[1] || '';
@@ -251,12 +293,12 @@ export function buildGraph(model: WorkspaceModel) {
         seenExt.add(extID);
         const short = ref.to.split('/').pop()!.replace('.md', '');
         const srcName = ref.to.slice(1).split('/')[0];
-        push(extID, 0, { label: '⇲ ' + short, sub: '~' + srcName, kind: 'src', color: 'var(--text-2)' });
+        push(extID, 0, { label: '⇲ ' + short, sub: '~' + srcName, kind: 'src', color: 'var(--text-2)', go: ref.to });
       }
     });
     // relayout + restyle the sources column with the new members
     const col = nodes.filter((n) => n.col === 0);
-    col.forEach((o, i) => { o.x = colX[0]; o.w = colW[0]; o.y = Math.round((H / (col.length + 1)) * (i + 1)); });
+    col.forEach((o, i) => scatter(o, 0, i, col.length));
     seenExt.forEach((extID) => {
       const n = idOf[extID];
       const base = 'position:absolute;left:' + n.x + 'px;top:' + (n.y - 20) + 'px;width:' + n.w + 'px;padding:8px 10px;border-radius:9px;box-shadow:var(--shadow);';

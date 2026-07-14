@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useBlocker, useParams, useSearchParams } from 'react-router-dom';
+import { useNav } from '../state/nav';
 import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useFileAtHead, useFileQuery, useMe, usePresence, useSaveFile } from '../api/hooks';
-import { rawUrl, uploadAsset } from '../api/client';
+import { api, rawUrl, uploadAsset } from '../api/client';
 import { useCollabSession } from '../collab/useCollabSession';
 import { userColor } from '../collab/session';
-import { esc, resolvePath, scalar, stripFrontmatter } from '../lib/model';
+import { esc, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
 import { assemble } from '../lib/frontmatter';
-import { buildProps } from '../lib/derive';
+import { HistoryDrawer } from '../components/HistoryDrawer';
+import { MoveDialog } from '../components/MoveDialog';
+import { ShareDialog } from '../components/ShareDialog';
+import { buildProps, defaultDoc } from '../lib/derive';
+import { scaffoldFor } from '../lib/scaffold';
+import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
 import { DocBody } from '../components/DocBody';
+import { ConfigDoc } from '../components/ConfigDoc';
 import { useDraft } from '../hooks/useDraft';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useToasts } from '../components/Toast';
@@ -23,7 +30,7 @@ import { PropertiesForm } from '../editors/PropertiesForm';
 import { ExcalidrawModal } from '../editors/ExcalidrawModal';
 import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconImage, IconLink, IconUserPlus, IconLock, IconMenu } from '../components/icons';
 
-const DEFAULT_DOC = 'specs/txn-report.md';
+
 
 export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (p: string) => void, dirty?: boolean) {
   const tab = (on: boolean) => on
@@ -53,11 +60,11 @@ function kindOf(name: string): Kind {
 }
 
 export function EditorView() {
-  const nav = useNavigate();
+  const nav = useNav();
   const app = useApp();
   const { '*': splat } = useParams();
   // "~<repoId>/<path>" targets a read-only input repo (default branch)
-  const raw0 = splat || DEFAULT_DOC;
+  const raw0 = splat || defaultDoc(app.files, app.entities);
   const roMatch = raw0.match(/^~([\w-]+)\/(.+)$/);
   const readOnly = !!roMatch;
   const fileRepo = roMatch ? roMatch[1] : app.repoId;
@@ -74,6 +81,9 @@ export function EditorView() {
   const [mode, setMode] = useState<'view' | 'edit' | 'source'>('view');
   const [propsOpen, setPropsOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null);
   const editorApi = useRef<MilkdownApi | null>(null);
   // bumped when a sketch is saved so embedded previews re-render
@@ -182,7 +192,7 @@ export function EditorView() {
 
   const openPath = useCallback((rel: string) => {
     const dir = path.split('/').slice(0, -1).join('/');
-    nav('/editor/' + (rel.includes('/') && !rel.startsWith('.') ? rel : resolvePath(dir, rel)));
+    nav('/editor/' + resolveDocHref(dir, rel));
   }, [nav, path]);
 
   const onBodyChange = useCallback((md: string) => {
@@ -397,7 +407,7 @@ export function EditorView() {
             </span>
             <button
               onClick={() => {
-                const link = `${location.origin}/#/editor/${path}?branch=${encodeURIComponent(app.branch)}&invite=1`;
+                const link = `${location.origin}/p/${app.repoId}/editor/${path}?branch=${encodeURIComponent(app.branch)}&invite=1`;
                 void navigator.clipboard.writeText(link);
                 toasts.push({ text: 'Invite link copied — anyone opening it joins this document live', kind: 'success' });
               }}
@@ -436,13 +446,23 @@ export function EditorView() {
             <span onClick={() => void enterEdit()} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'edit'))}>Edit</span>
           )}
           <span onClick={() => setMode('source')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'source'))}>Source</span>
-          <span style={sx('padding:3px 12px;border-radius:6px;font-size:12px;color:var(--text-3)')}>History</span>
+          <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
         </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
-        <button style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
+        {!readOnly && (
+          <button onClick={() => setMoveOpen(true)} title="Move or rename this file — referencing documents can be rewritten"
+            style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
+            Move
+          </button>
+        )}
+        <button onClick={() => setShareOpen(true)} title="Share this workspace as an OKF bundle (unauthenticated zip link)"
+          style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
           <IconShare />Share
         </button>
       </div>
+      {historyOpen && <HistoryDrawer path={path} onClose={() => setHistoryOpen(false)} />}
+      {moveOpen && <MoveDialog path={path} onClose={() => setMoveOpen(false)} />}
+      {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
 
       {conflict && (
         <div style={sx('flex:none;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--reg-bg);border-bottom:1px solid var(--reg-line);color:var(--reg);font-size:12.5px')}>
@@ -486,6 +506,32 @@ export function EditorView() {
         {file.error != null && (
           <div style={sx('max-width:820px;margin:0 auto;padding:16px;border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:10px;color:var(--reg);font-size:13px')}>
             Couldn't load {path}: {String((file.error as Error).message || file.error)}
+            {/* missing optional workspace files (and plain docs) can be created in place */}
+            {!readOnly && /not found/.test(String((file.error as Error).message || '')) &&
+              (scaffoldFor(path, app.repoId || '') !== null || kind === 'md') && (
+              <div style={sx('margin-top:10px')}>
+                <button
+                  onClick={() => void (async () => {
+                    const content = scaffoldFor(path, app.repoId || '') ?? newDocTemplate(path, app.entities);
+                    const branch = await ensureWritableBranch();
+                    await api<{ sha: string }>(`/api/repos/${app.repoId}/files/${path}?branch=${encodeURIComponent(branch)}`, {
+                      method: 'PUT',
+                      body: JSON.stringify({ content, baseSha: '' }),
+                    });
+                    qc.invalidateQueries({ queryKey: ['file', fileRepo] });
+                    qc.invalidateQueries({ queryKey: ['status', app.repoId] });
+                    qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
+                  })()}
+                  style={sx('height:28px;padding:0 12px;border:1px solid var(--reg-line);border-radius:7px;background:var(--surface);color:var(--reg);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer')}>
+                  Create {name}
+                </button>
+                {scaffoldFor(path, '') !== null && (
+                  <span style={sx('margin-left:10px;color:var(--text-2);font-size:12px')}>
+                    This workspace runs on built-in defaults — create the file to customize them.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -540,6 +586,8 @@ export function EditorView() {
               >
                 <DocBody html={viewHtml} docPath={path} />
               </div>
+            ) : kind === 'yaml' || name.endsWith('.json') ? (
+              <ConfigDoc path={path} raw={draft.raw} />
             ) : (
               <DocBody html={viewHtml} docPath={path} />
             )}

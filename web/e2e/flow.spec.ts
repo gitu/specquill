@@ -8,22 +8,22 @@ const BRANCH = `feature/e2e-${stamp}`;
 test.describe.configure({ mode: 'serial' });
 
 test('dashboard shows live KPIs', async ({ page }) => {
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByText('Trace coverage')).toBeVisible();
   await expect(page.getByText('Requirement changes')).toBeVisible();
 });
 
 test('matrix and graph render from the model', async ({ page }) => {
-  await page.goto('/#/matrix');
+  await page.goto('/p/trading-specs/matrix');
   await expect(page.getByText('Traceability matrix')).toBeVisible();
   await expect(page.getByText(/requirements × \d+ artifacts/)).toBeVisible();
-  await page.goto('/#/graph');
+  await page.goto('/p/trading-specs/graph');
   await expect(page.getByText('Lineage · from links')).toBeVisible();
 });
 
 test('search palette finds a requirement', async ({ page }) => {
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await page.getByText('Search requirements, specs, fields, changes…').first().click();
   const input = page.getByPlaceholder('Search requirements, specs, fields, changes…');
@@ -34,7 +34,7 @@ test('search palette finds a requirement', async ({ page }) => {
 });
 
 test('branch → edit → save → commit → PR → approve → merge', async ({ page }) => {
-  await page.goto('/#/editor/specs/venue.md');
+  await page.goto('/p/trading-specs/editor/specs/venue.md');
   await expect(page.getByText('Venue Identification', { exact: false }).first()).toBeVisible();
 
   // create a branch via the switcher (prompt dialog)
@@ -62,7 +62,7 @@ test('branch → edit → save → commit → PR → approve → merge', async (
   await page.getByRole('button', { name: 'Open PR' }).click();
   await page.locator('input').first().fill(`E2E venue update ${stamp}`);
   await page.getByRole('button', { name: 'Create PR' }).click();
-  await expect(page).toHaveURL(/#\/prs\/\d+/);
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/prs\/\d+/);
   await expect(page.getByText(`E2E venue update ${stamp}`)).toBeVisible();
   await expect(page.getByText(`E2E marker ${stamp}.`)).toBeVisible(); // diff line
 
@@ -73,16 +73,16 @@ test('branch → edit → save → commit → PR → approve → merge', async (
   await expect(page.getByText('merged', { exact: true })).toBeVisible();
 
   // main now carries the change in the editor
-  await page.goto('/#/editor/specs/venue.md');
+  await page.goto('/p/trading-specs/editor/specs/venue.md');
   await expect(page.getByText(`E2E marker ${stamp}.`)).toBeVisible();
 });
 
 // regression: switching between already-visited (query-cached) files used to
 // leave the editor blank because the draft reset raced the populate effect
 test('rapid switching between cached files always renders', async ({ page }) => {
-  await page.goto('/#/editor/requirements/REQ-051.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-051.md');
   await expect(page.getByText('REQ-051.1', { exact: false })).toBeVisible();
-  await page.goto('/#/editor/requirements/REQ-063.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-063.md');
   await expect(page.getByText('REQ-063.1', { exact: false })).toBeVisible();
   for (let i = 0; i < 3; i++) {
     await page.getByText('REQ-051.md').first().click(); // tree entry (cached now)
@@ -93,21 +93,21 @@ test('rapid switching between cached files always renders', async ({ page }) => 
 });
 
 test('default view setting controls the root redirect', async ({ page }) => {
-  await page.goto('/#/dashboard');
+  await page.goto('/p/trading-specs/dashboard');
   await page.getByTitle('Settings').click();
   await page.getByRole('combobox').last().selectOption('matrix');
-  await page.goto('/#/');
-  await expect(page).toHaveURL(/#\/matrix/);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/matrix/);
   await expect(page.getByText('Traceability matrix')).toBeVisible();
   // back to workspace default
   await page.getByTitle('Settings').click();
   await page.getByRole('combobox').last().selectOption('');
-  await page.goto('/#/');
-  await expect(page).toHaveURL(/#\/editor/);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/editor/);
 });
 
 test('excalidraw modal opens with a usable editor UI', async ({ page }) => {
-  await page.goto('/#/editor/diagrams/data-flow.excalidraw');
+  await page.goto('/p/trading-specs/editor/diagrams/data-flow.excalidraw');
   await expect(page.getByText('data-flow.excalidraw').first()).toBeVisible();
   await page.getByTitle('Click to edit the sketch').click();
   // toolbar present = styles loaded and the canvas is interactive
@@ -131,7 +131,7 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
       });
     }
   }
-  await page.goto('/#/editor/requirements/REQ-090.md');
+  await page.goto('/p/trading-specs/editor/requirements/REQ-090.md');
   // main is protected: entering Edit auto-switches to the personal workspace
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByText(/you're now on your workspace ws\//)).toBeVisible();
@@ -167,7 +167,7 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
 });
 
 test('read-only input repo refuses editing', async ({ page }) => {
-  await page.goto('/#/editor/~regulations/regulations/dora.md');
+  await page.goto('/p/trading-specs/editor/~regulations/regulations/dora.md');
   await expect(page.getByText('read-only · regulations')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save' })).toBeHidden();
 });
