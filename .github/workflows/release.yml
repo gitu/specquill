@@ -1,0 +1,64 @@
+name: Release
+
+# Every v* tag publishes a GitHub Release with the single-binary builds
+# (SPA embedded). The Docker image for the same tag is built by the Docker
+# workflow; Cloud Run prod rolls out from it via the deploy trigger.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # release notes need history
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: build SPA (embedded into every binary)
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: cross-compile
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}"
+            out="specquill_${VERSION}_${GOOS}_${GOARCH}"
+            echo "building $out"
+            (cd server && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags="-s -w" -o "../dist/$out/specquill" ./cmd/specquill)
+            cp README.md DEPLOY.md "dist/$out/"
+            tar -czf "dist/$out.tar.gz" -C dist "$out"
+            rm -r "dist/$out"
+          done
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+
+      - name: create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/*.tar.gz dist/SHA256SUMS
