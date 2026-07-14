@@ -35,6 +35,7 @@ okf_version: "0.1"
 - [Unauthenticated OKF-bundle share links](requirements/REQ-016.md)
 - [GitHub sign-in with gated access and admin bootstrap](requirements/REQ-017.md)
 - [Instant sync via push webhooks](requirements/REQ-018.md)
+- [GitHub-App tenants with derived authorization](requirements/REQ-019.md)
 
 ## specs
 
@@ -54,3 +55,4 @@ okf_version: "0.1"
 - [Share links — unauthenticated OKF-bundle downloads](specs/share-links.md)
 - [Authentication — providers, access gate, tenant roles](specs/authentication.md)
 - [Webhooks — push-triggered repository sync](specs/webhooks.md)
+- [Tenants — GitHub App installations, derived roles](specs/tenants.md)

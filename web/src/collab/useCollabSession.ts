@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { activeTenant } from '../api/client';
 import { CollabSession, SessionUser, acquireSession } from './session';
 
 /**
@@ -34,7 +35,9 @@ export function useCollabSession(opts: {
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${location.host}/api/repos/${repo}/collab/${path}?branch=${encodeURIComponent(branch)}`;
+    // websocket connects can't set headers — the tenant rides as a query param
+    const tenant = activeTenant() ? `&tenant=${encodeURIComponent(activeTenant())}` : '';
+    const url = `${proto}://${location.host}/api/repos/${repo}/collab/${path}?branch=${encodeURIComponent(branch)}${tenant}`;
     const { session: s, release } = acquireSession(key, () =>
       new CollabSession(key, url, seed.current.baseSha!, seed.current.initialFm, seed.current.me!));
     setSession(s);

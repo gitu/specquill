@@ -45,15 +45,29 @@ func remoteFullName(remote string) string {
 	}
 }
 
-// POST /hooks/github — ping and push events.
-func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.Webhooks.GitHub.Enabled {
-		jsonError(w, http.StatusNotFound, "github webhooks not enabled")
-		return
+// webhookSecrets returns the accepted HMAC secrets: the plain repo-webhook
+// secret and/or the GitHub App's webhook secret — both operator-controlled.
+func (s *Server) webhookSecrets() []string {
+	var out []string
+	if s.cfg.Webhooks.GitHub.Enabled {
+		if v := os.Getenv(s.cfg.Webhooks.GitHub.SecretEnv); v != "" {
+			out = append(out, v)
+		}
 	}
-	secret := os.Getenv(s.cfg.Webhooks.GitHub.SecretEnv)
-	if secret == "" {
-		jsonError(w, http.StatusInternalServerError, "webhook secret not configured")
+	if s.cfg.GitHubApp.Enabled() {
+		if v := os.Getenv(s.cfg.GitHubApp.WebhookSecretEnv); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// POST /hooks/github — repo webhooks (ping, push) and GitHub App webhooks
+// (installation lifecycle) share the endpoint; the signature decides entry.
+func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
+	secrets := s.webhookSecrets()
+	if len(secrets) == 0 {
+		jsonError(w, http.StatusNotFound, "github webhooks not enabled")
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -61,10 +75,18 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(want), []byte(r.Header.Get("X-Hub-Signature-256"))) {
+	got := []byte(r.Header.Get("X-Hub-Signature-256"))
+	valid := false
+	for _, secret := range secrets {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if hmac.Equal([]byte(want), got) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
 		jsonError(w, http.StatusUnauthorized, "signature mismatch")
 		return
 	}
@@ -86,9 +108,110 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
 		matched := s.syncPushedRepo(payload.Repository.FullName, branch)
 		jsonOK(w, map[string]any{"ok": true, "matched": matched})
+	case "installation":
+		s.handleInstallationEvent(w, body)
+	case "installation_repositories":
+		s.handleInstallationReposEvent(w, body)
 	default:
 		jsonOK(w, map[string]any{"ok": true, "ignored": r.Header.Get("X-GitHub-Event")})
 	}
+}
+
+// handleInstallationEvent syncs the tenant lifecycle: created/unsuspended
+// installations become (or reactivate) a tenant; deleted/suspended ones are
+// locked out immediately — memberships revoked, repos deregistered from the
+// git manager. Store rows survive so a re-install restores the tenant.
+func (s *Server) handleInstallationEvent(w http.ResponseWriter, body []byte) {
+	var payload struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID      int64 `json:"id"`
+			Account struct {
+				Login string `json:"login"`
+			} `json:"account"`
+		} `json:"installation"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		jsonError(w, http.StatusBadRequest, "parse payload: "+err.Error())
+		return
+	}
+	inst := payload.Installation
+	switch payload.Action {
+	case "created", "unsuspend", "new_permissions_accepted":
+		slug := strings.ToLower(inst.Account.Login)
+		if slug == "" || inst.ID == 0 {
+			jsonError(w, http.StatusBadRequest, "installation without account")
+			return
+		}
+		if _, err := s.store.EnsureTenant(slug, "github", inst.ID, inst.Account.Login); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		log.Printf("github app: installation %s (%d) %s", slug, inst.ID, payload.Action)
+		jsonOK(w, map[string]any{"ok": true, "tenant": slug})
+	case "deleted", "suspend":
+		ten, err := s.store.TenantByInstallation(inst.ID)
+		if err != nil {
+			jsonOK(w, map[string]any{"ok": true, "ignored": "unknown installation"})
+			return
+		}
+		if err := s.store.DeleteTenantMembers(ten.ID); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if repos, err := s.store.TenantRepos(ten.ID); err == nil {
+			for _, tr := range repos {
+				s.git.RemoveRepo(ten.Slug + "/" + tr.RepoID)
+			}
+		}
+		log.Printf("github app: installation %s (%d) %s — memberships revoked", ten.Slug, inst.ID, payload.Action)
+		jsonOK(w, map[string]any{"ok": true, "tenant": ten.Slug})
+	default:
+		jsonOK(w, map[string]any{"ok": true, "ignored": payload.Action})
+	}
+}
+
+// handleInstallationReposEvent drops adopted repos the installation no
+// longer grants (additions surface as picker candidates, nothing to store).
+func (s *Server) handleInstallationReposEvent(w http.ResponseWriter, body []byte) {
+	var payload struct {
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Removed []struct {
+			FullName string `json:"full_name"`
+		} `json:"repositories_removed"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		jsonError(w, http.StatusBadRequest, "parse payload: "+err.Error())
+		return
+	}
+	ten, err := s.store.TenantByInstallation(payload.Installation.ID)
+	if err != nil {
+		jsonOK(w, map[string]any{"ok": true, "ignored": "unknown installation"})
+		return
+	}
+	removed := 0
+	if len(payload.Removed) > 0 {
+		gone := map[string]bool{}
+		for _, r := range payload.Removed {
+			gone[strings.ToLower(r.FullName)] = true
+		}
+		if repos, err := s.store.TenantRepos(ten.ID); err == nil {
+			for _, tr := range repos {
+				if !gone[strings.ToLower(tr.GhFullName)] {
+					continue
+				}
+				_ = s.store.DeleteProject(ten.ID, tr.RepoID)
+				_ = s.store.DeleteTenantSource(ten.ID, tr.RepoID)
+				_ = s.store.DeleteTenantRepo(ten.ID, tr.RepoID)
+				s.git.RemoveRepo(ten.Slug + "/" + tr.RepoID)
+				s.publish("repos-changed", ten.Slug+"/"+tr.RepoID, "")
+				removed++
+			}
+		}
+	}
+	jsonOK(w, map[string]any{"ok": true, "removed": removed})
 }
 
 // syncPushedRepo fetches every registered repo whose remote is the pushed

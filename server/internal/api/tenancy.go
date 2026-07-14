@@ -86,6 +86,10 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 // auth.admin_emails are promoted to admin there — the bootstrap for a fresh
 // deployment, where otherwise nobody could reach the management API.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
+	// github tenants first: roles derive from repo permissions (TTL-cached;
+	// a no-op unless the GitHub App is configured and the user is a github
+	// identity)
+	s.syncGitHubMemberships(u)
 	ms, err := s.store.Memberships(u.ID)
 	if err != nil {
 		return ms, err

@@ -93,7 +93,78 @@ export function AdminView() {
             ))}
           </div>
         )}
+
+        <GitHubReposPanel onError={setError} />
       </div>
+    </div>
+  );
+}
+
+// GitHubReposPanel — GitHub-App tenants pick which installation repositories
+// become workspaces or reference sources. Renders nothing for config tenants
+// or when no GitHub App is configured (the list request 4xxes).
+function GitHubReposPanel({ onError }: { onError: (m: string) => void }) {
+  const qc = useQueryClient();
+  interface GhRepo { fullName: string; private: boolean; description?: string; defaultBranch: string; state?: string; id?: string }
+  const repos = useQuery({
+    queryKey: ['github-repos'],
+    queryFn: () => api<GhRepo[]>('/api/github/repos'),
+    retry: false,
+  });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['github-repos'] });
+    qc.invalidateQueries({ queryKey: ['repos'] });
+    qc.invalidateQueries({ queryKey: ['projects'] });
+  };
+  const add = useMutation({
+    mutationFn: (v: { fullName: string; mode: string }) =>
+      api('/api/github/repos', { method: 'POST', body: JSON.stringify(v) }),
+    onSuccess: invalidate,
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/api/github/repos/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  if (!repos.data) return null; // not a github tenant / app not configured
+  const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
+  return (
+    <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+      <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
+        GitHub repositories · this installation
+      </div>
+      {repos.data.map((r) => (
+        <div key={r.fullName} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600")}>{r.fullName}</span>
+          {r.private && <span style={sx('font-size:10px;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 5px')}>private</span>}
+          <span style={sx('flex:1')} />
+          {r.state ? (
+            <>
+              <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
+                (r.state === 'workspace' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)'))}>
+                {r.state}
+              </span>
+              <button disabled={remove.isPending} onClick={() => remove.mutate(r.id!)}
+                style={sx(btn + ';color:var(--del);border-color:var(--reg-line)')}>Remove</button>
+            </>
+          ) : (
+            <>
+              <button disabled={add.isPending} onClick={() => add.mutate({ fullName: r.fullName, mode: 'workspace' })} style={sx(btn)}>
+                + workspace
+              </button>
+              <button disabled={add.isPending} onClick={() => add.mutate({ fullName: r.fullName, mode: 'reference' })} style={sx(btn)}>
+                + reference
+              </button>
+            </>
+          )}
+        </div>
+      ))}
+      {repos.data.length === 0 && (
+        <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>
+          The installation grants no repositories — add some in GitHub's installation settings.
+        </div>
+      )}
     </div>
   );
 }

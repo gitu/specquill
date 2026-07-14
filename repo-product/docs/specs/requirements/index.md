@@ -18,3 +18,4 @@
 - [Unauthenticated OKF-bundle share links](REQ-016.md)
 - [GitHub sign-in with gated access and admin bootstrap](REQ-017.md)
 - [Instant sync via push webhooks](REQ-018.md)
+- [GitHub-App tenants with derived authorization](REQ-019.md)

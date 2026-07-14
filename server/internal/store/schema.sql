@@ -180,6 +180,10 @@ CREATE TABLE IF NOT EXISTS source_syncs (
   PRIMARY KEY (tenant_id, name)
 );
 
+-- the GitHub @handle behind a github-provider user — what permission
+-- lookups and allow-lists match on (subjects are the immutable numeric id)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login TEXT NOT NULL DEFAULT '';
+
 -- unauthenticated OKF-bundle share links: the URL token is the only
 -- credential (LLM copy-paste use case). One active link per project;
 -- minting again rotates the token, deleting revokes access.

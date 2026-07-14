@@ -1,7 +1,10 @@
 # Multi-tenancy design
 
-Status: **foundation implemented** (phases A/B below); GitHub App edge blocked
-on an app registration. This doc is the reference for where the boundaries
+Status: **phases A and B implemented** — the GitHub App edge (login,
+installation sync, token provider, role sync, repo picker, push webhooks,
+tenant switcher) is code-complete and integration-tested against a fake
+GitHub; only the app *registration* itself is outstanding (see DEPLOY.md,
+"Multi-tenant hosting"). This doc is the reference for where the boundaries
 are and why.
 
 ## Tenant model

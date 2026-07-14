@@ -283,6 +283,37 @@ and blocked only on a GitHub App registration — the OAuth login shipped here
 is forward-compatible with it (`users.provider='github'`, subject = GitHub
 user id).
 
+## Multi-tenant hosting (GitHub App)
+
+Beyond the single config tenant, SpecQuill can host one tenant per **GitHub
+App installation** (docs/multi-tenancy.md). Register a GitHub App with
+permissions **Contents: read & write, Pull requests: read & write,
+Metadata: read**, webhook URL `<base_url>/hooks/github` with its own secret,
+and events **push, installation, installation repositories**. Then:
+
+```bash
+# the app's private key (PEM) + webhook secret
+gcloud secrets create SPECQUILL_GH_APP_KEY --data-file=app-private-key.pem
+echo -n '…app-webhook-secret…' | gcloud secrets create SPECQUILL_GH_APP_WEBHOOK_SECRET --data-file=-
+```
+
+Uncomment `github_app:` in `deploy/specquill.cloud.yml` (app id from the app
+settings page), add the two secrets to `--set-secrets` via trigger
+substitutions, and redeploy. From then on:
+
+- **Installing the app** on an org/account creates its tenant automatically
+  (webhook); uninstalling revokes all its memberships immediately.
+- **Roles are derived, never assigned**: repo `admin` → tenant admin,
+  `write` → member, `read` → viewer, synced on login with a 5-minute cache.
+  On a fresh installation the org admin bootstraps as tenant admin from the
+  installation's repos and uses the Admin view's **GitHub repositories**
+  panel to adopt repos as workspaces or reference sources.
+- **Git authenticates with installation tokens** (1h, cached, per tenant) —
+  no PATs for github tenants; `SPECQUILL_TOKEN` remains only for the config
+  tenant's repos.
+- Users with multiple memberships get a **tenant switcher** in the top bar;
+  the SPA pins `X-SpecQuill-Tenant` on every call.
+
 ## Local smoke test of the production image
 
 ```bash

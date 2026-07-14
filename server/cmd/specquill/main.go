@@ -29,6 +29,7 @@ import (
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
+	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/scaffold"
@@ -152,6 +153,30 @@ func serve(configPath string, dev bool) error {
 	if err != nil {
 		return err
 	}
+
+	// GitHub App: installation tokens authenticate git for github tenants
+	// (the TokenFor seam), so it must be wired before any AddRepo below
+	var ghApp *githubapp.App
+	if cfg.GitHubApp.Enabled() {
+		ghApp, err = githubapp.New(cfg.GitHubApp)
+		if err != nil {
+			return err
+		}
+		git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
+			ten, err := st.TenantBySlug(r.Tenant())
+			if err != nil || ten.Provider != "github" || ten.Installation == 0 {
+				return "", "", false
+			}
+			tok, err := ghApp.InstallationToken(ten.Installation)
+			if err != nil {
+				log.Printf("github app: token for %s: %v", r.Key(), err)
+				return "", "", false
+			}
+			return "x-access-token", tok, true
+		}
+		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
+	}
+
 	// api-managed repos (added in-app) survive reconciliation — re-register
 	// them with the manager so their projects resolve after a restart
 	if repos, err := st.TenantRepos(def.ID); err == nil {
@@ -172,6 +197,34 @@ func serve(configPath string, dev bool) error {
 			}
 		}
 	}
+	// github tenants: re-register their persisted repos too (clones happen
+	// through the installation-token TokenFor above)
+	if ghApp != nil {
+		tens, err := st.TenantsByProvider("github")
+		if err != nil {
+			return err
+		}
+		for _, ten := range tens {
+			repos, err := st.TenantRepos(ten.ID)
+			if err != nil {
+				continue
+			}
+			for _, tr := range repos {
+				mode := config.ReadOnly
+				if tr.Mode == string(config.Writable) {
+					mode = config.Writable
+				}
+				if _, err := git.AddRepo(ten.Slug, config.RepoConfig{
+					ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
+					SyncInterval:      2 * time.Minute,
+					ProtectedBranches: []string{tr.DefaultBranch},
+				}); err != nil {
+					log.Printf("github tenant repo %s/%s: %v", ten.Slug, tr.RepoID, err)
+				}
+			}
+		}
+	}
+
 	bus := events.New()
 	git.Notify = func(kind, repo, branch string) {
 		bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
@@ -220,15 +273,16 @@ func serve(configPath string, dev bool) error {
 		return err
 	}
 	handler := api.New(cfg, git, api.Options{
-		Store:    st,
-		Sessions: auth.NewSessions(st, cfg),
-		OIDC:     oidcAuth,
-		GitHub:   githubAuth,
-		AI:       aiClient,
-		Bus:      bus,
-		Importer: imp,
-		Dist:     dist,
-		Dev:      dev,
+		Store:     st,
+		Sessions:  auth.NewSessions(st, cfg),
+		OIDC:      oidcAuth,
+		GitHub:    githubAuth,
+		GitHubApp: ghApp,
+		AI:        aiClient,
+		Bus:       bus,
+		Importer:  imp,
+		Dist:      dist,
+		Dev:       dev,
 	})
 	log.Printf("listening on %s (dev=%v)", cfg.Listen, dev)
 	return http.ListenAndServe(cfg.Listen, handler)

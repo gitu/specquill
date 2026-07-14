@@ -16,6 +16,7 @@ import (
 	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
+	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/store"
@@ -28,6 +29,8 @@ type Server struct {
 	sessions *auth.Sessions
 	oidc     *auth.OIDC
 	github   *auth.GitHub
+	ghApp    *githubapp.App // nil unless github_app: is configured
+	ghRoles  *roleCache     // TTL cache of github permission→role lookups
 	ai       *ai.Client  // nil when disabled
 	bus      *events.Bus // nil-safe
 	hub      *collab.Hub
@@ -39,8 +42,9 @@ type Server struct {
 type Options struct {
 	Store    *store.Store
 	Sessions *auth.Sessions
-	OIDC     *auth.OIDC   // nil when disabled
-	GitHub   *auth.GitHub // nil when disabled
+	OIDC      *auth.OIDC     // nil when disabled
+	GitHub    *auth.GitHub   // nil when disabled
+	GitHubApp *githubapp.App // nil unless github_app: is configured
 	AI       *ai.Client  // nil when disabled
 	Bus      *events.Bus // nil-safe
 	Hub      *collab.Hub
@@ -54,7 +58,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ghApp: opts.GitHubApp, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), ghRoles: newRoleCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -78,6 +82,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
 	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
 	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
+	apiMux.HandleFunc("GET /api/github/repos", s.roleH("admin", s.listGitHubRepos))
+	apiMux.HandleFunc("POST /api/github/repos", s.roleH("admin", s.addGitHubRepo))
+	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH("admin", s.removeGitHubRepo))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))

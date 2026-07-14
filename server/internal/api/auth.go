@@ -63,6 +63,11 @@ func (s *Server) authGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// the @handle backs permission lookups (GitHub-App tenants) — keep it
+	// current on every login, handles are renameable
+	if err := s.store.SetUserLogin(u.ID, id.Login); err != nil {
+		log.Printf("github callback: set login: %v", err)
+	}
 	if err := s.sessions.Issue(w, u.ID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

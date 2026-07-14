@@ -144,6 +144,20 @@ type WebhooksConfig struct {
 	GitHub GitHubWebhookConfig `yaml:"github"`
 }
 
+// GitHubAppConfig turns on GitHub-App tenant management
+// (docs/multi-tenancy.md): each installation becomes a tenant, installation
+// tokens authenticate git, repo permissions map to roles, and the
+// installation webhooks keep it all in sync. Enabled when app_id is set.
+type GitHubAppConfig struct {
+	AppID            int64  `yaml:"app_id"`
+	PrivateKeyEnv    string `yaml:"private_key_env"`  // PEM in an env var…
+	PrivateKeyPath   string `yaml:"private_key_path"` // …or a mounted file
+	WebhookSecretEnv string `yaml:"webhook_secret_env"`
+	APIBase          string `yaml:"api_base"` // override for tests / GHE (default https://api.github.com)
+}
+
+func (g GitHubAppConfig) Enabled() bool { return g.AppID != 0 }
+
 // DatabaseConfig locates the Postgres store (users, sessions, PR review
 // state, collab logs). Production configs must use url_env so the DSN —
 // which carries credentials — never lives in a file.
@@ -195,10 +209,11 @@ type Config struct {
 	Grants  []string      `yaml:"grants"`
 	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
 	Git     GitConfig     `yaml:"git"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Session  SessionConfig  `yaml:"session"`
-	Webhooks WebhooksConfig `yaml:"webhooks"`
-	AI       AIConfig       `yaml:"ai"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Session   SessionConfig   `yaml:"session"`
+	Webhooks  WebhooksConfig  `yaml:"webhooks"`
+	GitHubApp GitHubAppConfig `yaml:"github_app"`
+	AI        AIConfig        `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -412,6 +427,14 @@ func (c *Config) validate() error {
 	}
 	if c.Webhooks.GitHub.Enabled && c.Webhooks.GitHub.SecretEnv == "" {
 		return fmt.Errorf("webhooks.github: secret_env is required when enabled")
+	}
+	if c.GitHubApp.Enabled() {
+		if c.GitHubApp.PrivateKeyEnv == "" && c.GitHubApp.PrivateKeyPath == "" {
+			return fmt.Errorf("github_app: private_key_env or private_key_path is required")
+		}
+		if c.GitHubApp.WebhookSecretEnv == "" {
+			return fmt.Errorf("github_app: webhook_secret_env is required")
+		}
 	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {
 		return fmt.Errorf("ai: base_url and model are required when enabled")

@@ -61,6 +61,14 @@ webhooks:
     enabled: true
     secret_env: SPECQUILL_GH_WEBHOOK_SECRET
 
+# GitHub-App tenant management (multi-tenant hosting): each installation
+# becomes a tenant, roles derive from GitHub repo permissions, installation
+# tokens authenticate git. Uncomment after registering the app — DEPLOY.md.
+# github_app:
+#   app_id: 12345
+#   private_key_env: SPECQUILL_GH_APP_KEY
+#   webhook_secret_env: SPECQUILL_GH_APP_WEBHOOK_SECRET
+
 ai:
   enabled: true
   base_url: https://generativelanguage.googleapis.com/v1beta/openai
