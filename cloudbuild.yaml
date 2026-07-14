@@ -38,7 +38,7 @@
 #   _REMOTE_REPO         AR remote repository proxying https://ghcr.io
 #   _GHCR_IMAGE          lowercase ghcr path: <owner>/<repo>
 #   _TOKEN_SECRET        Secret Manager entry: git push/fetch token
-#   _OIDC_SECRET_NAME    Secret Manager entry: OIDC client secret
+#   _GH_SECRET_NAME      Secret Manager entry: GitHub OAuth app client secret
 #   _AI_KEY_SECRET       Secret Manager entry: copilot API key
 #   _DATABASE_URL_SECRET Secret Manager entry: Postgres DSN (Neon)
 #   _MIN_INSTANCES       0 = scale to zero (staging); 1 keeps state warm (prod)
@@ -50,7 +50,7 @@ substitutions:
   _REMOTE_REPO: ghcr-remote
   _GHCR_IMAGE: gitu/specquill
   _TOKEN_SECRET: SPECQUILL_TOKEN
-  _OIDC_SECRET_NAME: SPECQUILL_OIDC_SECRET
+  _GH_SECRET_NAME: SPECQUILL_GH_CLIENT_SECRET
   _AI_KEY_SECRET: SPECQUILL_AI_KEY
   _DATABASE_URL_SECRET: SPECQUILL_DATABASE_URL
   _MIN_INSTANCES: "1"
@@ -169,4 +169,4 @@ steps:
           --timeout=3600 \
           --no-cpu-throttling \
           --set-env-vars="APP_VERSION=$$APP_VERSION" \
-          --set-secrets=SPECQUILL_TOKEN=${_TOKEN_SECRET}:latest,SPECQUILL_OIDC_SECRET=${_OIDC_SECRET_NAME}:latest,SPECQUILL_AI_KEY=${_AI_KEY_SECRET}:latest,SPECQUILL_DATABASE_URL=${_DATABASE_URL_SECRET}:latest
+          --set-secrets=SPECQUILL_TOKEN=${_TOKEN_SECRET}:latest,SPECQUILL_GH_CLIENT_SECRET=${_GH_SECRET_NAME}:latest,SPECQUILL_AI_KEY=${_AI_KEY_SECRET}:latest,SPECQUILL_DATABASE_URL=${_DATABASE_URL_SECRET}:latest

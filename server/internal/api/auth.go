@@ -8,13 +8,66 @@ import (
 	"specquill/server/internal/auth"
 )
 
-// GET /auth/login — OIDC redirect when enabled, else the SPA's local login page.
+// GET /auth/login — OIDC redirect when enabled; GitHub-only setups go
+// straight to GitHub; otherwise the SPA's login page (which offers whatever
+// /auth/providers reports).
 func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 	if s.oidc != nil {
 		s.oidc.Begin(w, r, s.cfg.Session.CookieSecure)
 		return
 	}
+	if s.github != nil && !s.cfg.Auth.Local.Enabled {
+		s.github.Begin(w, r, s.cfg.Session.CookieSecure)
+		return
+	}
 	http.Redirect(w, r, "/#/login", http.StatusFound)
+}
+
+// GET /auth/providers — which login methods the SPA should offer (public).
+func (s *Server) authProviders(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, map[string]bool{
+		"oidc":   s.oidc != nil,
+		"github": s.github != nil,
+		"local":  s.cfg.Auth.Local.Enabled,
+	})
+}
+
+// GET /auth/github/login — start the GitHub OAuth flow.
+func (s *Server) authGitHubLogin(w http.ResponseWriter, r *http.Request) {
+	if s.github == nil {
+		jsonError(w, http.StatusNotFound, "github login not enabled")
+		return
+	}
+	s.github.Begin(w, r, s.cfg.Session.CookieSecure)
+}
+
+// GET /auth/github/callback — code exchange → allowlist → session.
+func (s *Server) authGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	if s.github == nil {
+		jsonError(w, http.StatusNotFound, "github login not enabled")
+		return
+	}
+	id, err := s.github.Finish(w, r)
+	if err != nil {
+		log.Printf("github callback: %v", err)
+		http.Redirect(w, r, "/#/login?error=github", http.StatusFound)
+		return
+	}
+	if !s.github.Allowed(id.Login) {
+		log.Printf("github login denied: @%s is not in auth.github.allowed_users", id.Login)
+		http.Redirect(w, r, "/#/login?error=forbidden", http.StatusFound)
+		return
+	}
+	u, err := s.store.UpsertUser("github", id.Subject, id.Name, id.Email)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.sessions.Issue(w, u.ID); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // GET /auth/callback — OIDC code exchange → session.

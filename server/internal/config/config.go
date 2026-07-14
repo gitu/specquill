@@ -95,6 +95,18 @@ type LocalAuthConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// GitHubAuthConfig signs users in with their GitHub account (OAuth app flow —
+// GitHub is not an OIDC issuer for user login). allowed_users gates who may
+// log in at all; an empty list admits any GitHub account.
+type GitHubAuthConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	ClientID        string   `yaml:"client_id"`
+	ClientSecretEnv string   `yaml:"client_secret_env"`
+	AllowedUsers    []string `yaml:"allowed_users"` // GitHub logins admitted (empty = everyone)
+	WebBase         string   `yaml:"web_base"`      // override for GHE/tests (default https://github.com)
+	APIBase         string   `yaml:"api_base"`      // override for GHE/tests (default https://api.github.com)
+}
+
 // DevUser auto-authenticates every request as this identity — honored only
 // when the server runs with the -dev flag.
 type DevUser struct {
@@ -103,9 +115,15 @@ type DevUser struct {
 }
 
 type AuthConfig struct {
-	OIDC    OIDCConfig      `yaml:"oidc"`
-	Local   LocalAuthConfig `yaml:"local"`
-	DevUser *DevUser        `yaml:"dev_user"`
+	OIDC   OIDCConfig       `yaml:"oidc"`
+	GitHub GitHubAuthConfig `yaml:"github"`
+	Local  LocalAuthConfig  `yaml:"local"`
+	// AdminEmails bootstrap tenant administration: users whose email matches
+	// (case-insensitive, any provider) get the admin role in the default
+	// tenant on login. Without it a fresh deployment has members only and
+	// the management API is unreachable.
+	AdminEmails []string `yaml:"admin_emails"`
+	DevUser     *DevUser `yaml:"dev_user"`
 }
 
 type SessionConfig struct {
@@ -304,8 +322,8 @@ func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir is required")
 	}
-	if !c.Auth.OIDC.Enabled && !c.Auth.Local.Enabled {
-		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
+	if !c.Auth.OIDC.Enabled && !c.Auth.GitHub.Enabled && !c.Auth.Local.Enabled {
+		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
 	}
 	if c.Database.URL == "" && c.Database.URLEnv == "" {
 		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")
@@ -367,6 +385,15 @@ func (c *Config) validate() error {
 		o := c.Auth.OIDC
 		if o.Issuer == "" || o.ClientID == "" {
 			return fmt.Errorf("auth.oidc: issuer and client_id are required when enabled")
+		}
+	}
+	if c.Auth.GitHub.Enabled {
+		g := c.Auth.GitHub
+		if g.ClientID == "" || g.ClientSecretEnv == "" {
+			return fmt.Errorf("auth.github: client_id and client_secret_env are required when enabled")
+		}
+		if c.BaseURL == "" {
+			return fmt.Errorf("auth.github: base_url is required (OAuth callback URL)")
 		}
 	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {

@@ -27,6 +27,7 @@ type Server struct {
 	store    *store.Store
 	sessions *auth.Sessions
 	oidc     *auth.OIDC
+	github   *auth.GitHub
 	ai       *ai.Client  // nil when disabled
 	bus      *events.Bus // nil-safe
 	hub      *collab.Hub
@@ -38,7 +39,8 @@ type Server struct {
 type Options struct {
 	Store    *store.Store
 	Sessions *auth.Sessions
-	OIDC     *auth.OIDC  // nil when disabled
+	OIDC     *auth.OIDC   // nil when disabled
+	GitHub   *auth.GitHub // nil when disabled
 	AI       *ai.Client  // nil when disabled
 	Bus      *events.Bus // nil-safe
 	Hub      *collab.Hub
@@ -52,7 +54,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -125,6 +127,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
 	mux.HandleFunc("GET /auth/callback", s.authCallback)
+	mux.HandleFunc("GET /auth/providers", s.authProviders)
+	mux.HandleFunc("GET /auth/github/login", s.authGitHubLogin)
+	mux.HandleFunc("GET /auth/github/callback", s.authGitHubCallback)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)
 	mux.HandleFunc("POST /auth/logout", s.authLogout)
 	mux.Handle("/", spaHandler(opts.Dist, opts.Dev))

@@ -16,3 +16,4 @@
 - [Traceable document lifecycle](REQ-014.md)
 - [Guided document creation with collision-free IDs](REQ-015.md)
 - [Unauthenticated OKF-bundle share links](REQ-016.md)
+- [GitHub sign-in with gated access and admin bootstrap](REQ-017.md)

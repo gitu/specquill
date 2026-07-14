@@ -27,14 +27,27 @@ git:
   committer_email: specquill@example.com
 
 auth:
-  oidc:
+  # sign in with GitHub (OAuth app; register at github.com/settings/developers
+  # with callback <base_url>/auth/github/callback — see DEPLOY.md)
+  github:
     enabled: true
-    issuer: https://login.example.com
-    client_id: specquill
-    client_secret_env: SPECQUILL_OIDC_SECRET
-    scopes: [openid, profile, email]
+    client_id: Iv23li_CHANGE_ME
+    client_secret_env: SPECQUILL_GH_CLIENT_SECRET
+    # only these GitHub accounts may log in — an empty list admits ANY
+    # GitHub user, which on a public URL means the whole internet
+    allowed_users: [OWNER]
+  # generic OIDC stays available as an alternative/side-by-side IdP:
+  # oidc:
+  #   enabled: true
+  #   issuer: https://login.example.com
+  #   client_id: specquill
+  #   client_secret_env: SPECQUILL_OIDC_SECRET
+  #   scopes: [openid, profile, email]
   local:
     enabled: false                 # no local fallback logins in the cloud
+  # bootstrap tenant administration: these users get the admin role in the
+  # default tenant on login (projects/sources/grants management API + UI)
+  admin_emails: [you@example.com]
 
 session:
   ttl: 10m

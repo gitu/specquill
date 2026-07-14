@@ -203,6 +203,12 @@ func serve(configPath string, dev bool) error {
 		log.Printf("oidc enabled: issuer %s", cfg.Auth.OIDC.Issuer)
 	}
 
+	var githubAuth *auth.GitHub
+	if cfg.Auth.GitHub.Enabled {
+		githubAuth = auth.NewGitHub(cfg)
+		log.Printf("github login enabled: client %s (%d allowed users)", cfg.Auth.GitHub.ClientID, len(cfg.Auth.GitHub.AllowedUsers))
+	}
+
 	var aiClient *ai.Client
 	if cfg.AI.Enabled {
 		aiClient = ai.New(cfg.AI)
@@ -217,6 +223,7 @@ func serve(configPath string, dev bool) error {
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
 		OIDC:     oidcAuth,
+		GitHub:   githubAuth,
 		AI:       aiClient,
 		Bus:      bus,
 		Importer: imp,

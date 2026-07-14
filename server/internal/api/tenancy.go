@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/gitx"
@@ -81,20 +82,47 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 }
 
 // memberships returns the user's tenants, auto-enrolling first-time users
-// into the default config tenant when one exists.
+// into the default config tenant when one exists. Users whose email is in
+// auth.admin_emails are promoted to admin there — the bootstrap for a fresh
+// deployment, where otherwise nobody could reach the management API.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 	ms, err := s.store.Memberships(u.ID)
-	if err != nil || len(ms) > 0 {
+	if err != nil {
 		return ms, err
 	}
-	def, err := s.store.TenantBySlug(gitx.DefaultTenant)
-	if err != nil || def.Provider != "config" {
-		return nil, nil // no self-host tenant → membership comes from GitHub sync
+	if len(ms) == 0 {
+		def, err := s.store.TenantBySlug(gitx.DefaultTenant)
+		if err != nil || def.Provider != "config" {
+			return nil, nil // no self-host tenant → membership comes from GitHub sync
+		}
+		if err := s.store.EnsureMember(def.ID, u.ID, "member"); err != nil {
+			return nil, err
+		}
+		ms, err = s.store.Memberships(u.ID)
+		if err != nil {
+			return ms, err
+		}
 	}
-	if err := s.store.EnsureMember(def.ID, u.ID, "member"); err != nil {
-		return nil, err
+	if s.isConfiguredAdmin(u.Email) {
+		for i := range ms {
+			if ms[i].Tenant.Provider == "config" && ms[i].Role != "admin" {
+				if err := s.store.SetMemberRole(ms[i].Tenant.ID, u.ID, "admin"); err != nil {
+					return ms, err
+				}
+				ms[i].Role = "admin"
+			}
+		}
 	}
-	return s.store.Memberships(u.ID)
+	return ms, nil
+}
+
+func (s *Server) isConfiguredAdmin(email string) bool {
+	for _, a := range s.cfg.Auth.AdminEmails {
+		if strings.EqualFold(a, email) {
+			return true
+		}
+	}
+	return false
 }
 
 // tenantProject resolves {repo} within the request's tenant: a project id

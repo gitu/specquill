@@ -40,7 +40,8 @@ deploy cleanly.
   `api_key_env`) and mounted from Secret Manager by the deploy step. To change
   config: edit, commit, push (staging updates on the next main build).
   **Before the first deploy** fill in the real `base_url`, the writable repo
-  `remote`, and the OIDC issuer.
+  `remote`, the GitHub OAuth `client_id` + `allowed_users`, and
+  `admin_emails`.
 - **The store is Postgres — use Neon in production.** Users, sessions, PRs,
   review comments, approvals, workspace-branch claims and the collab update
   logs all live in the database referenced by the `SPECQUILL_DATABASE_URL`
@@ -101,13 +102,28 @@ deploy cleanly.
      --remote-password-secret-version=projects/${PROJECT_ID}/secrets/ghcr-pull-token/versions/latest
    ```
 
-3. **Create the runtime secrets** (mounted as env vars on the service; the
-   names must match the `_*_SECRET` substitutions / the env names in
+3. **Register the GitHub OAuth app** (app sign-in — users log in with their
+   GitHub account). Under *GitHub → Settings → Developer settings → OAuth
+   Apps → New OAuth App* (register it on the org if the workspace belongs to
+   one):
+
+   - Homepage URL: your `base_url` (the Cloud Run URL until a domain is mapped)
+   - **Authorization callback URL: `<base_url>/auth/github/callback`**
+   - Generate a client secret; the client id goes into
+     `deploy/specquill.cloud.yml` (`auth.github.client_id`), the secret into
+     Secret Manager below.
+
+   Staging needs its own OAuth app (GitHub allows one callback URL per app) —
+   or add the staging URL to a second app and point the staging trigger's
+   `_GH_SECRET_NAME` at its secret.
+
+   Then **create the runtime secrets** (mounted as env vars on the service;
+   the names must match the `_*_SECRET` substitutions / the env names in
    `deploy/specquill.cloud.yml`):
 
    ```bash
    echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
-   echo -n '…oidc-client-secret…'         | gcloud secrets create SPECQUILL_OIDC_SECRET --data-file=-
+   echo -n '…github-oauth-client-secret…' | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
    echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
    # Neon: project → connection string (pooled is fine; keep sslmode=require)
    echo -n 'postgres://…@…neon.tech/specquill?sslmode=require' | \
@@ -212,6 +228,32 @@ deploy cleanly.
    The first staging deploy prints the service URL; map your domain via Cloud
    Run domain mappings and set `base_url` in `deploy/specquill.cloud.yml`
    accordingly (OIDC redirect URLs + cookies depend on it).
+
+## Authentication & tenant configuration
+
+**Who can log in.** `auth.github.allowed_users` is the gate: only the listed
+GitHub handles may sign in (case-insensitive). An empty list admits **any
+GitHub account** — never ship that on a public URL. Denied users land on the
+login page with an explanatory error.
+
+**Who administers.** Everyone who logs in is auto-enrolled into the built-in
+`default` tenant as a **member** (edit, commit, PRs). `auth.admin_emails`
+promotes matching users (any provider, matched on email) to **admin** on
+login — admins manage projects, sources and grants via the Admin view /
+management API. Set at least your own email before the first deploy, or the
+instance has no administrator.
+
+**The tenant itself** is implicit in self-host mode: the YAML `projects:` /
+`sources:` / `grants:` lists sync into the single `default` tenant at boot
+(config-managed rows), and admins can add more at runtime through the
+management API (api-managed rows persist across boots). Roles are per-tenant:
+`viewer < member < admin`; change them with
+`store.SetMemberRole` semantics via the admin API. True multi-tenancy (one
+tenant per GitHub App installation, roles derived from GitHub repo
+permissions) is designed in [docs/multi-tenancy.md](docs/multi-tenancy.md)
+and blocked only on a GitHub App registration — the OAuth login shipped here
+is forward-compatible with it (`users.provider='github'`, subject = GitHub
+user id).
 
 ## Local smoke test of the production image
 

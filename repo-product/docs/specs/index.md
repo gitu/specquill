@@ -33,6 +33,7 @@ okf_version: "0.1"
 - [Traceable document lifecycle](requirements/REQ-014.md)
 - [Guided document creation with collision-free IDs](requirements/REQ-015.md)
 - [Unauthenticated OKF-bundle share links](requirements/REQ-016.md)
+- [GitHub sign-in with gated access and admin bootstrap](requirements/REQ-017.md)
 
 ## specs
 
@@ -50,3 +51,4 @@ okf_version: "0.1"
 - [Document lifecycle — moves and history](specs/document-lifecycle.md)
 - [Document creation — guided flow and ID schemes](specs/document-creation.md)
 - [Share links — unauthenticated OKF-bundle downloads](specs/share-links.md)
+- [Authentication — providers, access gate, tenant roles](specs/authentication.md)
