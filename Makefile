@@ -14,6 +14,9 @@ dev:                             ## hot-reload dev loop: postgres + air (Go rebu
 dev-fixture:                     ## create local bare origin repos under data/origin/
 	./scripts/dev-fixture.sh
 
+dev-samples:                     ## two extra sample spec repos with multi-commit history (auto-registers when the dev server runs)
+	./scripts/dev-samples.sh
+
 test:
 	cd server && go test ./...
 	cd web && npm test --silent

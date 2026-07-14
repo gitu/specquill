@@ -1,5 +1,5 @@
 # regulations
 
-- [DORA](/regulations/dora.md)
-- [GDPR](/regulations/gdpr.md)
-- [MiFID II](/regulations/mifid-ii.md)
+- [DORA](dora.md)
+- [GDPR](gdpr.md)
+- [MiFID II](mifid-ii.md)

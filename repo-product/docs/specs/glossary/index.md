@@ -1,3 +1,3 @@
 # glossary
 
-- [Glossary](/glossary/glossary.md)
+- [Glossary](glossary.md)

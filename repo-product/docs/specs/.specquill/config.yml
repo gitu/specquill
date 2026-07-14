@@ -8,6 +8,20 @@ ui:
 
 statuses: [draft, in_review, approved, deprecated]
 
+# ID schemes for new documents. Tokens: {seq} / {seq:N} (next number in the
+# family, zero-padded), {rand:N} digits, {hex:N}, {adj} {word} (memorable
+# pairs like "brisk-heron"), {yy} {yyyy}, {slug} (from the title). Families
+# without a scheme use built-ins (REQ-/REG-/CHG-/MAP-/ADR-{seq:3}) or {slug}.
+ids:
+  requirement: { pattern: "REQ-{seq:3}" }
+  decision: { pattern: "ADR-{seq:3}" }
+
+# custom document families beyond the built-ins — labeled in the tree and
+# the Model view; new files under these folders get the entity's type
+entities:
+  decision: { folder: "decisions/", label: "Decisions", icon: "◆", color: "#7c5cd6", description: "Architecture decision records — the WHY behind the system's shape, with the alternatives that were rejected." }
+  glossary: { folder: "glossary/", label: "Glossary", icon: "❡", color: "#12876a", description: "Shared vocabulary — terms with a precise meaning used consistently across these specs." }
+
 # The SpecQuill product specs are self-contained — they reference no external
 # sources. (References select granted catalog sources by name; see
 # specs/references.md for how the mechanism works.)

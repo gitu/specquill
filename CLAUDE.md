@@ -30,6 +30,10 @@ from the code.
 - Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
   (tenancy foundation, docs/multi-tenancy.md); the canonical repo key in DB
   rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
+- `make dev-samples` adds two EXTRA sample projects (`sample-payments`,
+  `sample-onboarding`) with real multi-commit/multi-author history — for
+  testing history-aware features; auto-registers via the management API when
+  the dev server is up. Survives until the next postgres schema reset.
 - Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
   — the fixture script also drops+recreates the postgres schema; `rm -rf
   data/runtime` alone does NOT clear sessions/PRs anymore.

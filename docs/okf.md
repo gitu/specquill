@@ -24,6 +24,13 @@ which the spec requires consumers to preserve.
   the derived files always land in the same commit as the change they
   describe). Generation is byte-stable, best-effort, and never blocks a
   commit. Merge commits appear in `log.md` on the next commit after them.
+  Per the spec both files are *optional* ("MAY appear in any directory", §6/§7)
+  — generating them everywhere is a producer convenience, not a conformance
+  requirement.
+- **Relative links by default** — generated index entries use standard
+  relative markdown paths, so a bundle renders on any forge (GitHub et al.)
+  without SpecQuill. OKF §5.1 *recommends* the `/`-absolute bundle-root form
+  and §5.2 permits relative paths; consumers here accept both (see below).
 
 ## Consumer
 
