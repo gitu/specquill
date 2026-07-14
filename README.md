@@ -1,10 +1,18 @@
 # SpecQuill
 
-**Requirements as readable, structured Markdown.** A git-native
-requirements-engineering tool: requirements, specs, regulations, data mappings
-and change records live as plain markdown in git; SpecQuill is the editing
-and review surface on top: traceability graph & matrix, change inbox, rich editors, and
-an in-app branch-based PR flow — every commit authored by the logged-in user.
+**Requirements as readable, structured Markdown — what you end up with is an
+[OKF bundle](docs/okf.md).** A git-native requirements-engineering tool:
+requirements, specs, regulations, data mappings and change records live as
+plain markdown in git; SpecQuill is the editing and review surface on top —
+traceability graph & matrix, change inbox, rich editors, and an in-app
+branch-based PR flow, every commit authored by the logged-in user.
+
+The artifact SpecQuill produces is deliberately **not proprietary**: a
+workspace is a conformant **Open Knowledge Format (v0.1) bundle** — typed
+frontmatter, generated `index.md`/`log.md`, plain relative links — fully
+readable by humans, agents and any OKF consumer straight from git, with or
+without SpecQuill running. Hand the whole bundle to an LLM as one zip via an
+unauthenticated [share link](repo-product/docs/specs/specs/share-links.md).
 
 Originally implemented from the Claude Design project
 [`SpecQuill.dc.html`](design/SpecQuill.dc.html) (the static prototype it grew from lives in
