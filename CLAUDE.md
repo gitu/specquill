@@ -7,8 +7,8 @@ from the code.
 
 ## Dev environment
 
-- Server runs on **:8643** (8080 is a Java app, 8642 a dead socket); tailnet:
-  `http://tt.warg-snares.ts.net:8643`.
+- Server runs on **:8643** (8080 is a Java app, 8642 a dead socket); also
+  reachable over the local tailnet on the same port.
 - Start: `./server/specquill -config specquill.dev.yml -dev` — the `-dev` flag
   auto-authenticates every request as `auth.dev_user` ("Flo Dev", workspace
   branch `ws/dev`) and bypasses session TTLs.

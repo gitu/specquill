@@ -57,9 +57,9 @@ deploy cleanly.
   is a plain uncommitted worktree draft (last autosave since the previous
   commit) on a branch with no live room. `_MIN_INSTANCES=1` (the prod default
   here) keeps the instance warm so that only happens on revision rollouts.
-- **This repo is private → the ghcr package is private**, so the AR remote
-  proxy **needs upstream credentials** (step 2b is not optional, unlike a
-  public repo).
+- **ghcr package visibility**: with a public package the AR remote proxy
+  needs no upstream credentials (skip step 2b). If the package is private,
+  step 2b is mandatory.
 
 ## One-time setup
 
