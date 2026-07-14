@@ -30,7 +30,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !strings.HasPrefix(r.URL.Path, "/auth/callback") && r.Header.Get("X-SpecQuill") != "1" {
+			// exempt: the OIDC callback (IdP POST binding) and webhooks,
+			// which authenticate with an HMAC signature instead
+			if !strings.HasPrefix(r.URL.Path, "/auth/callback") && !strings.HasPrefix(r.URL.Path, "/hooks/") &&
+				r.Header.Get("X-SpecQuill") != "1" {
 				jsonError(w, http.StatusForbidden, "missing X-SpecQuill header")
 				return
 			}

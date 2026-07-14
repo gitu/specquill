@@ -131,6 +131,19 @@ type SessionConfig struct {
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
 
+// GitHubWebhookConfig accepts push webhooks from GitHub repositories at
+// POST /hooks/github: pushes to a registered repo's remote trigger an
+// immediate fetch (+ fast-forward of the default branch) instead of waiting
+// for the next sync interval. The HMAC secret is the only authentication.
+type GitHubWebhookConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	SecretEnv string `yaml:"secret_env"` // env var holding the webhook HMAC secret
+}
+
+type WebhooksConfig struct {
+	GitHub GitHubWebhookConfig `yaml:"github"`
+}
+
 // DatabaseConfig locates the Postgres store (users, sessions, PR review
 // state, collab logs). Production configs must use url_env so the DSN —
 // which carries credentials — never lives in a file.
@@ -182,9 +195,10 @@ type Config struct {
 	Grants  []string      `yaml:"grants"`
 	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
 	Git     GitConfig     `yaml:"git"`
-	Auth    AuthConfig    `yaml:"auth"`
-	Session SessionConfig `yaml:"session"`
-	AI      AIConfig      `yaml:"ai"`
+	Auth     AuthConfig     `yaml:"auth"`
+	Session  SessionConfig  `yaml:"session"`
+	Webhooks WebhooksConfig `yaml:"webhooks"`
+	AI       AIConfig       `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -395,6 +409,9 @@ func (c *Config) validate() error {
 		if c.BaseURL == "" {
 			return fmt.Errorf("auth.github: base_url is required (OAuth callback URL)")
 		}
+	}
+	if c.Webhooks.GitHub.Enabled && c.Webhooks.GitHub.SecretEnv == "" {
+		return fmt.Errorf("webhooks.github: secret_env is required when enabled")
 	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {
 		return fmt.Errorf("ai: base_url and model are required when enabled")

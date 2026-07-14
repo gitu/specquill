@@ -53,6 +53,14 @@ session:
   ttl: 10m
   cookie_secure: true
 
+# push webhooks: a repo webhook on the specs repo pointed at
+# <base_url>/hooks/github makes external pushes visible immediately
+# (the 2-minute sync interval remains the backstop) — see DEPLOY.md
+webhooks:
+  github:
+    enabled: true
+    secret_env: SPECQUILL_GH_WEBHOOK_SECRET
+
 ai:
   enabled: true
   base_url: https://generativelanguage.googleapis.com/v1beta/openai

@@ -39,6 +39,7 @@
 #   _GHCR_IMAGE          lowercase ghcr path: <owner>/<repo>
 #   _TOKEN_SECRET        Secret Manager entry: git push/fetch token
 #   _GH_SECRET_NAME      Secret Manager entry: GitHub OAuth app client secret
+#   _GH_WEBHOOK_SECRET   Secret Manager entry: GitHub push-webhook HMAC secret
 #   _AI_KEY_SECRET       Secret Manager entry: copilot API key
 #   _DATABASE_URL_SECRET Secret Manager entry: Postgres DSN (Neon)
 #   _MIN_INSTANCES       0 = scale to zero (staging); 1 keeps state warm (prod)
@@ -51,6 +52,7 @@ substitutions:
   _GHCR_IMAGE: gitu/specquill
   _TOKEN_SECRET: SPECQUILL_TOKEN
   _GH_SECRET_NAME: SPECQUILL_GH_CLIENT_SECRET
+  _GH_WEBHOOK_SECRET: SPECQUILL_GH_WEBHOOK_SECRET
   _AI_KEY_SECRET: SPECQUILL_AI_KEY
   _DATABASE_URL_SECRET: SPECQUILL_DATABASE_URL
   _MIN_INSTANCES: "1"
@@ -169,4 +171,4 @@ steps:
           --timeout=3600 \
           --no-cpu-throttling \
           --set-env-vars="APP_VERSION=$$APP_VERSION" \
-          --set-secrets=SPECQUILL_TOKEN=${_TOKEN_SECRET}:latest,SPECQUILL_GH_CLIENT_SECRET=${_GH_SECRET_NAME}:latest,SPECQUILL_AI_KEY=${_AI_KEY_SECRET}:latest,SPECQUILL_DATABASE_URL=${_DATABASE_URL_SECRET}:latest
+          --set-secrets=SPECQUILL_TOKEN=${_TOKEN_SECRET}:latest,SPECQUILL_GH_CLIENT_SECRET=${_GH_SECRET_NAME}:latest,SPECQUILL_GH_WEBHOOK_SECRET=${_GH_WEBHOOK_SECRET}:latest,SPECQUILL_AI_KEY=${_AI_KEY_SECRET}:latest,SPECQUILL_DATABASE_URL=${_DATABASE_URL_SECRET}:latest

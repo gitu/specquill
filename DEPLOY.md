@@ -125,6 +125,9 @@ deploy cleanly.
    echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
    echo -n '…github-oauth-client-secret…' | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
    echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
+   # push-webhook HMAC secret (used again when registering the webhook below)
+   WEBHOOK_SECRET=$(openssl rand -hex 32)
+   echo -n "$WEBHOOK_SECRET" | gcloud secrets create SPECQUILL_GH_WEBHOOK_SECRET --data-file=-
    # Neon: project → connection string (pooled is fine; keep sslmode=require)
    echo -n 'postgres://…@…neon.tech/specquill?sslmode=require' | \
      gcloud secrets create SPECQUILL_DATABASE_URL --data-file=-
@@ -228,6 +231,31 @@ deploy cleanly.
    The first staging deploy prints the service URL; map your domain via Cloud
    Run domain mappings and set `base_url` in `deploy/specquill.cloud.yml`
    accordingly (OIDC redirect URLs + cookies depend on it).
+
+## Push webhooks (instant sync)
+
+Without a webhook the server polls: the writable project repo is fetched
+every 2 minutes (`sync_interval`, per project), read-only sources on their
+own interval — external pushes show up within that window. With
+`webhooks.github` enabled (the cloud config default), a **repository
+webhook on the specs repo** makes them land immediately:
+
+```bash
+gh api repos/OWNER/SPECS-REPO/hooks -f name=web -F active=true \
+  -f 'events[]=push' \
+  -f config.url="<base_url>/hooks/github" \
+  -f config.content_type=json \
+  -f config.secret="$WEBHOOK_SECRET"     # the SPECQUILL_GH_WEBHOOK_SECRET value
+```
+
+Register after the first deploy (the URL must exist). The endpoint is
+sessionless — the HMAC-SHA256 signature is the authentication; a push to a
+registered repo's remote triggers a targeted fetch and, for the default
+branch, a fast-forward of the served state. Add the same webhook to any
+read-only git source repos you want instant too. GitHub's *Recent
+Deliveries* tab on the webhook shows the responses
+(`{"ok":true,"matched":1}` on success); the polling interval remains the
+backstop if a delivery is ever missed.
 
 ## Authentication & tenant configuration
 

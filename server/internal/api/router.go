@@ -125,6 +125,8 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	// public OKF-bundle download — the share token in the URL is the only
 	// credential; {name} is the cosmetic filename and is not checked
 	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
+	// GitHub push webhooks — HMAC-authenticated, sessionless
+	mux.HandleFunc("POST /hooks/github", s.githubWebhook)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
 	mux.HandleFunc("GET /auth/callback", s.authCallback)
 	mux.HandleFunc("GET /auth/providers", s.authProviders)
