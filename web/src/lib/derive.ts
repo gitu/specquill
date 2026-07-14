@@ -199,6 +199,28 @@ export interface GraphNode {
 }
 export interface GraphEdge { d: string; stroke: string; dash?: boolean; a: string; b: string }
 
+// deterministic per-node/per-edge variation (FNV-1a → [0,1)) — the layout
+// reads organic instead of grid-locked, yet never moves between renders
+const h01 = (s: string, salt = 0) => {
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 1024) / 1024;
+};
+
+/**
+ * Bezier path between two node anchor points: asymmetric control points and
+ * a slight bow, both stable per seed — flowing strands instead of uniform
+ * S-curves. Also used by GraphView to redraw edges live while nodes move.
+ */
+export function edgeCurve(x1: number, y1: number, x2: number, y2: number, seed: string): string {
+  const t = h01(seed, 3);
+  const dir = x2 >= x1 ? 1 : -1;
+  const dx = Math.max(40, Math.abs(x2 - x1)) * dir;
+  const c1x = x1 + dx * (0.3 + t * 0.25), c2x = x2 - dx * (0.3 + (1 - t) * 0.25);
+  const bow = (t - 0.5) * Math.min(28, Math.abs(y2 - y1) * 0.35 + 10);
+  return `M${x1} ${y1} C${c1x} ${y1 + bow} ${c2x} ${y2 - bow} ${x2} ${y2}`;
+}
+
 export function buildGraph(model: WorkspaceModel) {
   const reqs = model.requirements, specs = model.specs, fields = model.fields;
   const srcMap: Record<string, { key: string; type: string; ref: string }> = {};
@@ -210,13 +232,6 @@ export function buildGraph(model: WorkspaceModel) {
   const colX = [16, 250, 486, 712], colW = [156, 150, 150, 176], H = 540;
   const nodes: GraphNode[] = [];
   const idOf: Record<string, GraphNode> = {};
-  // deterministic per-node/per-edge variation (FNV-1a → [0,1)) — the layout
-  // reads organic instead of grid-locked, yet never moves between renders
-  const h01 = (s: string, salt = 0) => {
-    let h = 2166136261 ^ salt;
-    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-    return ((h >>> 0) % 1024) / 1024;
-  };
   const scatter = (o: GraphNode, c: number, i: number, count: number) => {
     const gap = H / (count + 1);
     o.x = colX[c] + Math.round((h01(o.id) - 0.5) * 22);
@@ -256,13 +271,7 @@ export function buildGraph(model: WorkspaceModel) {
     const p = idOf[a], q = idOf[b];
     if (!p || !q) return;
     const x1 = p.x + p.w, y1 = p.y, x2 = q.x, y2 = q.y;
-    // asymmetric control points + a slight bow per edge — flowing strands
-    // instead of uniform S-curves; t is stable per (from,to) pair
-    const t = h01(a + '>' + b, 3);
-    const dx = Math.max(24, x2 - x1);
-    const c1x = x1 + dx * (0.3 + t * 0.25), c2x = x2 - dx * (0.3 + (1 - t) * 0.25);
-    const bow = (t - 0.5) * Math.min(28, Math.abs(y2 - y1) * 0.35 + 10);
-    edges.push({ d: `M${x1} ${y1} C${c1x} ${y1 + bow} ${c2x} ${y2 - bow} ${x2} ${y2}`, stroke, dash, a, b });
+    edges.push({ d: edgeCurve(x1, y1, x2, y2, a + '>' + b), stroke, dash, a, b });
   };
   const resolveField = (ref: string): DataField | undefined => {
     const a = ref.split('#')[1] || '';
