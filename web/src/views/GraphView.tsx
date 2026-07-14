@@ -6,21 +6,22 @@ import { buildGraph, edgeCurve } from '../lib/derive';
 import { Loading } from './Dashboard';
 import { docTabsStrip } from './EditorView';
 
-const ZOOMS = [0.5, 0.65, 0.8, 1, 1.2, 1.45, 1.75];
 const NODE_H = 46; // approximate box height for collision purposes
+const ZOOM_MIN = 0.3, ZOOM_MAX = 2.5;
 
 // a node's live physics state (positions are box centers)
 interface Body {
   id: string; x: number; y: number; vx: number; vy: number;
   w: number; h: number;
   hx: number; hy: number; // "home" anchor — dragging re-homes the node
+  pinned?: boolean;       // user-placed: strong anchor, springs can't drag it back
 }
 
 export function GraphView() {
   const nav = useNav();
   const app = useApp();
   const [hover, setHover] = useState<string | null>(null);
-  const [zi, setZi] = useState(3); // index into ZOOMS, 3 = 100%
+  const [zoom, setZoom] = useState(1);
   const [, setFrame] = useState(0); // bumped per simulation tick
   const g = useMemo(() => (app.model ? buildGraph(app.model) : null), [app.model]);
   const bodies = useRef<Map<string, Body>>(new Map());
@@ -28,7 +29,23 @@ export function GraphView() {
   const raf = useRef(0);
   const drag = useRef<{ id: string; offX: number; offY: number; moved: boolean } | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
-  const zoom = ZOOMS[zi];
+  const scroller = useRef<HTMLDivElement>(null);
+  const zoomBy = (f: number) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * f)));
+
+  // ctrl/cmd + wheel (and trackpad pinch) zooms — native non-passive
+  // listener because React's root wheel handler cannot preventDefault
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // keyed on g: the first render shows <Loading/> with no scroller element
+  }, [g]);
 
   // the hovered node's lineage: itself plus every node it shares an edge with
   const linked = useMemo(() => {
@@ -38,23 +55,32 @@ export function GraphView() {
     return s;
   }, [hover, g]);
 
-  // (re)seed bodies from the deterministic layout whenever the model changes
+  // seed bodies from the deterministic layout — keyed on the NODE SET, not
+  // the model object: background query refreshes rebuild `g` with identical
+  // nodes, and replacing the bodies would reset the physics mid-interaction
+  // and wipe the user's arrangement
+  const nodeSig = g ? g.nodes.map((n) => n.id).sort().join('|') : '';
   useEffect(() => {
     if (!g) return;
-    const m = new Map<string, Body>();
+    const m = bodies.current;
+    const keep = new Set<string>();
     g.nodes.forEach((n) => {
-      const x = n.x + n.w / 2, y = n.y;
-      m.set(n.id, { id: n.id, x, y, vx: 0, vy: 0, w: n.w, h: NODE_H, hx: x, hy: y });
+      keep.add(n.id);
+      if (!m.has(n.id)) {
+        const x = n.x + n.w / 2, y = n.y;
+        m.set(n.id, { id: n.id, x, y, vx: 0, vy: 0, w: n.w, h: NODE_H, hx: x, hy: y });
+      }
     });
-    bodies.current = m;
-    alpha.current = 1; // settle overlaps of the seed layout once
-  }, [g]);
+    [...m.keys()].forEach((id) => { if (!keep.has(id)) m.delete(id); });
+    alpha.current = 1; // settle overlaps of the (new) seed layout
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeSig]);
 
   // force simulation: weak home springs keep the lineage columns readable,
   // edges pull linked nodes toward the same height, and boxes push each
   // other apart (rectangle-aware). Dragging re-heats it; it cools to rest.
   const wake = () => {
-    alpha.current = Math.max(alpha.current, 0.35);
+    alpha.current = Math.max(alpha.current, drag.current ? 0.55 : 0.35);
     if (!raf.current) setFrame((f) => f + 1); // the effect below restarts the loop
   };
   useEffect(() => {
@@ -79,21 +105,31 @@ export function GraphView() {
           p.vx -= sxn * px * 0.02 * a; q.vx += sxn * px * 0.02 * a;
         }
       }
-      // edge springs — gentle vertical alignment of connected nodes
+      // edge springs — connections PULL: each link relaxes toward a rest
+      // length along its actual vector, so dragging a node tows its lineage
       g.edges.forEach((e) => {
         const p = bodies.current.get(e.a), q = bodies.current.get(e.b);
         if (!p || !q) return;
-        const f = (q.y - p.y) * 0.012 * a;
-        p.vy += f; q.vy -= f;
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const dist = Math.max(1, Math.hypot(dx, dy));
+        // only stretch pulls — slack links stay lazy instead of shoving
+        // their endpoints apart (keeps dense clusters from gridlocking)
+        const f = Math.max(0, dist - 190) * 0.02 * a;
+        const fx = (dx / dist) * f, fy = (dy / dist) * f;
+        p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
       });
-      // home anchors + integration
+      // faint home gravity keeps the left-to-right lineage readable without
+      // overpowering the pulls; user-placed (pinned) nodes anchor hard so
+      // pulling an end unravels the rest instead of snapping back
       bs.forEach((b) => {
         if (drag.current?.id === b.id) { b.vx = 0; b.vy = 0; return; }
-        b.vx += (b.hx - b.x) * 0.1 * a;
-        b.vy += (b.hy - b.y) * 0.02 * a;
+        const kx = b.pinned ? 0.3 : 0.02, ky = b.pinned ? 0.3 : 0.005;
+        b.vx += (b.hx - b.x) * kx * a;
+        b.vy += (b.hy - b.y) * ky * a;
         b.vx *= 0.72; b.vy *= 0.72;
-        b.x = Math.min(920, Math.max(-20, b.x + b.vx));
-        b.y = Math.min(H - 26, Math.max(26, b.y + b.vy));
+        // generous bounds — the canvas grows to fit the arrangement
+        b.x = Math.min(2300, Math.max(-40, b.x + b.vx));
+        b.y = Math.min(2300, Math.max(26, b.y + b.vy));
       });
       // hard de-overlap (position-based, NOT alpha-scaled): the soft forces
       // spread things out, this guarantees no two boxes end up stacked —
@@ -112,7 +148,7 @@ export function GraphView() {
             if (oy / minY <= ox / minX) {
               const s = (dy !== 0 ? Math.sign(dy) : (i % 2 ? 1 : -1)) * oy * 0.85;
               p.y -= s * (pFree / tot); q.y += s * (qFree / tot);
-              p.y = Math.min(H - 26, Math.max(26, p.y)); q.y = Math.min(H - 26, Math.max(26, q.y));
+              p.y = Math.min(2300, Math.max(26, p.y)); q.y = Math.min(2300, Math.max(26, q.y));
             } else {
               const s = (dx !== 0 ? Math.sign(dx) : 1) * ox * 0.85;
               p.x -= s * (pFree / tot); q.x += s * (qFree / tot);
@@ -120,7 +156,7 @@ export function GraphView() {
           }
         }
       }
-      if (!drag.current) alpha.current *= 0.97;
+      if (!drag.current) alpha.current *= 0.985;
       setFrame((f) => f + 1);
       if (alpha.current > 0.02 || drag.current) raf.current = requestAnimationFrame(tick);
       else raf.current = 0;
@@ -138,10 +174,18 @@ export function GraphView() {
 
   const seg = (on: boolean) => (on ? 'background:var(--text);color:var(--surface)' : 'color:var(--text-2);cursor:pointer');
 
+  // the canvas grows with the arrangement in both axes — dragging past the
+  // original bounds must not clip or snap back
+  let canvasH = g.H, canvasW = 900;
+  bodies.current.forEach((b) => {
+    canvasH = Math.max(canvasH, b.y + 70);
+    canvasW = Math.max(canvasW, b.x + b.w / 2 + 60);
+  });
+
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
       {docTabsStrip('graph', 'txn-report.md', nav)}
-      <div style={sx('flex:1;min-height:0;position:relative;overflow:auto;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px')}>
+      <div ref={scroller} style={sx('flex:1;min-height:0;position:relative;overflow:auto;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px')}>
         <div style={sx('position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:4;display:flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);padding:3px')}>
           <span style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(true))}>Graph</span>
           <span onClick={() => nav('/matrix')} style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(false))}>Matrix</span>
@@ -161,8 +205,8 @@ export function GraphView() {
           </span>
         </div>
 
-        <div style={{ width: 900 * zoom, height: g.H * zoom + 110, margin: '0 auto' }}>
-          <div ref={canvas} style={{ ...sx('position:relative;width:900px;min-width:900px;transform-origin:0 0'), height: g.H, marginTop: 70, transform: `scale(${zoom})` }}>
+        <div style={{ width: canvasW * zoom, height: canvasH * zoom + 110, margin: '0 auto' }}>
+          <div ref={canvas} style={{ ...sx('position:relative;transform-origin:0 0'), width: canvasW, minWidth: canvasW, height: canvasH, marginTop: 70, transform: `scale(${zoom})` }}>
             <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
               {g.edges.map((e, i) => {
                 const p = bodies.current.get(e.a), q = bodies.current.get(e.b);
@@ -208,8 +252,10 @@ export function GraphView() {
                   onPointerUp={() => {
                     if (drag.current?.id !== n.id) return;
                     const wasDrag = drag.current.moved;
-                    // dropping re-homes the node — the graph stays unraveled
+                    // dropping re-homes AND pins the node — the graph stays
+                    // unraveled and springs tow the rest instead
                     b.hx = b.x; b.hy = b.y;
+                    if (wasDrag) b.pinned = true;
                     drag.current = null;
                     wake();
                     if (!wasDrag && n.go) nav('/editor/' + n.go);
@@ -252,11 +298,11 @@ export function GraphView() {
           </span>
         </div>
         <div style={sx('position:absolute;right:16px;bottom:14px;z-index:3;display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);overflow:hidden')}>
-          <span onClick={() => setZi((i) => Math.max(0, i - 1))}
+          <span onClick={() => zoomBy(1 / 1.25)}
             style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-right:1px solid var(--border);user-select:none')}>−</span>
-          <span onClick={() => setZi(3)} title="reset zoom"
+          <span onClick={() => setZoom(1)} title="reset zoom (ctrl+scroll to zoom)"
             style={sx("padding:0 10px;font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;user-select:none")}>{Math.round(zoom * 100)}%</span>
-          <span onClick={() => setZi((i) => Math.min(ZOOMS.length - 1, i + 1))}
+          <span onClick={() => zoomBy(1.25)}
             style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-left:1px solid var(--border);user-select:none')}>+</span>
         </div>
       </div>

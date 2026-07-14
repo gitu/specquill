@@ -10,6 +10,10 @@ ui:
 # id scheme
 id_pattern: "REQ-\\d{3}"
 
+# custom document families — product drivers are first-class documents
+entities:
+  product_driver: { folder: "products/", label: "Products", icon: "◆", color: "#2563c9", description: "Product asks driving requirements — SLAs, PM requests, commitments with an owner and a date." }
+
 # drivers of requirements — regulatory is only one of several
 drivers:
   regulatory: { label: "Regulatory", icon: "⚖", color: "#b06f16" }

@@ -18,6 +18,11 @@ okf_version: "0.1"
 - [Customer / account — field lineage](data-mappings/customer.md)
 - [Trade reporting — field lineage](data-mappings/trade.md)
 
+## products
+
+- [Ops T+1 settlement SLA](products/ops-t1-settlement-sla.md)
+- [PM request 2026-06 — partial fills](products/pm-partial-fills-2026-06.md)
+
 ## regulations
 
 - [DORA](regulations/dora.md)
