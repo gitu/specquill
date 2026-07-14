@@ -33,7 +33,7 @@ COPY --from=web /src/server/internal/webui/dist internal/webui/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /specquill ./cmd/specquill
 
 # ---------- runner ----------
-FROM alpine:3.22 AS runner
+FROM alpine:3.24 AS runner
 # specquill shells out to git for every repo operation (needs >= 2.38)
 RUN apk add --no-cache git ca-certificates tzdata \
  && adduser -D -H -u 10001 specquill \
