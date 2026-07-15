@@ -234,7 +234,9 @@ export class CollabSession {
   }
 
   private send(data: Uint8Array) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data);
+    // lib0/yjs encoders always back their arrays with a plain ArrayBuffer,
+    // never a SharedArrayBuffer, so this satisfies BufferSource.
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data as Uint8Array<ArrayBuffer>);
   }
 
   destroy() {
