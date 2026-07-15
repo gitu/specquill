@@ -28,7 +28,7 @@ from the code.
   `specquill.dev.yml`). Go tests need it too (they skip without it; isolation is
   a throwaway schema per test via `store.OpenTest`). Neon in production.
 - Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
-  (tenancy foundation, docs/multi-tenancy.md); the canonical repo key in DB
+  (tenancy foundation, repo-product/docs/specs/specs/multi-tenancy.md); the canonical repo key in DB
   rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
 - `make dev-samples` adds two EXTRA sample projects (`sample-payments`,
   `sample-onboarding`) with real multi-commit/multi-author history — for

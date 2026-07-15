@@ -8,7 +8,8 @@ updated: 2026-07-15
 
 # Tenants — GitHub App installations, derived roles
 
-How [REQ-019](../requirements/REQ-019.md) is realized.
+How [REQ-019](../requirements/REQ-019.md) is realized; the full design
+reference is [multi-tenancy.md](multi-tenancy.md).
 
 ## Lifecycle
 

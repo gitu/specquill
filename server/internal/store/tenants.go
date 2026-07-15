@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Tenancy model (docs/multi-tenancy.md): a tenant is a GitHub App
+// Tenancy model (repo-product/docs/specs/specs/multi-tenancy.md): a tenant is a GitHub App
 // installation — or the built-in `default` tenant (provider `config`) that
 // mirrors the YAML repos list for self-hosting. The canonical repo key
 // everywhere else in this store is "<tenant_slug>/<repo_id>".

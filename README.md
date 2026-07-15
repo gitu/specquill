@@ -1,7 +1,7 @@
 # SpecQuill
 
 **Requirements as readable, structured Markdown — what you end up with is an
-[OKF bundle](docs/okf.md).** A git-native requirements-engineering tool:
+[OKF bundle](repo-product/docs/specs/specs/okf.md).** A git-native requirements-engineering tool:
 requirements, specs, regulations, data mappings and change records live as
 plain markdown in git; SpecQuill is the editing and review surface on top —
 traceability graph & matrix, change inbox, rich editors, and an in-app
@@ -96,7 +96,7 @@ Key properties:
 - **Read-only input repos** (e.g. a regulations repo) are fetched on an interval,
   browsable in the tree (🔒), and refuse writes server-side.
 - **OKF bundles.** Workspaces conform to the
-  [Open Knowledge Format](docs/okf.md) (v0.1): every document carries a
+  [Open Knowledge Format](repo-product/docs/specs/specs/okf.md) (v0.1): every document carries a
   `type`, and opted-in bundles get `index.md` listings + a `log.md` change
   history regenerated on every commit — readable by any OKF consumer or
   agent straight from git. Untyped OKF body links show up as dashed

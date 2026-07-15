@@ -1,4 +1,14 @@
+---
+type: Specification
+title: OKF conformance — producer and consumer
+status: approved
+satisfies: [requirements/REQ-005.md]
+updated: 2026-07-15
+---
+
 # Open Knowledge Format (OKF) support
+
+How [REQ-005](../requirements/REQ-005.md) is realized.
 
 specquill workspaces are conformant [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 bundles: a directory of markdown files with YAML frontmatter in git, readable

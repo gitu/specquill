@@ -17,3 +17,5 @@
 - [Authentication — providers, access gate, tenant roles](authentication.md)
 - [Webhooks — push-triggered repository sync](webhooks.md)
 - [Tenants — GitHub App installations, derived roles](tenants.md)
+- [Multi-tenancy — architecture and boundaries](multi-tenancy.md)
+- [OKF conformance — producer and consumer](okf.md)

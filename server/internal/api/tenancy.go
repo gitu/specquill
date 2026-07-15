@@ -10,7 +10,7 @@ import (
 	"specquill/server/internal/store"
 )
 
-// Tenant resolution (docs/multi-tenancy.md): API URLs carry the short repo
+// Tenant resolution (repo-product/docs/specs/specs/multi-tenancy.md): API URLs carry the short repo
 // id; the tenant comes from the request — the X-SpecQuill-Tenant header (or
 // ?tenant= for websocket connects, which can't set headers), else the
 // user's only membership. Users with no membership yet are auto-enrolled

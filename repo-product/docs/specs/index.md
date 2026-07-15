@@ -56,3 +56,5 @@ okf_version: "0.1"
 - [Authentication — providers, access gate, tenant roles](specs/authentication.md)
 - [Webhooks — push-triggered repository sync](specs/webhooks.md)
 - [Tenants — GitHub App installations, derived roles](specs/tenants.md)
+- [Multi-tenancy — architecture and boundaries](specs/multi-tenancy.md)
+- [OKF conformance — producer and consumer](specs/okf.md)

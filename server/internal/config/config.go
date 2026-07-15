@@ -37,7 +37,7 @@ type RepoConfig struct {
 }
 
 // SourceConfig is a stage-1 catalog entry: a named external source that
-// projects may reference (docs/multi-tenancy.md + the projects plan).
+// projects may reference (repo-product/docs/specs/specs/multi-tenancy.md + the projects plan).
 // Sources are read-only downstream, always. Credentials come from the
 // environment via token_env — never from the DB or in-repo config.
 type SourceConfig struct {
@@ -145,7 +145,7 @@ type WebhooksConfig struct {
 }
 
 // GitHubAppConfig turns on GitHub-App tenant management
-// (docs/multi-tenancy.md): each installation becomes a tenant, installation
+// (repo-product/docs/specs/specs/multi-tenancy.md): each installation becomes a tenant, installation
 // tokens authenticate git, repo permissions map to roles, and the
 // installation webhooks keep it all in sync. Enabled when app_id is set.
 type GitHubAppConfig struct {

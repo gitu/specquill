@@ -1,6 +1,6 @@
 package api
 
-// GitHub-App tenant management (docs/multi-tenancy.md, phase B): roles in a
+// GitHub-App tenant management (repo-product/docs/specs/specs/multi-tenancy.md, phase B): roles in a
 // github tenant are DERIVED from GitHub repo permissions — synced on demand
 // with a TTL cache, never duplicated — and the repo picker turns installation
 // repositories into workspaces (projects) or reference sources.

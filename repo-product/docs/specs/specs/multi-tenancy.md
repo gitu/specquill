@@ -1,11 +1,20 @@
+---
+type: Specification
+title: Multi-tenancy — architecture and boundaries
+status: in_review
+satisfies: [requirements/REQ-019.md]
+updated: 2026-07-15
+---
+
 # Multi-tenancy design
 
 Status: **phases A and B implemented** — the GitHub App edge (login,
 installation sync, token provider, role sync, repo picker, push webhooks,
 tenant switcher) is code-complete and integration-tested against a fake
-GitHub; only the app *registration* itself is outstanding (see DEPLOY.md,
-"Multi-tenant hosting"). This doc is the reference for where the boundaries
-are and why.
+GitHub; only the app *registration* itself is outstanding (operational
+steps: the cloud deployment guide, "Multi-tenant hosting"). This document
+is the full design reference — where the boundaries are and why;
+[tenants.md](tenants.md) specifies the implemented behavior.
 
 ## Tenant model
 

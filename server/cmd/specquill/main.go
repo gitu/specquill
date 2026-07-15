@@ -98,7 +98,7 @@ func serve(configPath string, dev bool) error {
 	defer release()
 
 	// mirror the YAML repos into the built-in default tenant's registry
-	// (docs/multi-tenancy.md — GitHub App installations add further tenants)
+	// (repo-product/docs/specs/specs/multi-tenancy.md — GitHub App installations add further tenants)
 	def, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
 	if err != nil {
 		return err
