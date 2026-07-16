@@ -122,6 +122,10 @@ deploy cleanly.
    `deploy/specquill.cloud.yml`):
 
    ```bash
+   # git push/fetch PAT — OPTIONAL once the GitHub App is registered ("Multi-
+   # tenant hosting" below): repos the app is installed on authenticate with
+   # installation tokens; the PAT only covers repos outside the installation
+   # or on non-GitHub hosts
    echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
    echo -n '…github-oauth-client-secret…' | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
    echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
@@ -286,20 +290,38 @@ user id).
 ## Multi-tenant hosting (GitHub App)
 
 Beyond the single config tenant, SpecQuill can host one tenant per **GitHub
-App installation** (see [the multi-tenancy design](../repo-product/docs/specs/specs/multi-tenancy.md)). Register a GitHub App with
-permissions **Contents: read & write, Pull requests: read & write,
-Metadata: read**, webhook URL `<base_url>/hooks/github` with its own secret,
-and events **push, installation, installation repositories**. Then:
+App installation** (see [the multi-tenancy design](../repo-product/docs/specs/specs/multi-tenancy.md)).
+
+**Register the app** with the manifest flow — one browser click, `gh` does
+the rest:
 
 ```bash
-# the app's private key (PEM) + webhook secret
-gcloud secrets create SPECQUILL_GH_APP_KEY --data-file=app-private-key.pem
-echo -n '…app-webhook-secret…' | gcloud secrets create SPECQUILL_GH_APP_WEBHOOK_SECRET --data-file=-
+gh auth status                       # any authenticated gh will do
+deploy/gh-app-setup.sh --url https://specquill.example.com   # --org my-org for an org-owned app
 ```
 
-Uncomment `github_app:` in `deploy/specquill.cloud.yml` (app id from the app
-settings page), add the two secrets to `--set-secrets` via trigger
-substitutions, and redeploy. From then on:
+The script serves a pre-filled manifest (permissions **Contents: rw, Pull
+requests: rw, Metadata: r**; webhook `<base_url>/hooks/github`; event
+`push` — `installation`/`installation_repositories` are delivered to apps
+automatically), you press *Create GitHub App* on github.com, and the
+returned one-hour code is converted via
+`gh api --method POST /app-manifests/<code>/conversions` into the full
+credential set. It writes the private-key PEM to disk and prints
+ready-to-paste output: the `auth.github` + `github_app:` YAML block, env
+exports for self-hosting, and the Secret Manager commands:
+
+```bash
+gcloud secrets create SPECQUILL_GH_APP_KEY --data-file=specquill-gh-app.<id>.private-key.pem
+printf %s '…webhook-secret…' | gcloud secrets create SPECQUILL_GH_APP_WEBHOOK_SECRET --data-file=-
+printf %s '…client-secret…'  | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
+```
+
+Uncomment `github_app:` in `deploy/specquill.cloud.yml` (app id from the
+script output), add the secrets to `--set-secrets` via trigger
+substitutions, and redeploy. Then **install the app**
+(`https://github.com/apps/<slug>/installations/new`) on the org or account
+whose repos it should host — the installation webhook creates the tenant.
+From then on:
 
 - **Installing the app** on an org/account creates its tenant automatically
   (webhook); uninstalling revokes all its memberships immediately.
@@ -309,8 +331,11 @@ substitutions, and redeploy. From then on:
   installation's repos and uses the Admin view's **GitHub repositories**
   panel to adopt repos as workspaces or reference sources.
 - **Git authenticates with installation tokens** (1h, cached, per tenant) —
-  no PATs for github tenants; `SPECQUILL_TOKEN` remains only for the config
-  tenant's repos.
+  no PATs for github tenants. The **config tenant's github.com repos ride
+  the app too**: install the app on them and the server resolves the
+  covering installation per repo (`GET /repos/{owner}/{repo}/installation`,
+  cached) and mints its token. `SPECQUILL_TOKEN` remains only as the
+  fallback for repos the app is not installed on and non-GitHub remotes.
 - Users with multiple memberships get a **tenant switcher** in the top bar;
   the SPA pins `X-SpecQuill-Tenant` on every call.
 

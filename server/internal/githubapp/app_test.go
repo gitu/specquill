@@ -113,3 +113,58 @@ func TestPermissionNotCollaborator(t *testing.T) {
 		t.Fatalf("want none, got %q %v", perm, err)
 	}
 }
+
+func TestRepoFromRemote(t *testing.T) {
+	cases := []struct {
+		remote string
+		want   string
+		ok     bool
+	}{
+		{"https://github.com/acme/specs.git", "acme/specs", true},
+		{"https://github.com/acme/specs", "acme/specs", true},
+		{"git@github.com:acme/specs.git", "acme/specs", true},
+		{"ssh://git@github.com/acme/specs.git", "acme/specs", true},
+		{"https://gitlab.com/acme/specs.git", "", false},
+		{"https://github.com/acme", "", false},
+		{"/srv/git/specs.git", "", false},
+	}
+	for _, c := range cases {
+		got, ok := RepoFromRemote(c.remote)
+		if got != c.want || ok != c.ok {
+			t.Errorf("RepoFromRemote(%q) = %q,%v; want %q,%v", c.remote, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestRepoInstallation(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		switch r.URL.Path {
+		case "/repos/acme/specs/installation":
+			_ = json.NewEncoder(w).Encode(map[string]int64{"id": 7})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	app, _ := newTestApp(t, srv.URL)
+
+	// covered repo resolves and caches
+	id, err := app.RepoInstallation("acme/specs")
+	if err != nil || id != 7 {
+		t.Fatalf("RepoInstallation: %v %d", err, id)
+	}
+	if id, _ = app.RepoInstallation("acme/specs"); id != 7 || calls.Load() != 1 {
+		t.Fatalf("hit not cached: id=%d calls=%d", id, calls.Load())
+	}
+
+	// uncovered repo → ErrNotInstalled, negative-cached
+	if _, err := app.RepoInstallation("other/repo"); err != ErrNotInstalled {
+		t.Fatalf("want ErrNotInstalled, got %v", err)
+	}
+	n := calls.Load()
+	if _, err := app.RepoInstallation("other/repo"); err != ErrNotInstalled || calls.Load() != n {
+		t.Fatalf("miss not cached: %v calls=%d", err, calls.Load())
+	}
+}

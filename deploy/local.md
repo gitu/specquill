@@ -58,6 +58,8 @@ projects:
     remote: git@github.com:you/your-specs.git   # or https + token_env
     default_branch: main
     # token_env: SPECQUILL_TOKEN               # https remotes: push/fetch token
+    # (with github_app: configured, github.com repos the app is installed on
+    #  authenticate via installation tokens — token_env is only the fallback)
 
 git:
   committer_name: specquill          # service identity → Co-authored-by trailer

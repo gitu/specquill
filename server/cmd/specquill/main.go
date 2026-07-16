@@ -163,16 +163,33 @@ func serve(configPath string, dev bool) error {
 			return err
 		}
 		git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
-			ten, err := st.TenantBySlug(r.Tenant())
-			if err != nil || ten.Provider != "github" || ten.Installation == 0 {
-				return "", "", false
+			if ten, err := st.TenantBySlug(r.Tenant()); err == nil && ten.Provider == "github" && ten.Installation != 0 {
+				tok, err := ghApp.InstallationToken(ten.Installation)
+				if err != nil {
+					log.Printf("github app: token for %s: %v", r.Key(), err)
+					return "", "", false
+				}
+				return "x-access-token", tok, true
 			}
-			tok, err := ghApp.InstallationToken(ten.Installation)
-			if err != nil {
-				log.Printf("github app: token for %s: %v", r.Key(), err)
-				return "", "", false
+			// config-tenant repos on github.com ride the app too when it is
+			// installed on them — no PAT needed; anything else (app not
+			// installed, non-GitHub host) falls back to token_env
+			if full, ok := githubapp.RepoFromRemote(r.Cfg.Remote); ok {
+				inst, err := ghApp.RepoInstallation(full)
+				if err != nil {
+					if err != githubapp.ErrNotInstalled {
+						log.Printf("github app: installation for %s: %v", full, err)
+					}
+					return "", "", false
+				}
+				tok, err := ghApp.InstallationToken(inst)
+				if err != nil {
+					log.Printf("github app: token for %s: %v", r.Key(), err)
+					return "", "", false
+				}
+				return "x-access-token", tok, true
 			}
-			return "x-access-token", tok, true
+			return "", "", false
 		}
 		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
 	}
