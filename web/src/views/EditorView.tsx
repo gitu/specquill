@@ -66,7 +66,9 @@ export function EditorView() {
   // "~<repoId>/<path>" targets a read-only input repo (default branch)
   const raw0 = splat || defaultDoc(app.files, app.entities);
   const roMatch = raw0.match(/^~([\w-]+)\/(.+)$/);
-  const readOnly = !!roMatch;
+  // read-only: reference-repo documents, and viewers (per-repo role) — the
+  // server refuses their writes anyway, the chrome just degrades to match
+  const readOnly = !!roMatch || app.repoRole === 'viewer';
   const fileRepo = roMatch ? roMatch[1] : app.repoId;
   const fileRef = roMatch ? '' : app.branch;
   const path = roMatch ? roMatch[2] : raw0;

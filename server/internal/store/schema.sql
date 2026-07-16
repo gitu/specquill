@@ -195,3 +195,34 @@ CREATE TABLE IF NOT EXISTS share_links (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, project_id)
 );
+
+-- per-repo user grants (REQ-020): explicit access layered on derived roles;
+-- effective role = max(derived, granted). Role sync never touches these —
+-- that is the point: a GitHub revocation must not drop an explicit grant.
+CREATE TABLE IF NOT EXISTS repo_grants (
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
+  repo_id    TEXT   NOT NULL,
+  user_id    BIGINT NOT NULL REFERENCES users(id),
+  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is tenant-scoped)
+  granted_by BIGINT REFERENCES users(id),
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, repo_id, user_id),
+  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
+
+-- pending grants for users who have not logged in yet; the matcher is a
+-- lowercased email or GitHub login, claimed (converted to repo_grants rows)
+-- and deleted on the invitee's first login.
+CREATE TABLE IF NOT EXISTS repo_grant_invites (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
+  repo_id    TEXT   NOT NULL,
+  kind       TEXT   NOT NULL,                    -- 'email' | 'github'
+  matcher    TEXT   NOT NULL,                    -- lowercased
+  role       TEXT   NOT NULL DEFAULT 'viewer',
+  granted_by BIGINT NOT NULL REFERENCES users(id),
+  created_at BIGINT NOT NULL,
+  UNIQUE (tenant_id, repo_id, kind, matcher),
+  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+);

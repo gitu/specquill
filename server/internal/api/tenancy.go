@@ -82,7 +82,9 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 }
 
 // memberships returns the user's tenants, auto-enrolling first-time users
-// into the default config tenant when one exists. Users whose email is in
+// into the default config tenant when one exists — with the role from
+// auth.default_role (member unless configured; none disables auto-enroll,
+// leaving access to explicit per-repo grants). Users whose email is in
 // auth.admin_emails are promoted to admin there — the bootstrap for a fresh
 // deployment, where otherwise nobody could reach the management API.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
@@ -94,12 +96,29 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 	if err != nil {
 		return ms, err
 	}
-	if len(ms) == 0 {
+	real := false
+	for i := range ms {
+		if !ms[i].GrantOnly {
+			real = true
+			break
+		}
+	}
+	if !real {
 		def, err := s.store.TenantBySlug(gitx.DefaultTenant)
 		if err != nil || def.Provider != "config" {
-			return nil, nil // no self-host tenant → membership comes from GitHub sync
+			return ms, nil // no self-host tenant → membership comes from GitHub sync (or grants)
 		}
-		if err := s.store.EnsureMember(def.ID, u.ID, "member"); err != nil {
+		role := s.cfg.Auth.DefaultRole
+		if role == "" {
+			role = "member"
+		}
+		if s.isConfiguredAdmin(u.Email) {
+			role = "admin" // default_role: none must not lock the bootstrap admin out
+		}
+		if role == "none" {
+			return ms, nil // restricted deployment: access comes from grants only
+		}
+		if err := s.store.EnsureMember(def.ID, u.ID, role); err != nil {
 			return nil, err
 		}
 		ms, err = s.store.Memberships(u.ID)
@@ -131,35 +150,36 @@ func (s *Server) isConfiguredAdmin(email string) bool {
 
 // tenantProject resolves {repo} within the request's tenant: a project id
 // first, else a source/repo name browsed as a read-only pseudo-project
-// (config-split plan, D3 — the URL segment is stable across both).
-func (s *Server) tenantProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
+// (config-split plan, D3 — the URL segment is stable across both). The
+// tenant is returned alongside so repoH can gate on the effective role.
+func (s *Server) tenantProject(w http.ResponseWriter, r *http.Request) (*project.Project, *store.Tenant, bool) {
 	t, ok := s.tenant(w, r)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	id := r.PathValue("repo")
 	if tp, err := s.store.TenantProject(t.ID, id); err == nil {
 		repo, ok := s.git.Repo(t.Slug + "/" + tp.RepoID)
 		if !ok {
 			jsonError(w, http.StatusNotFound, "project repo not initialized")
-			return nil, false
+			return nil, nil, false
 		}
-		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
+		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), t, true
 	}
 	repo, ok := s.git.Repo(t.Slug + "/" + id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "unknown repo")
-		return nil, false
+		return nil, nil, false
 	}
 	if repo.Writable() {
 		// a writable repo without a project row (test fixtures, migration
 		// gaps) still resolves as a root project
-		return project.New(repo, id, "", false), true
+		return project.New(repo, id, "", false), t, true
 	}
 	// read-only repos are SOURCES: browsing requires a stage-2 grant
 	if _, err := s.store.GrantedSource(t.ID, id); err != nil {
 		jsonError2(w, http.StatusForbidden, "source "+id+" is not granted to this tenant", "source_forbidden")
-		return nil, false
+		return nil, nil, false
 	}
-	return project.New(repo, id, "", true), true
+	return project.New(repo, id, "", true), t, true
 }

@@ -82,6 +82,11 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
 	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
 	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
+	apiMux.HandleFunc("GET /api/members", s.roleH("admin", s.listMembers))
+	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.roleH("admin", s.listGrants))
+	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH("admin", s.createGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH("admin", s.deleteGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH("admin", s.deleteGrantInvite))
 	apiMux.HandleFunc("GET /api/github/repos", s.roleH("admin", s.listGitHubRepos))
 	apiMux.HandleFunc("POST /api/github/repos", s.roleH("admin", s.addGitHubRepo))
 	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH("admin", s.removeGitHubRepo))
@@ -97,7 +102,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/files/{path...}", s.writableH(s.deleteFile))
 	apiMux.HandleFunc("POST /api/repos/{repo}/move", s.writableH(s.postMove))
 	apiMux.HandleFunc("GET /api/repos/{repo}/history", s.repoH(s.getHistory))
-	apiMux.HandleFunc("GET /api/repos/{repo}/status", s.writableH(s.getStatus))
+	apiMux.HandleFunc("GET /api/repos/{repo}/status", s.writableViewH(s.getStatus))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit", s.writableH(s.postCommit))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit-message", s.writableH(s.postCommitMessage))
 	apiMux.HandleFunc("POST /api/repos/{repo}/branches", s.writableH(s.postBranch))
@@ -107,19 +112,19 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/pull", s.writableH(s.postPull))
 	apiMux.HandleFunc("GET /api/repos/{repo}/diff/worktree", s.writableH(s.getWorktreeDiff))
 	apiMux.HandleFunc("GET /api/repos/{repo}/collab/{path...}", s.writableH(s.collabWS))
-	apiMux.HandleFunc("GET /api/repos/{repo}/presence", s.writableH(s.getPresence))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs", s.writableH(s.listPRs))
+	apiMux.HandleFunc("GET /api/repos/{repo}/presence", s.writableViewH(s.getPresence))
+	apiMux.HandleFunc("GET /api/repos/{repo}/prs", s.writableViewH(s.listPRs))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs", s.writableH(s.createPR))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}", s.writableH(s.getPR))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/diff", s.writableH(s.getPRDiff))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/comments", s.writableH(s.prComments))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/comments", s.writableH(s.prComments))
+	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}", s.writableViewH(s.getPR))
+	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/diff", s.writableViewH(s.getPRDiff))
+	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/comments", s.writableViewH(s.prComments))
+	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/comments", s.writableViewH(s.prComments))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/approve", s.writableH(s.approvePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/merge", s.writableH(s.mergePR))
 	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/close", s.writableH(s.closePR))
 	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
-	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.roleH("member", s.createShare))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.roleH("member", s.deleteShare))
+	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.createShare)
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
 	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
@@ -145,14 +150,22 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	return logMiddleware(csrfGuard(mux))
 }
 
-// repoH resolves the {repo} path segment within the request's tenant.
+// repoH resolves the {repo} path segment within the request's tenant and
+// gates on the effective per-repo role (REQ-020): reading needs viewer. The
+// resolved role rides the request context for writableH and handlers.
 func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := s.tenantProject(w, r)
+		repo, t, ok := s.tenantProject(w, r)
 		if !ok {
 			return
 		}
-		h(w, r, repo)
+		u := auth.UserFrom(r.Context())
+		role := s.effectiveRepoRole(u, t, repo.Repo.Cfg.ID)
+		if roleRank[role] < roleRank["viewer"] {
+			jsonError2(w, http.StatusForbidden, "no access to repo "+repo.ID, "repo_forbidden")
+			return
+		}
+		h(w, r.WithContext(withRepoRole(r.Context(), role)), repo)
 	}
 }
 

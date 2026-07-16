@@ -19,3 +19,4 @@
 - [GitHub sign-in with gated access and admin bootstrap](REQ-017.md)
 - [Instant sync via push webhooks](REQ-018.md)
 - [GitHub-App tenants with derived authorization](REQ-019.md)
+- [Per-repository user grants](REQ-020.md)

@@ -11,8 +11,26 @@ import (
 	"specquill/server/internal/gitx"
 )
 
-// writableH additionally rejects requests against read-only repos.
+// writableH gates every mutation: the repo must be writable AND the caller
+// at least a member on it (viewers read and comment, they never write).
 func (s *Server) writableH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
+	return s.repoH(func(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+		if !repo.Writable() {
+			jsonError(w, http.StatusForbidden, "repo "+repo.ID+" is read-only")
+			return
+		}
+		if roleRank[repoRoleFrom(r.Context())] < roleRank["member"] {
+			jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
+			return
+		}
+		h(w, r, repo)
+	})
+}
+
+// writableViewH requires a writable repo but only viewer role — PR reads,
+// comments, presence and draft status live on writable repos yet are open
+// to viewers ("read, comment" in the role table).
+func (s *Server) writableViewH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return s.repoH(func(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 		if !repo.Writable() {
 			jsonError(w, http.StatusForbidden, "repo "+repo.ID+" is read-only")

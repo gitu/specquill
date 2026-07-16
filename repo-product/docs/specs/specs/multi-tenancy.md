@@ -2,8 +2,8 @@
 type: Specification
 title: Multi-tenancy — architecture and boundaries
 status: in_review
-satisfies: [requirements/REQ-019.md]
-updated: 2026-07-15
+satisfies: [requirements/REQ-019.md, requirements/REQ-020.md]
+updated: 2026-07-16
 ---
 
 # Multi-tenancy design
@@ -46,11 +46,15 @@ sync.
 ## Database
 
 ```
-tenants        (id, slug UNIQUE, provider 'config'|'github', installation_id,
-                display_name, created_at)
-tenant_repos   (tenant_id, repo_id, mode, remote, default_branch,
-                gh_full_name, created_at)          PK (tenant_id, repo_id)
-tenant_members (tenant_id, user_id, role, synced_at) PK (tenant_id, user_id)
+tenants            (id, slug UNIQUE, provider 'config'|'github', installation_id,
+                    display_name, created_at)
+tenant_repos       (tenant_id, repo_id, mode, remote, default_branch,
+                    gh_full_name, created_at)          PK (tenant_id, repo_id)
+tenant_members     (tenant_id, user_id, role, synced_at) PK (tenant_id, user_id)
+repo_grants        (tenant_id, repo_id, user_id, role, granted_by, created_at)
+                    PK (tenant_id, repo_id, user_id) — explicit per-repo access (REQ-020)
+repo_grant_invites (id, tenant_id, repo_id, kind 'email'|'github', matcher,
+                    role, granted_by, created_at) — pending, claimed on first login
 ```
 
 Everything else keys by the qualified repo string and needs no tenant_id.
@@ -59,20 +63,34 @@ Postgres RLS on the qualified-key prefix as defense-in-depth, then a Neon
 project per enterprise tenant (`store.Open` takes a DSN; a per-tenant DSN
 lookup is a small seam).
 
-## Authorization: derived from GitHub, never duplicated
+## Authorization: derived from GitHub, granted per repo
 
-No specquill ACL system. A user's rights in a GitHub tenant are their rights
-on the repo, synced from the installation and cached with a TTL:
+Derived by default, never duplicated — plus one explicit layer. A user's
+rights in a GitHub tenant are their rights on the repo, synced from the
+installation and cached with a TTL:
 
 | GitHub permission | specquill role | can |
 | --- | --- | --- |
-| `admin`           | admin  | tenant settings, repo add/remove + everything below |
+| `admin`           | admin  | tenant settings, repo add/remove, grants + everything below |
 | `push`            | member | edit, commit, open/approve/merge PRs |
 | `pull`            | viewer | read, comment |
 
-Revocation happens where admins already do it — on GitHub. The `config`
-tenant enrolls every authenticated user as `member` (self-host semantics
-today; a YAML role map is a later option).
+Derivation is **per repository** (`tenant:login:repo` cache); the
+tenant-level role in `tenant_members` is the maximum across repos and gates
+tenant management only. On top sit **explicit repo grants** (REQ-020,
+`viewer|member`, admin-managed): effective role = max(derived, granted).
+Grants cover what derivation can't — outsiders scoped to one repo, on-prem
+users without git-host access, elevation past a read-only git permission
+(the server pushes with the installation token, so the app gate decides).
+Syncs never write grants; GitHub revocation drops the derived role, not
+the grant. Enforcement is one resolver on every repo route: `viewer` to
+read/comment (PR reads included), `member` for every mutation
+(writes, commits, PR create/approve/merge/close, co-editing, copilot).
+
+Revocation of derived access happens where admins already do it — on
+GitHub. The `config` tenant enrolls every authenticated user per
+`auth.default_role`: `member` (default), `viewer`, or `none` — with `none`
+only explicit grants open repos (restricted on-prem deployments).
 
 ## Request resolution
 
@@ -91,11 +109,13 @@ today; a YAML role map is a later option).
 - Layout: `data_dir/tenants/<tenant>/<repo>/{git,worktrees}`, cloned lazily
   on first access (`gitx.Manager.AddRepo` at runtime; boot no longer clones
   everything eagerly in multi-tenant mode).
-- **Credentials**: `Manager.TokenFor(repo)` hook — the single seam. Default
-  provider reads `token_env` (self-host). The GitHub provider mints
-  **installation tokens** per tenant (1h expiry, cached until ~5 min before
-  expiry) and never crosses tenants. Tokens reach git via child-process env
-  only (existing `credentialArgsEnv` invariant).
+- **Credentials**: `Manager.TokenFor(repo)` hook — the single seam. The
+  GitHub provider mints **installation tokens** per tenant (1h expiry,
+  cached until ~5 min before expiry) and never crosses tenants. Config-
+  tenant repos on github.com also ride the app when it is installed on them
+  (the covering installation is resolved per repo and cached); `token_env`
+  is the fallback for uncovered repos and non-GitHub hosts. Tokens reach
+  git via child-process env only (existing `credentialArgsEnv` invariant).
 - Everything on disk is reconstructable: clones from the remote, roomed
   drafts replay from the collab log in Postgres. Plain uncommitted worktree
   drafts are the one loss case on eviction — mitigation (later): auto-commit

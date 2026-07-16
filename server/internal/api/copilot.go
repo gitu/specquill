@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"specquill/server/internal/ai"
+	"specquill/server/internal/auth"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 )
@@ -393,6 +394,12 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 	ps, err := s.store.TenantProjects(t.ID)
 	if err != nil || len(ps) == 0 {
 		jsonError(w, http.StatusInternalServerError, "no project configured")
+		return nil, false
+	}
+	// same gate as the writableH copilot routes: copilot drafts write
+	u := auth.UserFrom(r.Context())
+	if roleRank[s.effectiveRepoRole(u, t, ps[0].RepoID)] < roleRank["member"] {
+		jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
 		return nil, false
 	}
 	repo, ok := s.git.Repo(t.Slug + "/" + ps[0].RepoID)

@@ -64,7 +64,7 @@ export function PRView() {
           {p.mergeable === false && <span style={sx('font-size:11.5px;color:var(--del);font-weight:600')}>⚠ conflicts: {(p.conflicts || []).join(', ')}</span>}
           <div style={sx('flex:1')} />
           {error && <span style={sx('color:var(--del);font-size:12px')}>{error}</span>}
-          {p.state === 'open' && (
+          {p.state === 'open' && app.repoRole !== 'viewer' && (
             <>
               <button onClick={() => doAction('close')} style={sx('height:32px;padding:0 12px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12.5px;cursor:pointer')}>Close</button>
               <button onClick={() => doAction('approve')} style={sx('height:32px;padding:0 14px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>

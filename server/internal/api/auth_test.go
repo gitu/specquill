@@ -29,6 +29,12 @@ func testServerWith(t *testing.T, protectMain bool) http.Handler {
 
 // testServerFull also exposes the store + git manager for tenancy tests.
 func testServerFull(t *testing.T, protectMain bool) (http.Handler, *store.Store, *gitx.Manager) {
+	return testServerCfg(t, protectMain, nil)
+}
+
+// testServerCfg additionally lets a test mutate the config before boot
+// (auth.default_role, admin_emails, …).
+func testServerCfg(t *testing.T, protectMain bool, mut func(*config.Config)) (http.Handler, *store.Store, *gitx.Manager) {
 	t.Helper()
 	tmp := t.TempDir()
 	// minimal fixture repo
@@ -51,6 +57,9 @@ func testServerFull(t *testing.T, protectMain bool) (http.Handler, *store.Store,
 	}
 	if protectMain {
 		cfg.Repos[0].ProtectedBranches = []string{"main"}
+	}
+	if mut != nil {
+		mut(cfg)
 	}
 	st := store.OpenTest(t)
 	// serve() mirrors the YAML repos into the default tenant at boot; the
