@@ -29,7 +29,10 @@ func (r *Repo) worktreeFor(ref string) (string, error) {
 
 // Tree lists all files reachable at ref.
 func (r *Repo) Tree(ref string) ([]TreeEntry, error) {
-	ref = r.ResolveRef(ref)
+	ref, err := r.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	if wt, err := r.worktreeFor(ref); err != nil {
 		return nil, err
 	} else if wt != "" {
@@ -91,7 +94,10 @@ func walkWorktree(root string) ([]TreeEntry, error) {
 
 // Snapshot returns path→content for every text file at ref (buildModel input).
 func (r *Repo) Snapshot(ref string) (map[string]string, error) {
-	ref = r.ResolveRef(ref)
+	ref, err := r.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := r.Tree(ref)
 	if err != nil {
 		return nil, err
@@ -160,7 +166,10 @@ func (r *Repo) Snapshot(ref string) (map[string]string, error) {
 
 // File returns one file's content and blob sha at ref.
 func (r *Repo) File(ref, path string) (content string, sha string, err error) {
-	ref = r.ResolveRef(ref)
+	ref, err = r.resolveRef(ref)
+	if err != nil {
+		return "", "", err
+	}
 	path, err = safeRelPath(path)
 	if err != nil {
 		return "", "", err
@@ -204,8 +213,11 @@ type HistoryEntry struct {
 // FileHistory lists the commits touching path on ref, newest first, renames
 // followed (--follow), capped at limit (default 100).
 func (r *Repo) FileHistory(ref, path string, limit int) ([]HistoryEntry, error) {
-	ref = r.ResolveRef(ref)
-	path, err := safeRelPath(path)
+	ref, err := r.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	path, err = safeRelPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +241,10 @@ func (r *Repo) FileHistory(ref, path string, limit int) ([]HistoryEntry, error) 
 // FileAt reads a file from the object database at ref — never the worktree.
 // Used as the committed baseline for uncommitted-change visualization.
 func (r *Repo) FileAt(ref, path string) (content string, sha string, err error) {
-	ref = r.ResolveRef(ref)
+	ref, err = r.resolveRef(ref)
+	if err != nil {
+		return "", "", err
+	}
 	path, err = safeRelPath(path)
 	if err != nil {
 		return "", "", err

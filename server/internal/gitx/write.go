@@ -24,7 +24,10 @@ type StatusResult struct {
 
 // Status reports uncommitted worktree changes plus ahead/behind vs origin.
 func (r *Repo) Status(branch string) (*StatusResult, error) {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return nil, err
+	}
 	wt, err := r.Worktree(branch)
 	if err != nil {
 		return nil, err
@@ -85,7 +88,10 @@ func (r *Repo) protectedErr(branch string) error {
 }
 
 func (r *Repo) SaveFile(branch, path, content, baseSha string) (sha string, err error) {
-	branch = r.ResolveRef(branch)
+	branch, err = r.resolveRef(branch)
+	if err != nil {
+		return "", err
+	}
 	if err := r.protectedErr(branch); err != nil {
 		return "", err
 	}
@@ -143,7 +149,10 @@ func (r *Repo) SaveFile(branch, path, content, baseSha string) (sha string, err 
 // check — collaboration rooms are the single writer for their file while
 // active. Protection still applies.
 func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err error) {
-	branch = r.ResolveRef(branch)
+	branch, err = r.resolveRef(branch)
+	if err != nil {
+		return "", err
+	}
 	if err := r.protectedErr(branch); err != nil {
 		return "", err
 	}
@@ -188,11 +197,14 @@ func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err erro
 // `git mv` so the rename is staged explicitly; untracked drafts (not yet
 // known to git) fall back to a plain filesystem rename.
 func (r *Repo) MoveFile(branch, from, to string) error {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return err
+	}
 	if err := r.protectedErr(branch); err != nil {
 		return err
 	}
-	from, err := safeRelPath(from)
+	from, err = safeRelPath(from)
 	if err != nil {
 		return err
 	}
@@ -228,11 +240,14 @@ func (r *Repo) MoveFile(branch, from, to string) error {
 }
 
 func (r *Repo) DeleteFile(branch, path string) error {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return err
+	}
 	if err := r.protectedErr(branch); err != nil {
 		return err
 	}
-	path, err := safeRelPath(path)
+	path, err = safeRelPath(path)
 	if err != nil {
 		return err
 	}
@@ -253,7 +268,10 @@ func (r *Repo) DeleteFile(branch, path string) error {
 // Commit stages and commits worktree changes. The logged-in user is the
 // author and committer; the service identity lands as a Co-authored-by trailer.
 func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []string) (string, error) {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return "", err
+	}
 	if err := r.protectedErr(branch); err != nil {
 		return "", err
 	}

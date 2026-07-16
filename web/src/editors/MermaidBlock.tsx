@@ -4,6 +4,7 @@
 // Non-mermaid code blocks keep a plain editable pre/code view.
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
 import type { EditorView as PMView, NodeView } from '@milkdown/kit/prose/view';
+import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 
 let seq = 0;
@@ -23,7 +24,9 @@ async function renderInto(el: HTMLElement, code: string, errText = 'mermaid: syn
   try {
     initMermaid();
     const { svg } = await mermaid.render('mmdv-' + ++seq, code);
-    el.innerHTML = svg;
+    // diagram source is collaborative document content — strip anything
+    // executable from the rendered SVG (foreignObject carries html labels)
+    el.innerHTML = DOMPurify.sanitize(svg, { ADD_TAGS: ['foreignObject'] });
     const svgEl = el.querySelector('svg');
     if (svgEl) svgEl.style.backgroundColor = 'transparent';
     return true;

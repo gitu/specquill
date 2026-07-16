@@ -87,11 +87,18 @@ func (r *Repo) CreateBranch(name, from string) error {
 	if !r.Writable() {
 		return fmt.Errorf("repo %s is read-only", r.Cfg.ID)
 	}
+	if _, err := r.resolveRef(name); err != nil {
+		return err
+	}
+	from, err := r.resolveRef(from)
+	if err != nil {
+		return err
+	}
 	if r.BranchExists(name) {
 		return fmt.Errorf("branch %q already exists", name)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, err := run(r.gitDir, nil, "branch", name, r.ResolveRef(from))
+	_, err = run(r.gitDir, nil, "branch", "--", name, from)
 	return err
 }
