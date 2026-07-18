@@ -40,6 +40,12 @@ func (s *Server) getRaw(w http.ResponseWriter, r *http.Request, repo *project.Pr
 		return
 	}
 	w.Header().Set("Content-Type", ct)
+	// raw blobs are member-authored repo content served same-origin: the
+	// sandbox CSP keeps a directly-opened SVG from running scripts with the
+	// viewer's session (embedding via <img> is unaffected), nosniff pins
+	// the declared type
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("ETag", `"`+sha+`"`)
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	if match := r.Header.Get("If-None-Match"); match == `"`+sha+`"` {
