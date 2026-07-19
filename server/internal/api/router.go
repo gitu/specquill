@@ -13,6 +13,7 @@ import (
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
@@ -31,8 +32,8 @@ type Server struct {
 	github   *auth.GitHub
 	ghApp    *githubapp.App // nil unless github_app: is configured
 	ghRoles  *roleCache     // TTL cache of github permission→role lookups
-	ai       *ai.Client  // nil when disabled
-	bus      *events.Bus // nil-safe
+	ai       *ai.Client     // nil when disabled
+	bus      *events.Bus    // nil-safe
 	hub      *collab.Hub
 	devUser  *store.User
 	srcCache *srcCache        // grounding source snapshots, keyed by repo key + head SHA
@@ -40,17 +41,17 @@ type Server struct {
 }
 
 type Options struct {
-	Store    *store.Store
-	Sessions *auth.Sessions
+	Store     *store.Store
+	Sessions  *auth.Sessions
 	OIDC      *auth.OIDC     // nil when disabled
 	GitHub    *auth.GitHub   // nil when disabled
 	GitHubApp *githubapp.App // nil unless github_app: is configured
-	AI       *ai.Client  // nil when disabled
-	Bus      *events.Bus // nil-safe
-	Hub      *collab.Hub
-	Importer *importer.Runner // nil when no non-git sources are configured
-	Dist     fs.FS
-	Dev      bool
+	AI        *ai.Client     // nil when disabled
+	Bus       *events.Bus    // nil-safe
+	Hub       *collab.Hub
+	Importer  *importer.Runner // nil when no non-git sources are configured
+	Dist      fs.FS
+	Dev       bool
 }
 
 func (s *Server) publish(kind, repo, branch string) {
@@ -79,17 +80,17 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/me", s.me)
 	apiMux.HandleFunc("GET /api/repos", s.listRepos)
 	apiMux.HandleFunc("GET /api/projects", s.listProjects)
-	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
-	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
-	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
-	apiMux.HandleFunc("GET /api/members", s.roleH("admin", s.listMembers))
-	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.roleH("admin", s.listGrants))
-	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH("admin", s.createGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH("admin", s.deleteGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH("admin", s.deleteGrantInvite))
-	apiMux.HandleFunc("GET /api/github/repos", s.roleH("admin", s.listGitHubRepos))
-	apiMux.HandleFunc("POST /api/github/repos", s.roleH("admin", s.addGitHubRepo))
-	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH("admin", s.removeGitHubRepo))
+	apiMux.HandleFunc("POST /api/projects", s.roleH(authz.Admin, s.createProject))
+	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH(authz.Admin, s.deleteProject))
+	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH(authz.Editor, s.syncSource))
+	apiMux.HandleFunc("GET /api/members", s.roleH(authz.Admin, s.listMembers))
+	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.repoAdminH(s.listGrants))
+	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.repoAdminH(s.createGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.repoAdminH(s.deleteGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.repoAdminH(s.deleteGrantInvite))
+	apiMux.HandleFunc("GET /api/github/repos", s.roleH(authz.Admin, s.listGitHubRepos))
+	apiMux.HandleFunc("POST /api/github/repos", s.roleH(authz.Admin, s.addGitHubRepo))
+	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH(authz.Admin, s.removeGitHubRepo))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
@@ -161,7 +162,7 @@ func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Proje
 		}
 		u := auth.UserFrom(r.Context())
 		role := s.effectiveRepoRole(u, t, repo.Repo.Cfg.ID)
-		if roleRank[role] < roleRank["viewer"] {
+		if role < authz.Viewer {
 			jsonError2(w, http.StatusForbidden, "no access to repo "+repo.ID, "repo_forbidden")
 			return
 		}

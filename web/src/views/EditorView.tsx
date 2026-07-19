@@ -68,7 +68,7 @@ export function EditorView() {
   const roMatch = raw0.match(/^~([\w-]+)\/(.+)$/);
   // read-only: reference-repo documents, and viewers (per-repo role) — the
   // server refuses their writes anyway, the chrome just degrades to match
-  const readOnly = !!roMatch || app.repoRole === 'viewer';
+  const readOnly = !!roMatch || !app.canEdit;
   const fileRepo = roMatch ? roMatch[1] : app.repoId;
   const fileRef = roMatch ? '' : app.branch;
   const path = roMatch ? roMatch[2] : raw0;

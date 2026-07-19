@@ -12,15 +12,16 @@ import (
 	"time"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/config"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
-// roleH gates a handler on a minimum tenant role (viewer < member < admin).
-func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
-	rank := map[string]int{"viewer": 0, "member": 1, "admin": 2}
+// roleH gates a handler on a minimum TENANT role (the authz ladder applied
+// to tenant_members — tenant management, not per-repo access).
+func (s *Server) roleH(minRole authz.Role, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		t, ok := s.tenant(w, r)
 		if !ok {
@@ -28,8 +29,8 @@ func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
 		}
 		u := auth.UserFrom(r.Context())
 		role, err := s.store.MemberRole(t.ID, u.ID)
-		if err != nil || rank[role] < rank[minRole] {
-			jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+		if err != nil || authz.Parse(role) < minRole {
+			jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
 			return
 		}
 		h(w, r)
@@ -95,7 +96,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/sources/{name}/sync — re-import a granted, importer-backed source
-// now. Member-gated and grant-gated: a tenant can only trigger a source it has
+// now. Editor-gated and grant-gated: a tenant can only trigger a source it has
 // been granted (stage 2). Returns the fresh import status.
 func (s *Server) syncSource(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.tenant(w, r)

@@ -15,7 +15,7 @@ import (
 type RepoGrant struct {
 	RepoID    string `json:"repo"`
 	UserID    int64  `json:"userId"`
-	Role      string `json:"role"` // viewer | member
+	Role      string `json:"role"` // viewer | editor | maintainer | admin
 	Name      string `json:"name"`
 	Email     string `json:"email"`
 	Login     string `json:"login,omitempty"`

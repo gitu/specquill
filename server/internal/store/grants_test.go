@@ -34,16 +34,16 @@ func TestRepoGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	// upsert re-roles
-	if err := st.UpsertRepoGrant(ten.ID, "specs", u.ID, "member", 0); err != nil {
+	if err := st.UpsertRepoGrant(ten.ID, "specs", u.ID, "editor", 0); err != nil {
 		t.Fatal(err)
 	}
-	if role, err := st.RepoGrantRole(ten.ID, "specs", u.ID); err != nil || role != "member" {
+	if role, err := st.RepoGrantRole(ten.ID, "specs", u.ID); err != nil || role != "editor" {
 		t.Fatalf("grant role: %v %q", err, role)
 	}
-	if m, err := st.UserRepoGrants(ten.ID, u.ID); err != nil || len(m) != 1 || m["specs"] != "member" {
+	if m, err := st.UserRepoGrants(ten.ID, u.ID); err != nil || len(m) != 1 || m["specs"] != "editor" {
 		t.Fatalf("UserRepoGrants: %v %v", err, m)
 	}
-	if gs, err := st.RepoGrants(ten.ID, "specs"); err != nil || len(gs) != 1 || gs[0].Email != "Eve@Partner.Test" || gs[0].Role != "member" {
+	if gs, err := st.RepoGrants(ten.ID, "specs"); err != nil || len(gs) != 1 || gs[0].Email != "Eve@Partner.Test" || gs[0].Role != "editor" {
 		t.Fatalf("RepoGrants: %v %+v", err, gs)
 	}
 
@@ -83,7 +83,7 @@ func TestRepoGrants(t *testing.T) {
 func TestGrantInvites(t *testing.T) {
 	st, ten, admin := grantFixture(t)
 
-	if err := st.AddGrantInvite(ten.ID, "specs", "email", "New.Person@Partner.Test", "member", admin.ID); err != nil {
+	if err := st.AddGrantInvite(ten.ID, "specs", "email", "New.Person@Partner.Test", "editor", admin.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddGrantInvite(ten.ID, "regs", "github", "OctoCat", "viewer", admin.ID); err != nil {
@@ -101,7 +101,7 @@ func TestGrantInvites(t *testing.T) {
 	if err := st.ClaimGrantInvites(u.ID, "New.Person@Partner.Test", ""); err != nil {
 		t.Fatal(err)
 	}
-	if role, err := st.RepoGrantRole(ten.ID, "specs", u.ID); err != nil || role != "member" {
+	if role, err := st.RepoGrantRole(ten.ID, "specs", u.ID); err != nil || role != "editor" {
 		t.Fatalf("claimed grant: %v %q", err, role)
 	}
 	if vs, _ := st.RepoGrantInvites(ten.ID, "specs"); len(vs) != 0 {
@@ -134,13 +134,13 @@ func TestGrantInvites(t *testing.T) {
 	if err := st.AddGrantInvite(ten.ID, "regs", "github", "octocat", "viewer", admin.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRepoGrant(ten.ID, "regs", gh.ID, "member", admin.ID); err != nil {
+	if err := st.UpsertRepoGrant(ten.ID, "regs", gh.ID, "editor", admin.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ClaimGrantInvites(gh.ID, "octo@cat.test", "octocat"); err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := st.RepoGrantRole(ten.ID, "regs", gh.ID); role != "member" {
+	if role, _ := st.RepoGrantRole(ten.ID, "regs", gh.ID); role != "editor" {
 		t.Fatalf("claim downgraded an existing grant to %q", role)
 	}
 }

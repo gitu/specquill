@@ -13,8 +13,10 @@ import (
 // the URL (the LLM copy-paste use case). Rotation and revocation kill old
 // links immediately.
 func TestShareLinkLifecycle(t *testing.T) {
-	h, _, _ := testGroundingServer(t)
+	h, st, _ := testGroundingServer(t)
 	cookie := login(t, h)
+	// minting is maintainer-gated (REQ-021) — promote the enrolled editor
+	promoteTenantRole(t, st, "flo@test.local", "maintainer")
 
 	// no link yet
 	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/share", nil)

@@ -3,7 +3,9 @@ package api
 // Share links: an unauthenticated download of the project's OKF bundle as a
 // zip — the secret token in the URL is the only credential, so the link can
 // be pasted straight into an LLM chat or fetched by an agent. Minting and
-// revoking require a session (member role); downloads do not.
+// revoking require the maintainer role (REQ-021: exporting protected-branch
+// content to an unauthenticated URL is a protected-content decision);
+// downloads do not.
 
 import (
 	"crypto/rand"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
@@ -43,7 +46,7 @@ func shareResp(l *store.ShareLink) map[string]any {
 // shareAccess resolves the tenant + project of {repo} and gates on the
 // effective per-repo role (share links are repo-scoped, so tenant-level
 // roleH would wrongly deny grant-only members).
-func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole string) (*store.Tenant, bool) {
+func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) (*store.Tenant, bool) {
 	t, ok := s.tenant(w, r)
 	if !ok {
 		return nil, false
@@ -55,8 +58,8 @@ func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole str
 		return nil, false
 	}
 	u := auth.UserFrom(r.Context())
-	if roleRank[s.effectiveRepoRole(u, t, p.Repo.Cfg.ID)] < roleRank[minRole] {
-		jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+	if s.effectiveRepoRole(u, t, p.Repo.Cfg.ID) < minRole {
+		jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
 		return nil, false
 	}
 	return t, true
@@ -64,7 +67,7 @@ func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole str
 
 // GET /api/repos/{repo}/share — the project's current share link, if any.
 func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, "viewer")
+	t, ok := s.shareAccess(w, r, authz.Viewer)
 	if !ok {
 		return
 	}
@@ -78,7 +81,7 @@ func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/repos/{repo}/share — mint (or rotate) the share token.
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, "member")
+	t, ok := s.shareAccess(w, r, authz.Maintainer)
 	if !ok {
 		return
 	}
@@ -104,7 +107,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/share — revoke the link.
 func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, "member")
+	t, ok := s.shareAccess(w, r, authz.Maintainer)
 	if !ok {
 		return
 	}

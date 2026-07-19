@@ -57,7 +57,7 @@ func TestTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.EnsureMember(acme.ID, u.ID, "member"); err != nil {
+	if err := st.EnsureMember(acme.ID, u.ID, "editor"); err != nil {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequest("GET", "/api/repos/specs/tree", nil)

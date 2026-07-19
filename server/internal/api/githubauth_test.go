@@ -190,7 +190,7 @@ func TestGitHubLoginMemberRole(t *testing.T) {
 		Tenants []struct{ Role string } `json:"tenants"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &me)
-	if len(me.Tenants) != 1 || me.Tenants[0].Role != "member" {
-		t.Fatalf("expected plain member enrollment, got %+v", me.Tenants)
+	if len(me.Tenants) != 1 || me.Tenants[0].Role != "editor" {
+		t.Fatalf("expected plain editor enrollment, got %+v", me.Tenants)
 	}
 }

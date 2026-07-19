@@ -31,7 +31,7 @@ type TenantRepo struct {
 
 type Membership struct {
 	Tenant Tenant `json:"tenant"`
-	Role   string `json:"role"` // admin | member | viewer
+	Role   string `json:"role"` // admin | maintainer | editor | viewer
 	// GrantOnly marks a synthetic membership: no tenant_members row, the
 	// user only holds per-repo grants in this tenant (REQ-020).
 	GrantOnly bool `json:"grantOnly,omitempty"`

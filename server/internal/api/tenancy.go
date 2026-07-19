@@ -83,7 +83,7 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 
 // memberships returns the user's tenants, auto-enrolling first-time users
 // into the default config tenant when one exists — with the role from
-// auth.default_role (member unless configured; none disables auto-enroll,
+// auth.default_role (editor unless configured; none disables auto-enroll,
 // leaving access to explicit per-repo grants). Users whose email is in
 // auth.admin_emails are promoted to admin there — the bootstrap for a fresh
 // deployment, where otherwise nobody could reach the management API.
@@ -110,7 +110,7 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 		}
 		role := s.cfg.Auth.DefaultRole
 		if role == "" {
-			role = "member"
+			role = "editor"
 		}
 		if s.isConfiguredAdmin(u.Email) {
 			role = "admin" // default_role: none must not lock the bootstrap admin out

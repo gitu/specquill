@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
@@ -247,6 +248,13 @@ func (s *Server) mergePR(w http.ResponseWriter, r *http.Request, repo *project.P
 	}
 	if pr.State != "open" {
 		jsonError(w, http.StatusConflict, "PR is "+pr.State)
+		return
+	}
+	// merging into a protected branch is the maintainer rung (REQ-021.2):
+	// approval and merge are distinct capabilities — writableH already
+	// admitted editors, so gate the protected target here
+	if repo.Cfg.IsProtected(pr.TargetBranch) && repoRoleFrom(r.Context()) < authz.Maintainer {
+		jsonError2(w, http.StatusForbidden, "merging into protected branch "+pr.TargetBranch+" requires maintainer role", "role_forbidden")
 		return
 	}
 	var body struct{ Strategy string }
