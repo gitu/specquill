@@ -270,12 +270,18 @@ func (r *Repo) BranchExists(branch string) bool {
 	return err == nil
 }
 
-// ResolveRef defaults empty refs to the configured default branch.
+// ResolveRef defaults empty refs to the configured default branch. It is the
+// non-erroring form used for room keys and event strings; it is fail-safe —
+// a syntactically invalid ref collapses to the default branch rather than
+// being handed back verbatim, so a value from here can never carry an
+// injectable ref into git even if a caller forgets that the git methods
+// re-validate through resolveRef.
 func (r *Repo) ResolveRef(ref string) string {
-	if ref == "" {
+	valid, err := r.resolveRef(ref)
+	if err != nil {
 		return r.Cfg.DefaultBranch
 	}
-	return ref
+	return valid
 }
 
 // refRe constrains refs to what specquill deals in — branch names, tags and

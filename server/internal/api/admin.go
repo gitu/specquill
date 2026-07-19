@@ -38,6 +38,15 @@ func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
+// tokenEnvRe allowlists the env-var names the tenant API may point git
+// credentials at. Without it, a tenant admin could name any host env var
+// (e.g. DATABASE_URL) as tokenEnv and pair it with an attacker-controlled
+// remote to exfiltrate it via git's credential helper. Operators who set
+// token_env in the server YAML are unaffected — that path never comes
+// through here — but must name git-token vars with the SPECQUILL_ prefix
+// to expose them to the API.
+var tokenEnvRe = regexp.MustCompile(`^SPECQUILL_[A-Z0-9_]+$`)
+
 type projectInfo struct {
 	ID            string                       `json:"id"`
 	ContentRoot   string                       `json:"contentRoot,omitempty"`
@@ -163,6 +172,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	// (e.g. --upload-pack executes commands) — refuse it outright
 	if strings.HasPrefix(body.Remote, "-") {
 		jsonError(w, http.StatusBadRequest, "invalid remote")
+		return
+	}
+	if body.TokenEnv != "" && !tokenEnvRe.MatchString(body.TokenEnv) {
+		jsonError(w, http.StatusBadRequest, "tokenEnv must be a SPECQUILL_-prefixed env var name")
 		return
 	}
 	if _, err := s.store.TenantProject(t.ID, body.ID); err == nil {

@@ -61,6 +61,17 @@ func TestProjectManagementAndRoles(t *testing.T) {
 		t.Fatalf("new project branches: %d", code)
 	}
 
+	// a tokenEnv naming a non-SPECQUILL_ host env var is refused: otherwise an
+	// admin could exfiltrate it to their remote via git's credential helper
+	code, out = doJSON(t, h, cookie, "POST", "/api/projects",
+		map[string]string{"id": "p3", "remote": src, "tokenEnv": "DATABASE_URL"})
+	if code != http.StatusBadRequest {
+		t.Fatalf("foreign tokenEnv: want 400, got %d %v", code, out)
+	}
+	if _, ok := git.Repo("default/p3"); ok {
+		t.Fatal("project with a rejected tokenEnv must not be created")
+	}
+
 	// config-managed projects refuse deletion
 	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
 		t.Fatal(err)

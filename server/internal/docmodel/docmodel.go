@@ -187,6 +187,13 @@ func resolve(dir, rel string) string {
 // driver refs (prose like "Ops T+1 SLA") and #anchors are ignored.
 func BrokenLinks(root string, docs []Doc) []string {
 	exists := func(rel string) bool {
+		// collapse any ".." in the link target so a crafted reference can
+		// never Stat outside the workspace root (this is CLI-only code, but
+		// the guard keeps the traversal shut if it is ever reused server-side)
+		rel = resolve("", rel)
+		if rel == "" {
+			return false
+		}
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 		return err == nil
 	}
