@@ -77,8 +77,9 @@ func (s *Server) githubRepoRole(t *store.Tenant, u *store.User, repoID, fallback
 		return fallback
 	}
 	if tr.GhFullName == "" {
-		// not backed by a GitHub repository — nothing to derive from
-		return ""
+		// not backed by a GitHub repository (missing metadata, not a revoke
+		// signal) — keep the tenant role, like any other failed lookup
+		return fallback
 	}
 	perm, err := s.ghApp.Permission(t.Installation, tr.GhFullName, login)
 	if err != nil {

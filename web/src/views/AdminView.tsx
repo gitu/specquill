@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
-import { api, RepoInfo } from '../api/client';
+import { api, ApiError, RepoInfo } from '../api/client';
 import { useRepos } from '../api/hooks';
 
 interface ProjectRow {
@@ -145,7 +145,14 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
     onSuccess: invalidate,
     onError: (e) => onError(String((e as Error).message || e)),
   });
-  if (!members.data) return null; // not an admin
+  if (members.error && !(members.error instanceof ApiError && members.error.status === 403)) {
+    return (
+      <div style={sx('margin-top:22px;padding:12px 14px;border:1px solid var(--border);border-radius:11px;background:var(--surface);font-size:12px;color:var(--del)')}>
+        Failed to load members: {String((members.error as Error).message || members.error)}
+      </div>
+    );
+  }
+  if (!members.data) return null; // 403 (not an admin) or still loading
   const roleChip = (role: string) =>
     'font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
     (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'member' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');

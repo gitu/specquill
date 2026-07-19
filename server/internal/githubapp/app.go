@@ -177,7 +177,7 @@ func (a *App) Permission(installationID int64, fullName, login string) (string, 
 	err = a.call("GET", "/repos/"+fullName+"/collaborators/"+login+"/permission", tok, &out)
 	if err != nil {
 		// 404 = not a collaborator at all
-		if strings.Contains(err.Error(), "status 404") {
+		if strings.HasPrefix(err.Error(), "status 404") {
 			return "none", nil
 		}
 		return "", fmt.Errorf("permission %s on %s: %w", login, fullName, err)
@@ -214,7 +214,7 @@ func (a *App) RepoInstallation(fullName string) (int64, error) {
 	}
 	err = a.call("GET", "/repos/"+fullName+"/installation", jwt, &out)
 	if err != nil {
-		if strings.Contains(err.Error(), "status 404") {
+		if strings.HasPrefix(err.Error(), "status 404") {
 			a.mu.Lock()
 			a.repoIn[key] = repoInst{id: 0, expires: time.Now().Add(5 * time.Minute)}
 			a.mu.Unlock()

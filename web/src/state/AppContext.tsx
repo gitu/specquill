@@ -215,7 +215,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       protectedBranches,
       isProtectedBranch: protectedBranches.includes(effBranch),
-      repoRole: writable?.role || 'member',
+      // least privilege until the repo list answers — write chrome must not
+      // flash for viewers; 'member' only as backcompat when role is absent
+      repoRole: writable ? writable.role || 'member' : 'viewer',
       theme,
       themeMode,
       systemTheme,
