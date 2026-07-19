@@ -107,7 +107,11 @@ export function AdminView() {
 
         <GitHubReposPanel onError={setError} />
         <CredentialsPanel onError={setError} />
-        <AccessPanel projects={(projects.data || []).map((p) => p.id)} sources={sources.map((s) => s.id)} onError={setError} />
+        <AccessPanel
+          projects={(repos.data || []).filter((r) => r.kind === 'project' && r.role === 'admin').map((r) => r.id)}
+          sources={sources.filter((s) => s.role === 'admin').map((s) => s.id)}
+          onError={setError}
+        />
       </div>
     </div>
   );
@@ -168,11 +172,12 @@ function CredentialsPanel({ onError }: { onError: (m: string) => void }) {
   );
 }
 
-// AccessPanel — tenant members plus per-repo grants (REQ-020): grant a user
-// (by email or GitHub login) viewer/member access to a single repository,
-// beyond or without their git-host permission. Unknown identities become
-// pending invites claimed on first login. Renders nothing for non-admins
-// (the members request 403s).
+// AccessPanel — tenant members plus per-repo grants (REQ-020/REQ-021.4).
+// The two sections gate independently: the Members list needs the tenant
+// admin role (/api/members 403s otherwise), while Repository access renders
+// for every repo the caller holds the repo admin role on — the props carry
+// only those, so a repo admin without tenant admin still manages grants.
+// Renders nothing when the caller administers neither.
 function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
   const tenant = useTenant();
   const qc = useQueryClient();
@@ -189,7 +194,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
   const grants = useQuery({
     queryKey: ['t', tenant, 'grants', active],
     queryFn: () => api<{ grants: Grant[]; invites: Invite[] }>(`/api/repos/${active}/grants`),
-    enabled: !!active && !!members.data,
+    enabled: !!active,
     retry: false,
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['t', tenant, 'grants', active] });
@@ -220,7 +225,9 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
       </div>
     );
   }
-  if (!members.data) return null; // 403 (not an admin) or still loading
+  // tenant admins see both sections; repo admins see Repository access for
+  // their repos; everyone else sees nothing
+  if (!members.data && repos.length === 0) return null;
   const roleChip = (role: string) =>
     'font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
     (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'maintainer' ? 'background:var(--prod-bg);color:var(--prod)' : role === 'editor' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
@@ -228,21 +235,24 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
   const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
   return (
     <>
-      <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
-        <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Members</div>
-        {members.data.map((m) => (
-          <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
-            <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
-            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.login ? '@' + m.login : m.email}</span>
-            <span style={sx('flex:1')} />
-            <span style={sx(roleChip(m.role))}>{m.role}</span>
-          </div>
-        ))}
-        {members.data.length === 0 && (
-          <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>No members yet.</div>
-        )}
-      </div>
+      {members.data && (
+        <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+          <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Members</div>
+          {members.data.map((m) => (
+            <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+              <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.login ? '@' + m.login : m.email}</span>
+              <span style={sx('flex:1')} />
+              <span style={sx(roleChip(m.role))}>{m.role}</span>
+            </div>
+          ))}
+          {members.data.length === 0 && (
+            <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>No members yet.</div>
+          )}
+        </div>
+      )}
 
+      {repos.length > 0 && (
       <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
         <div style={sx("display:flex;align-items:center;gap:10px;padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)")}>
           <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Repository access</span>
@@ -292,6 +302,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
           {notice && <div style={sx('flex-basis:100%;font-size:11.5px;color:var(--text-2)')}>{notice}</div>}
         </form>
       </div>
+      )}
     </>
   );
 }
