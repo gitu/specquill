@@ -69,6 +69,13 @@ func newGHAppFixture(t *testing.T, cloneURL string) *ghAppFixture {
 }
 
 func ghAppTestServer(t *testing.T) (http.Handler, *ghAppFixture, string) {
+	h, fx, work, _, _ := ghAppTestServerFull(t)
+	return h, fx, work
+}
+
+// ghAppTestServerFull also exposes the store and git manager (grant tests
+// adopt repos directly instead of through the admin-gated picker).
+func ghAppTestServerFull(t *testing.T) (http.Handler, *ghAppFixture, string, *store.Store, *gitx.Manager) {
 	t.Helper()
 	tmp := t.TempDir()
 
@@ -143,7 +150,7 @@ func ghAppTestServer(t *testing.T) (http.Handler, *ghAppFixture, string) {
 		GitHubApp: app,
 		Dist:      fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
-	return h, fx, work
+	return h, fx, work, st, git
 }
 
 func tenantReq(t *testing.T, h http.Handler, cookie *http.Cookie, method, url, tenant string, body any) (int, string) {

@@ -89,6 +89,7 @@ export interface RepoInfo {
   defaultBranch: string;
   protectedBranches: string[];
   syncedAt?: string;
+  role?: 'viewer' | 'member' | 'admin'; // the caller's effective role on this repo
 }
 export interface Branch { name: string; head: string; isDefault: boolean; ahead: number; behind: number }
 export interface FileResp { content: string; sha: string }

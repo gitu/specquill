@@ -40,9 +40,31 @@ func shareResp(l *store.ShareLink) map[string]any {
 	}
 }
 
+// shareAccess resolves the tenant + project of {repo} and gates on the
+// effective per-repo role (share links are repo-scoped, so tenant-level
+// roleH would wrongly deny grant-only members).
+func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole string) (*store.Tenant, bool) {
+	t, ok := s.tenant(w, r)
+	if !ok {
+		return nil, false
+	}
+	id := r.PathValue("repo")
+	p, ok := s.projectByID(t, id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "unknown project "+id)
+		return nil, false
+	}
+	u := auth.UserFrom(r.Context())
+	if roleRank[s.effectiveRepoRole(u, t, p.Repo.Cfg.ID)] < roleRank[minRole] {
+		jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+		return nil, false
+	}
+	return t, true
+}
+
 // GET /api/repos/{repo}/share — the project's current share link, if any.
 func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
+	t, ok := s.shareAccess(w, r, "viewer")
 	if !ok {
 		return
 	}
@@ -56,15 +78,11 @@ func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/repos/{repo}/share — mint (or rotate) the share token.
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
+	t, ok := s.shareAccess(w, r, "member")
 	if !ok {
 		return
 	}
 	id := r.PathValue("repo")
-	if _, ok := s.projectByID(t, id); !ok {
-		jsonError(w, http.StatusNotFound, "unknown project "+id)
-		return
-	}
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -86,7 +104,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/share — revoke the link.
 func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
+	t, ok := s.shareAccess(w, r, "member")
 	if !ok {
 		return
 	}

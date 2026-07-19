@@ -32,6 +32,9 @@ type TenantRepo struct {
 type Membership struct {
 	Tenant Tenant `json:"tenant"`
 	Role   string `json:"role"` // admin | member | viewer
+	// GrantOnly marks a synthetic membership: no tenant_members row, the
+	// user only holds per-repo grants in this tenant (REQ-020).
+	GrantOnly bool `json:"grantOnly,omitempty"`
 }
 
 // EnsureTenant upserts a tenant by slug and returns it.
@@ -99,10 +102,17 @@ func (s *Store) MemberRole(tenantID, userID int64) (string, error) {
 }
 
 // Memberships lists a user's tenants (stable order: oldest tenant first).
+// Tenants where the user only holds per-repo grants (REQ-020) appear with a
+// synthetic 'viewer' tenant role: no member row is materialized, so a role
+// sync can never revoke grant-only visibility.
 func (s *Store) Memberships(userID int64) ([]Membership, error) {
-	rows, err := s.query(`SELECT t.id, t.slug, t.provider, COALESCE(t.installation_id, 0), t.display_name, m.role
-		FROM tenant_members m JOIN tenants t ON t.id = m.tenant_id
-		WHERE m.user_id = ? ORDER BY t.id`, userID)
+	rows, err := s.query(`SELECT t.id, t.slug, t.provider, COALESCE(t.installation_id, 0), t.display_name,
+			COALESCE(m.role, 'viewer'), m.role IS NULL
+		FROM tenants t
+		LEFT JOIN tenant_members m ON m.tenant_id = t.id AND m.user_id = ?
+		WHERE m.user_id IS NOT NULL
+		   OR EXISTS (SELECT 1 FROM repo_grants g WHERE g.tenant_id = t.id AND g.user_id = ?)
+		ORDER BY t.id`, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +121,7 @@ func (s *Store) Memberships(userID int64) ([]Membership, error) {
 	for rows.Next() {
 		var m Membership
 		if err := rows.Scan(&m.Tenant.ID, &m.Tenant.Slug, &m.Tenant.Provider, &m.Tenant.Installation,
-			&m.Tenant.DisplayName, &m.Role); err != nil {
+			&m.Tenant.DisplayName, &m.Role, &m.GrantOnly); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -170,6 +180,18 @@ func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// TenantRepo reads one repo row (per-repo role derivation needs gh_full_name).
+func (s *Store) TenantRepo(tenantID int64, repoID string) (*TenantRepo, error) {
+	r := &TenantRepo{}
+	err := s.queryRow(`SELECT tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by
+		FROM tenant_repos WHERE tenant_id = ? AND repo_id = ?`, tenantID, repoID).
+		Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.GhFullName, &r.ManagedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return r, err
 }
 
 // UpsertTenantRepo registers/updates a single repo row (runtime AddRepo path;

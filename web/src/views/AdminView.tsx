@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
-import { api, RepoInfo } from '../api/client';
+import { api, ApiError, RepoInfo } from '../api/client';
 import { useRepos } from '../api/hooks';
 
 interface ProjectRow {
@@ -95,8 +95,134 @@ export function AdminView() {
         )}
 
         <GitHubReposPanel onError={setError} />
+        <AccessPanel projects={(projects.data || []).map((p) => p.id)} sources={sources.map((s) => s.id)} onError={setError} />
       </div>
     </div>
+  );
+}
+
+// AccessPanel — tenant members plus per-repo grants (REQ-020): grant a user
+// (by email or GitHub login) viewer/member access to a single repository,
+// beyond or without their git-host permission. Unknown identities become
+// pending invites claimed on first login. Renders nothing for non-admins
+// (the members request 403s).
+function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
+  const qc = useQueryClient();
+  interface Member { userId: number; role: string; name: string; email: string; login?: string; provider: string }
+  interface Grant { repo: string; userId: number; role: string; name: string; email: string; login?: string }
+  interface Invite { id: number; repo: string; kind: string; matcher: string; role: string }
+  const repos = [...projects, ...sources];
+  const [repo, setRepo] = useState('');
+  const active = repo || repos[0] || '';
+  const [form, setForm] = useState({ user: '', role: 'viewer' });
+  const [notice, setNotice] = useState('');
+
+  const members = useQuery({ queryKey: ['members'], queryFn: () => api<Member[]>('/api/members'), retry: false });
+  const grants = useQuery({
+    queryKey: ['grants', active],
+    queryFn: () => api<{ grants: Grant[]; invites: Invite[] }>(`/api/repos/${active}/grants`),
+    enabled: !!active && !!members.data,
+    retry: false,
+  });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['grants', active] });
+  const add = useMutation({
+    mutationFn: () => api<{ status: string }>(`/api/repos/${active}/grants`, { method: 'POST', body: JSON.stringify(form) }),
+    onSuccess: (r) => {
+      onError('');
+      setNotice(r.status === 'invited' ? `No account for “${form.user}” yet — access is granted on their first login.` : '');
+      setForm({ user: '', role: 'viewer' });
+      invalidate();
+    },
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  const revoke = useMutation({
+    mutationFn: (userId: number) => api(`/api/repos/${active}/grants/${userId}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  const withdraw = useMutation({
+    mutationFn: (id: number) => api(`/api/repos/${active}/grants/invites/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  if (members.error && !(members.error instanceof ApiError && members.error.status === 403)) {
+    return (
+      <div style={sx('margin-top:22px;padding:12px 14px;border:1px solid var(--border);border-radius:11px;background:var(--surface);font-size:12px;color:var(--del)')}>
+        Failed to load members: {String((members.error as Error).message || members.error)}
+      </div>
+    );
+  }
+  if (!members.data) return null; // 403 (not an admin) or still loading
+  const roleChip = (role: string) =>
+    'font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
+    (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'member' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
+  const input = 'height:30px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px';
+  const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
+  return (
+    <>
+      <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+        <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Members</div>
+        {members.data.map((m) => (
+          <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+            <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.login ? '@' + m.login : m.email}</span>
+            <span style={sx('flex:1')} />
+            <span style={sx(roleChip(m.role))}>{m.role}</span>
+          </div>
+        ))}
+        {members.data.length === 0 && (
+          <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>No members yet.</div>
+        )}
+      </div>
+
+      <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+        <div style={sx("display:flex;align-items:center;gap:10px;padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)")}>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Repository access</span>
+          <span style={sx('flex:1')} />
+          <select value={active} onChange={(e) => setRepo(e.target.value)}
+            style={sx("height:24px;padding:0 6px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11px")}>
+            {repos.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        {(grants.data?.grants || []).map((g) => (
+          <div key={g.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+            <span style={sx('font-size:12.5px;font-weight:600')}>{g.name}</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{g.login ? '@' + g.login : g.email}</span>
+            <span style={sx('flex:1')} />
+            <span style={sx(roleChip(g.role))}>{g.role}</span>
+            <button disabled={revoke.isPending} onClick={() => revoke.mutate(g.userId)} style={sx(btn + ';color:var(--del);border-color:var(--reg-line)')}>Revoke</button>
+          </div>
+        ))}
+        {(grants.data?.invites || []).map((v) => (
+          <div key={v.id} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px")}>{v.kind === 'github' ? '@' + v.matcher : v.matcher}</span>
+            <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--surface-2);color:var(--text-3)')}>invited</span>
+            <span style={sx('flex:1')} />
+            <span style={sx(roleChip(v.role))}>{v.role}</span>
+            <button disabled={withdraw.isPending} onClick={() => withdraw.mutate(v.id)} style={sx(btn + ';color:var(--del);border-color:var(--reg-line)')}>Withdraw</button>
+          </div>
+        ))}
+        {grants.data && grants.data.grants.length === 0 && grants.data.invites.length === 0 && (
+          <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)')}>
+            No explicit grants — access to {active || 'this repo'} follows tenant roles.
+          </div>
+        )}
+        <form onSubmit={(e) => { e.preventDefault(); if (form.user.trim()) add.mutate(); }}
+          style={sx('display:flex;gap:8px;align-items:center;padding:12px 14px;flex-wrap:wrap')}>
+          <input required placeholder="email or @github-login" value={form.user}
+            onChange={(e) => setForm({ ...form, user: e.target.value })} style={sx(input + ';flex:1;min-width:200px')} />
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={sx(input + ';width:110px')}>
+            <option value="viewer">viewer</option>
+            <option value="member">member</option>
+          </select>
+          <button type="submit" disabled={add.isPending || !active}
+            style={sx('height:30px;padding:0 14px;border:none;border-radius:7px;background:var(--brand);color:var(--brand-fg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
+            Grant access
+          </button>
+          {notice && <div style={sx('flex-basis:100%;font-size:11.5px;color:var(--text-2)')}>{notice}</div>}
+        </form>
+      </div>
+    </>
   );
 }
 

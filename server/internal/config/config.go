@@ -124,6 +124,11 @@ type AuthConfig struct {
 	// the management API is unreachable.
 	AdminEmails []string `yaml:"admin_emails"`
 	DevUser     *DevUser `yaml:"dev_user"`
+	// DefaultRole is the role every authenticated user is auto-enrolled with
+	// in the default (config) tenant: member (default, self-host semantics),
+	// viewer, or none — with none, users reach only repos explicitly granted
+	// to them (REQ-020, restricted on-prem deployments).
+	DefaultRole string `yaml:"default_role"`
 }
 
 type SessionConfig struct {
@@ -353,6 +358,11 @@ func (c *Config) validate() error {
 	}
 	if !c.Auth.OIDC.Enabled && !c.Auth.GitHub.Enabled && !c.Auth.Local.Enabled {
 		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
+	}
+	switch c.Auth.DefaultRole {
+	case "", "member", "viewer", "none":
+	default:
+		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
 	}
 	if c.Database.URL == "" && c.Database.URLEnv == "" {
 		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")

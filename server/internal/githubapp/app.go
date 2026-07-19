@@ -32,11 +32,17 @@ type App struct {
 	client  *http.Client
 
 	mu     sync.Mutex
-	tokens map[int64]instToken // per-installation, cached
+	tokens map[int64]instToken  // per-installation, cached
+	repoIn map[string]repoInst  // repo full name → covering installation
 }
 
 type instToken struct {
 	token   string
+	expires time.Time
+}
+
+type repoInst struct {
+	id      int64 // 0 = not covered by any installation
 	expires time.Time
 }
 
@@ -75,6 +81,7 @@ func New(cfg config.GitHubAppConfig) (*App, error) {
 		apiBase: strings.TrimRight(base, "/"),
 		client:  &http.Client{Timeout: 15 * time.Second},
 		tokens:  map[int64]instToken{},
+		repoIn:  map[string]repoInst{},
 	}, nil
 }
 
@@ -170,7 +177,7 @@ func (a *App) Permission(installationID int64, fullName, login string) (string, 
 	err = a.call("GET", "/repos/"+fullName+"/collaborators/"+login+"/permission", tok, &out)
 	if err != nil {
 		// 404 = not a collaborator at all
-		if strings.Contains(err.Error(), "status 404") {
+		if strings.HasPrefix(err.Error(), "status 404") {
 			return "none", nil
 		}
 		return "", fmt.Errorf("permission %s on %s: %w", login, fullName, err)
@@ -179,6 +186,71 @@ func (a *App) Permission(installationID int64, fullName, login string) (string, 
 		return "none", nil
 	}
 	return out.Permission, nil
+}
+
+// RepoInstallation resolves which installation of this app covers a
+// repository ("owner/name") — how config-tenant repos ride installation
+// tokens instead of a PAT. Hits are cached for an hour, misses (app not
+// installed on the repo) for 5 minutes; a miss returns ErrNotInstalled so
+// callers can fall back to token_env.
+func (a *App) RepoInstallation(fullName string) (int64, error) {
+	key := strings.ToLower(fullName)
+	a.mu.Lock()
+	if e, ok := a.repoIn[key]; ok && time.Now().Before(e.expires) {
+		a.mu.Unlock()
+		if e.id == 0 {
+			return 0, ErrNotInstalled
+		}
+		return e.id, nil
+	}
+	a.mu.Unlock()
+
+	jwt, err := a.appJWT()
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	err = a.call("GET", "/repos/"+fullName+"/installation", jwt, &out)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "status 404") {
+			a.mu.Lock()
+			a.repoIn[key] = repoInst{id: 0, expires: time.Now().Add(5 * time.Minute)}
+			a.mu.Unlock()
+			return 0, ErrNotInstalled
+		}
+		return 0, fmt.Errorf("repo installation %s: %w", fullName, err)
+	}
+	a.mu.Lock()
+	a.repoIn[key] = repoInst{id: out.ID, expires: time.Now().Add(time.Hour)}
+	a.mu.Unlock()
+	return out.ID, nil
+}
+
+// ErrNotInstalled: the app has no installation covering the repository.
+var ErrNotInstalled = fmt.Errorf("github app: not installed on this repository")
+
+// RepoFromRemote extracts "owner/name" from a github.com remote URL —
+// https or ssh form. Non-GitHub remotes return ok=false (they keep using
+// token_env credentials).
+func RepoFromRemote(remote string) (string, bool) {
+	var path string
+	switch {
+	case strings.HasPrefix(remote, "https://github.com/"):
+		path = strings.TrimPrefix(remote, "https://github.com/")
+	case strings.HasPrefix(remote, "git@github.com:"):
+		path = strings.TrimPrefix(remote, "git@github.com:")
+	case strings.HasPrefix(remote, "ssh://git@github.com/"):
+		path = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	default:
+		return "", false
+	}
+	path = strings.TrimSuffix(strings.TrimSuffix(path, "/"), ".git")
+	if parts := strings.Split(path, "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0] + "/" + parts[1], true
+	}
+	return "", false
 }
 
 func (a *App) call(method, path, bearer string, out any) error {

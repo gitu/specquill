@@ -1,14 +1,15 @@
 ---
 type: Specification
-title: Tenants — GitHub App installations, derived roles
+title: Tenants — GitHub App installations, derived roles, repo grants
 status: in_review
-satisfies: [requirements/REQ-019.md]
-updated: 2026-07-15
+satisfies: [requirements/REQ-019.md, requirements/REQ-020.md]
+updated: 2026-07-16
 ---
 
-# Tenants — GitHub App installations, derived roles
+# Tenants — GitHub App installations, derived roles, repo grants
 
-How [REQ-019](../requirements/REQ-019.md) is realized; the full design
+How [REQ-019](../requirements/REQ-019.md) and
+[REQ-020](../requirements/REQ-020.md) are realized; the full design
 reference is [multi-tenancy.md](multi-tenancy.md).
 
 ## Lifecycle
@@ -23,15 +24,36 @@ code paths and stays first-class.
 
 ## Derived authorization
 
-No SpecQuill ACLs. On login (and on a 5-minute cache TTL), the user's role
-in each github tenant is computed as the **maximum repo permission** across
-the tenant's adopted repos: `admin` → admin, `write`/`maintain` → member,
-`read`/`triage` → viewer, none anywhere → no membership. A fresh
+Authorization is derived from GitHub by default; explicit per-repo grants
+(below) are the one escape hatch. On login (and on a 5-minute cache TTL),
+the user's role in each github tenant is computed as the **maximum repo
+permission** across the tenant's adopted repos: `admin` → admin,
+`write`/`maintain` → member, `read`/`triage` → viewer, none anywhere → no
+membership. This tenant-level role gates tenant management; **repo access
+is derived per repository** (same mapping, cached per `tenant:login:repo`)
+— write on one repo no longer implies write on its siblings. A fresh
 installation with no adopted repos falls back to the installation's
 candidate repositories — that is how the org admin becomes tenant admin and
 reaches the repo picker at all. Permission-lookup failures keep existing
-memberships (GitHub being down must not lock users out); revocation happens
-where admins already do it — on GitHub.
+memberships and fall back to the tenant role per repo (GitHub being down
+must not lock users out); revocation happens where admins already do it —
+on GitHub.
+
+## Explicit repo grants (REQ-020)
+
+`repo_grants` rows — (tenant, repo, user) → `viewer` | `member` — are the
+app-side layer for users the git host doesn't know or under-privileges: an
+external reviewer scoped to one repo, an on-prem user without git-host
+access, a git-read-only user who edits through the app (the server pushes
+with its own credentials, so this gate is the effective one). The effective
+role on a repo is **max(derived, granted)**; role syncs never touch grants,
+so a GitHub revocation cannot drop one. Grant-only users see the tenant and
+exactly their granted repos, and stay out of tenant management. Every
+mutation route requires `member` on the repo; `viewer` reads and comments.
+Granting an unknown identity (email or GitHub login) leaves a pending
+invite, converted to a grant on the invitee's first login. Admins manage
+grants and invites in the Admin view's access panel
+(`/api/repos/{repo}/grants`, `/api/members`).
 
 ## Repo adoption
 

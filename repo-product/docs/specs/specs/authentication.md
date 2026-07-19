@@ -2,8 +2,8 @@
 type: Specification
 title: Authentication — providers, access gate, tenant roles
 status: in_review
-satisfies: [requirements/REQ-017.md]
-updated: 2026-07-14
+satisfies: [requirements/REQ-017.md, requirements/REQ-020.md]
+updated: 2026-07-16
 ---
 
 # Authentication — providers, access gate, tenant roles
@@ -40,15 +40,25 @@ decision on a public URL.
 ## Tenant roles and the admin bootstrap
 
 Every authenticated user is auto-enrolled into the built-in `default`
-tenant as **member** (self-host semantics). Roles are per-tenant:
-`viewer < member < admin`; the management API (projects, sources, grants)
-requires admin.
+tenant with the role from **`auth.default_role`**: `member` (the default —
+self-host semantics), `viewer`, or `none`. With `none`, users have no
+tenant until an admin grants them a repository ([REQ-020](
+../requirements/REQ-020.md)) — the restricted mode for on-prem deployments
+where, say, a GitLab-hosted spec repo is opened to a user without any
+git-host account. Roles are per-tenant (`viewer < member < admin`) with
+per-repo grants layered on top; the management API (projects, sources,
+grants) requires admin.
 
 `auth.admin_emails` is the bootstrap: users whose email matches
 (case-insensitive, any provider) are promoted to admin in config-provider
-tenants on login. Without it a fresh deployment would consist of members
-only, with no path to the management API.
+tenants on login — including under `default_role: none`, so a fresh
+restricted deployment still has a reachable management API.
 
-The future GitHub App edge (one tenant per installation, roles derived from
-GitHub repo permissions) replaces this static mapping for github-provider
-tenants; the config tenant keeps it.
+On every successful login (any provider) pending grant invites matching the
+identity's email — or GitHub login, for github-kind invites — are claimed:
+converted into repo grants and deleted, so an invited external reviewer has
+access the moment they first sign in.
+
+The GitHub App edge (one tenant per installation, roles derived from GitHub
+repo permissions) replaces this static mapping for github-provider tenants;
+the config tenant keeps it.

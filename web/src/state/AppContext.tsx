@@ -30,6 +30,8 @@ interface AppState {
   switchBranch: (b: string, opts?: { carryDraft?: boolean }) => void;
   protectedBranches: string[];
   isProtectedBranch: boolean;
+  /** the caller's effective role on the active project (REQ-020) */
+  repoRole: 'viewer' | 'member' | 'admin';
   theme: 'light' | 'dark';        // resolved — what actually renders
   themeMode: ThemeMode;           // the preference behind it
   systemTheme: 'light' | 'dark';  // what the OS currently prefers
@@ -213,6 +215,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       protectedBranches,
       isProtectedBranch: protectedBranches.includes(effBranch),
+      // least privilege until the repo list answers — write chrome must not
+      // flash for viewers; 'member' only as backcompat when role is absent
+      repoRole: writable ? writable.role || 'member' : 'viewer',
       theme,
       themeMode,
       systemTheme,

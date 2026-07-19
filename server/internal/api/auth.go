@@ -68,6 +68,7 @@ func (s *Server) authGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetUserLogin(u.ID, id.Login); err != nil {
 		log.Printf("github callback: set login: %v", err)
 	}
+	s.claimInvites(u.ID, id.Email, id.Login)
 	if err := s.sessions.Issue(w, u.ID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -92,6 +93,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.claimInvites(u.ID, claims.Email, "")
 	if err := s.sessions.Issue(w, u.ID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -120,7 +122,18 @@ func (s *Server) authLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := s.store.UserByID(userID)
+	if u != nil {
+		s.claimInvites(u.ID, u.Email, "")
+	}
 	jsonOK(w, u)
+}
+
+// claimInvites converts pending repo-grant invites matching this identity
+// into grants (REQ-020) — best-effort, a failure must not block the login.
+func (s *Server) claimInvites(userID int64, email, login string) {
+	if err := s.store.ClaimGrantInvites(userID, email, login); err != nil {
+		log.Printf("claim grant invites: %v", err)
+	}
 }
 
 // POST /auth/logout
