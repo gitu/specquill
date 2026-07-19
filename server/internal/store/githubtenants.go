@@ -102,7 +102,7 @@ func (s *Store) SetUserLogin(userID int64, login string) error {
 	return err
 }
 
-// UserLogin reads the stored GitHub handle ('' when unknown).
+// UserLogin reads the stored GitHub handle (” when unknown).
 func (s *Store) UserLogin(userID int64) (string, error) {
 	var login string
 	err := s.queryRow("SELECT login FROM users WHERE id = ?", userID).Scan(&login)

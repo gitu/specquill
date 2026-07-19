@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -33,6 +34,7 @@ import (
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/scaffold"
+	"specquill/server/internal/secrets"
 	"specquill/server/internal/store"
 	"specquill/server/internal/webui"
 )
@@ -159,14 +161,30 @@ func serve(configPath string, dev bool) error {
 	}
 
 	// GitHub App: installation tokens authenticate git for github tenants
-	// (the TokenFor seam), so it must be wired before any AddRepo below
 	var ghApp *githubapp.App
 	if cfg.GitHubApp.Enabled() {
 		ghApp, err = githubapp.New(cfg.GitHubApp)
 		if err != nil {
 			return err
 		}
-		git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
+		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
+	}
+
+	// Credential store (REQ-023): sealed tenant PATs. Absent the master key
+	// the server runs normally — only the credential endpoints answer 501.
+	secretsBox, err := secrets.NewFromEnv()
+	if err != nil && !errors.Is(err, secrets.ErrNotConfigured) {
+		return err
+	}
+	if secretsBox != nil {
+		log.Printf("credential store enabled (%s)", secrets.EnvKey)
+	}
+
+	// One credential resolution chain (REQ-023.4), wired before any AddRepo:
+	// installation token > attached tenant credential > token_env fallback
+	// (gitx applies token_env itself when this hook declines).
+	git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
+		if ghApp != nil {
 			if ten, err := st.TenantBySlug(r.Tenant()); err == nil && ten.Provider == "github" && ten.Installation != 0 {
 				tok, err := ghApp.InstallationToken(ten.Installation)
 				if err != nil {
@@ -175,6 +193,23 @@ func serve(configPath string, dev bool) error {
 				}
 				return "x-access-token", tok, true
 			}
+		}
+		if secretsBox != nil {
+			if c, err := st.RepoCredential(r.Tenant(), r.Cfg.ID); err == nil {
+				tok, err := secretsBox.Open(c.TenantID, c.Nonce, c.Ciphertext, c.KeyID)
+				if err != nil {
+					// log without token material and fall through the chain
+					log.Printf("credential %d (%s) for %s: %v", c.ID, c.Name, r.Key(), err)
+				} else {
+					user := c.Username
+					if user == "" {
+						user = "x-access-token"
+					}
+					return user, tok, true
+				}
+			}
+		}
+		if ghApp != nil {
 			// config-tenant repos on github.com ride the app too when it is
 			// installed on them — no PAT needed; anything else (app not
 			// installed, non-GitHub host) falls back to token_env
@@ -193,9 +228,8 @@ func serve(configPath string, dev bool) error {
 				}
 				return "x-access-token", tok, true
 			}
-			return "", "", false
 		}
-		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
+		return "", "", false
 	}
 
 	// api-managed repos (added in-app) survive reconciliation — re-register
@@ -296,6 +330,7 @@ func serve(configPath string, dev bool) error {
 		return err
 	}
 	handler := api.New(cfg, git, api.Options{
+		Secrets:   secretsBox,
 		Store:     st,
 		Sessions:  auth.NewSessions(st, cfg),
 		OIDC:      oidcAuth,

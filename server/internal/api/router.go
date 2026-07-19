@@ -20,6 +20,7 @@ import (
 	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
+	"specquill/server/internal/secrets"
 	"specquill/server/internal/store"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	bus      *events.Bus    // nil-safe
 	hub      *collab.Hub
 	devUser  *store.User
+	secrets  *secrets.Box     // nil until SPECQUILL_SECRET_KEY is configured
 	srcCache *srcCache        // grounding source snapshots, keyed by repo key + head SHA
 	importer *importer.Runner // nil when no non-git sources are configured
 }
@@ -50,6 +52,7 @@ type Options struct {
 	Bus       *events.Bus    // nil-safe
 	Hub       *collab.Hub
 	Importer  *importer.Runner // nil when no non-git sources are configured
+	Secrets   *secrets.Box     // nil when SPECQUILL_SECRET_KEY is unset
 	Dist      fs.FS
 	Dev       bool
 }
@@ -59,7 +62,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ghApp: opts.GitHubApp, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), ghRoles: newRoleCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ghApp: opts.GitHubApp, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, secrets: opts.Secrets, srcCache: newSrcCache(), ghRoles: newRoleCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -92,6 +95,11 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("DELETE /api/t/{tenant}/projects/{id}", s.roleH(authz.Admin, s.deleteProject))
 	apiMux.HandleFunc("POST /api/t/{tenant}/sources/{name}/sync", s.roleH(authz.Editor, s.syncSource))
 	apiMux.HandleFunc("GET /api/t/{tenant}/members", s.roleH(authz.Admin, s.listMembers))
+	apiMux.HandleFunc("GET /api/t/{tenant}/credentials", s.roleH(authz.Admin, s.listCredentials))
+	apiMux.HandleFunc("POST /api/t/{tenant}/credentials", s.roleH(authz.Admin, s.createCredential))
+	apiMux.HandleFunc("PUT /api/t/{tenant}/credentials/{id}", s.roleH(authz.Admin, s.updateCredential))
+	apiMux.HandleFunc("DELETE /api/t/{tenant}/credentials/{id}", s.roleH(authz.Admin, s.deleteCredential))
+	apiMux.HandleFunc("PUT /api/t/{tenant}/repos/{repo}/settings/credential", s.repoAdminH(s.putRepoCredential))
 	apiMux.HandleFunc("GET /api/t/{tenant}/repos/{repo}/grants", s.repoAdminH(s.listGrants))
 	apiMux.HandleFunc("POST /api/t/{tenant}/repos/{repo}/grants", s.repoAdminH(s.createGrant))
 	apiMux.HandleFunc("DELETE /api/t/{tenant}/repos/{repo}/grants/{userId}", s.repoAdminH(s.deleteGrant))

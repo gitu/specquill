@@ -127,6 +127,7 @@ deploy cleanly.
    # installation tokens; the PAT only covers repos outside the installation
    # or on non-GitHub hosts
    echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
+   head -c32 /dev/urandom | base64 | tr -d '\n' | gcloud secrets create SPECQUILL_SECRET_KEY --data-file=-  # in-app credential store master key
    echo -n '…github-oauth-client-secret…' | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
    echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
    # push-webhook HMAC secret (used again when registering the webhook below)

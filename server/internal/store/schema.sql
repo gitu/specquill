@@ -36,6 +36,23 @@ CREATE TABLE IF NOT EXISTS tenants (
   created_at      BIGINT NOT NULL
 );
 
+-- tenant-owned git credentials (PATs), AES-256-GCM sealed under the
+-- SPECQUILL_SECRET_KEY master key (REQ-023). Plaintext never lands in the
+-- DB or logs; the AAD binds each ciphertext to its owning tenant.
+CREATE TABLE IF NOT EXISTS credentials (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id  BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,                  -- admin-facing label
+  username   TEXT NOT NULL DEFAULT '',       -- basic-auth user ('' = x-access-token)
+  nonce      BYTEA NOT NULL,                 -- 12-byte GCM nonce
+  ciphertext BYTEA NOT NULL,                 -- sealed token
+  key_id     TEXT NOT NULL DEFAULT 'v1',     -- master-key rotation seam
+  created_by BIGINT REFERENCES users(id),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (tenant_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS tenant_repos (
   tenant_id      BIGINT NOT NULL REFERENCES tenants(id),
   repo_id        TEXT NOT NULL,           -- short id, unique within the tenant
@@ -44,6 +61,7 @@ CREATE TABLE IF NOT EXISTS tenant_repos (
   default_branch TEXT NOT NULL DEFAULT 'main',
   gh_full_name   TEXT NOT NULL DEFAULT '',
   managed_by     TEXT NOT NULL DEFAULT 'config',  -- config rows reconcile at boot
+  credential_id  BIGINT REFERENCES credentials(id) ON DELETE SET NULL,
   created_at     BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, repo_id)
 );
@@ -151,7 +169,7 @@ CREATE TABLE IF NOT EXISTS sources (
   kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
   remote         TEXT NOT NULL,
   token_env      TEXT NOT NULL DEFAULT '',       -- env var NAME; never a secret value
-  credential_ref TEXT NOT NULL DEFAULT '',       -- hosted future (Secret Manager path)
+  credential_id  BIGINT REFERENCES credentials(id) ON DELETE SET NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
   sync_interval  BIGINT NOT NULL DEFAULT 300,    -- seconds
   managed_by     TEXT NOT NULL DEFAULT 'config',
