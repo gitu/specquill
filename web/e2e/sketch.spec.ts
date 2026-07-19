@@ -1,24 +1,24 @@
 // Sketches as *.excalidraw.png: PNG files with the scene embedded — render
 // natively as images, still editable in the excalidraw modal.
 import { APIRequestContext, expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 const REPO = 'trading-specs';
-const H = { 'X-SpecQuill': '1' };
 const DOC = `scratch-sketch-${Date.now().toString(36)}.md`;
 const SLUG = `e2esketch-${Date.now().toString(36)}`;
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
-  const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
+  const res = await request.post(`${API}/repos/${REPO}/workspace`, { headers: H, data: {} });
   return ((await res.json()) as { branch: string }).branch;
 }
 
 test('sketch png: draw, save, native render, reopen with scene', async ({ page, request }) => {
   const branch = await wsBranch(request);
-  await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
+  await request.put(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
     headers: H, data: { content: '# Sketch scratch\n\nsome text here\n', baseSha: '' },
   });
 
-  await page.goto(`/p/trading-specs/editor/${DOC}`);
+  await page.goto(`${APP}/p/trading-specs/editor/${DOC}`);
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).first().click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -43,7 +43,7 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
   await expect(page.locator('.excalidraw__canvas')).toHaveCount(0, { timeout: 15_000 });
 
   // the file is a real PNG on the branch
-  const raw = await request.get(`/api/repos/${REPO}/raw/diagrams/${SLUG}.excalidraw.png?ref=${encodeURIComponent(branch)}`);
+  const raw = await request.get(`${API}/repos/${REPO}/raw/diagrams/${SLUG}.excalidraw.png?ref=${encodeURIComponent(branch)}`);
   expect(raw.ok()).toBe(true);
   expect(raw.headers()['content-type']).toBe('image/png');
   expect((await raw.body()).subarray(0, 4).toString('hex')).toBe('89504e47');
@@ -63,13 +63,13 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
   await expect(page.locator(`#specquill-doc img[src*="${SLUG}.excalidraw.png"]`).first()).toBeVisible({ timeout: 10_000 });
 
   // cleanup
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await expect
     .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
+      const rooms = (await (await request.get(`${API}/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
       return rooms.filter((r) => r.users.length > 0).length;
     }, { timeout: 20_000 })
     .toBe(0);
-  await request.delete(`/api/repos/${REPO}/files/diagrams/${SLUG}.excalidraw.png?branch=${encodeURIComponent(branch)}`, { headers: H });
-  await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
+  await request.delete(`${API}/repos/${REPO}/files/diagrams/${SLUG}.excalidraw.png?branch=${encodeURIComponent(branch)}`, { headers: H });
+  await request.delete(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

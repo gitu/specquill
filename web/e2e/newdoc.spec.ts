@@ -1,32 +1,32 @@
 // Guided document creation: family picker, subfolder, scheme-generated IDs
 // with conflict detection (config `ids:` or built-ins like REQ-{seq:3}).
 import { expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
 const REPO = 'trading-specs';
-const H = { 'X-SpecQuill': '1' };
 
 async function wsBranch(request: import('@playwright/test').APIRequestContext): Promise<string> {
-  const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
+  const res = await request.post(`${API}/repos/${REPO}/workspace`, { headers: H, data: {} });
   return ((await res.json()) as { branch: string }).branch;
 }
 
 // drop leftover created files from earlier runs (dialog docs are always 'A')
 async function cleanWorkspace(request: import('@playwright/test').APIRequestContext) {
   const branch = await wsBranch(request);
-  const st = (await (await request.get(`/api/repos/${REPO}/status?branch=${encodeURIComponent(branch)}`)).json()) as
+  const st = (await (await request.get(`${API}/repos/${REPO}/status?branch=${encodeURIComponent(branch)}`)).json()) as
     { dirty: { path: string; state: string }[] };
   for (const f of st.dirty) {
     if (f.state !== 'A') continue;
     // untracked directories come collapsed ('requirements/e2e-sub-x/') —
     // expand them via the worktree tree so the subfolder test self-heals
     const paths = f.path.endsWith('/')
-      ? ((await (await request.get(`/api/repos/${REPO}/tree?ref=${encodeURIComponent(branch)}`)).json()) as
+      ? ((await (await request.get(`${API}/repos/${REPO}/tree?ref=${encodeURIComponent(branch)}`)).json()) as
           { path: string }[]).map((e) => e.path).filter((p) => p.startsWith(f.path))
       : [f.path];
     for (const p of paths) {
-      await request.delete(`/api/repos/${REPO}/files/${p}?branch=${encodeURIComponent(branch)}`, { headers: H });
+      await request.delete(`${API}/repos/${REPO}/files/${p}?branch=${encodeURIComponent(branch)}`, { headers: H });
     }
   }
 }
@@ -35,7 +35,7 @@ test.beforeEach(async ({ request }) => { await cleanWorkspace(request); });
 test.afterEach(async ({ request }) => { await cleanWorkspace(request); });
 
 test('guided creation generates the next sequential ID and typed frontmatter', async ({ page, request }) => {
-  await page.goto('/p/trading-specs/editor');
+  await page.goto(`${APP}/p/trading-specs/editor`);
   await page.getByTitle('New document').first().click();
   const dialog = page.getByTestId('newdoc-dialog');
   await expect(dialog).toBeVisible();
@@ -52,14 +52,14 @@ test('guided creation generates the next sequential ID and typed frontmatter', a
   await page.waitForURL(new RegExp(`editor/requirements/${id}\\.md`));
 
   const branch = await wsBranch(request);
-  const file = (await (await request.get(`/api/repos/${REPO}/files/requirements/${id}.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string };
+  const file = (await (await request.get(`${API}/repos/${REPO}/files/requirements/${id}.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string };
   expect(file.content).toContain(`id: ${id}`);
   expect(file.content).toContain('type: Requirement');
   expect(file.content).toContain('title: Guided creation e2e');
 });
 
 test('conflicting IDs are detected and block creation', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor');
+  await page.goto(`${APP}/p/trading-specs/editor`);
   await page.getByTitle('New document').first().click();
   const dialog = page.getByTestId('newdoc-dialog');
   await dialog.getByRole('button', { name: /Requirements/ }).click();
@@ -75,7 +75,7 @@ test('conflicting IDs are detected and block creation', async ({ page }) => {
 });
 
 test('folder + preselects the family; slug IDs track the title until edited', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor');
+  await page.goto(`${APP}/p/trading-specs/editor`);
   // the per-folder plus opens the dialog with that family selected
   await page.getByTitle('New document in specs/').click();
   const dialog = page.getByTestId('newdoc-dialog');
@@ -111,7 +111,7 @@ test('folder + preselects the family; slug IDs track the title until edited', as
 test('a new nested subfolder can be created inline', async ({ page, request }) => {
   const stamp = Date.now().toString(36);
   const sub = `e2e-sub-${stamp}/inner`;
-  await page.goto('/p/trading-specs/editor');
+  await page.goto(`${APP}/p/trading-specs/editor`);
   await page.getByTitle('New document').first().click();
   const dialog = page.getByTestId('newdoc-dialog');
   await dialog.getByRole('button', { name: /Requirements/ }).click();
@@ -126,6 +126,6 @@ test('a new nested subfolder can be created inline', async ({ page, request }) =
   await page.waitForURL(new RegExp(`editor/requirements/${sub}/${id}\\.md`));
 
   const branch = await wsBranch(request);
-  const file = (await (await request.get(`/api/repos/${REPO}/files/requirements/${sub}/${id}.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string };
+  const file = (await (await request.get(`${API}/repos/${REPO}/files/requirements/${sub}/${id}.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string };
   expect(file.content).toContain(`id: ${id}`);
 });

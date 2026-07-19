@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTenant } from '../api/hooks';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
@@ -15,6 +16,7 @@ const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'C
 // The Copilot panel: streaming chat grounded on the branch snapshot, plus the
 // "draft edits" flow that applies model-proposed edits to a copilot branch.
 export function Copilot() {
+  const tenant = useTenant();
   const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
@@ -36,7 +38,7 @@ export function Copilot() {
   }, [entries, streamText]);
 
   const ask = async (question: string) => {
-    if (!question.trim() || busy || !enabled) return;
+    if (!question.trim() || busy || !enabled || !app.repoId) return;
     setError('');
     setInput('');
     const history = entries.filter((e): e is { kind: 'msg'; msg: ChatMessage } => e.kind === 'msg').map((e) => e.msg);
@@ -45,7 +47,7 @@ export function Copilot() {
     setBusy(true);
     setStreamText('');
     try {
-      const full = await streamChat(app.repoId, { messages, focusPath, branch: app.branch }, setStreamText);
+      const full = await streamChat(app.repoId!, { messages, focusPath, branch: app.branch }, setStreamText);
       setEntries((es) => [...es, { kind: 'msg', msg: { role: 'assistant', content: full } }]);
     } catch (e) {
       setError(String((e as Error).message || e));
@@ -56,7 +58,7 @@ export function Copilot() {
   };
 
   const draft = async () => {
-    if (!change || !app.model || busy || !enabled) return;
+    if (!change || !app.model || busy || !enabled || !app.repoId) return;
     setError('');
     setBusy(true);
     try {
@@ -65,9 +67,9 @@ export function Copilot() {
         ...change.impMaps.map((m) => m.split('#')[0]),
         ...change.impReqs.map((r) => reqByName(app.model!, r)?.path).filter((p): p is string => !!p),
       ];
-      const result = await draftEdits(app.repoId, { changePath: change.path, files: [...new Set(files)] });
+      const result = await draftEdits(app.repoId!, { changePath: change.path, files: [...new Set(files)] });
       setEntries((es) => [...es, { kind: 'draft', result }]);
-      qc.invalidateQueries({ queryKey: ['branches'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches'] });
     } catch (e) {
       setError(String((e as Error).message || e));
     } finally {

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
 import { api, ApiError, RepoInfo } from '../api/client';
-import { useRepos } from '../api/hooks';
+import { useRepos, useTenant } from '../api/hooks';
 
 interface ProjectRow {
   id: string;
@@ -15,8 +15,9 @@ interface ProjectRow {
 // rows come from specquill.yml and are read-only here). Requires the admin
 // role — the API enforces it; this view just surfaces the errors.
 export function AdminView() {
+  const tenant = useTenant();
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectRow[]>('/api/projects') });
+  const projects = useQuery({ queryKey: ['t', tenant, 'projects'], queryFn: () => api<ProjectRow[]>('/api/projects') });
   const repos = useRepos();
   const sources = (repos.data || []).filter((r) => r.kind === 'source');
   const [form, setForm] = useState({ id: '', remote: '', contentRoot: '' });
@@ -27,8 +28,8 @@ export function AdminView() {
     onSuccess: () => {
       setForm({ id: '', remote: '', contentRoot: '' });
       setError('');
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      qc.invalidateQueries({ queryKey: ['repos'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'projects'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
     },
     onError: (e) => setError(String((e as Error).message || e)),
   });
@@ -36,8 +37,8 @@ export function AdminView() {
     mutationFn: (id: string) => api<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setError('');
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      qc.invalidateQueries({ queryKey: ['repos'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'projects'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
     },
     onError: (e) => setError(String((e as Error).message || e)),
   });
@@ -112,6 +113,7 @@ export function AdminView() {
 // only those, so a repo admin without tenant admin still manages grants.
 // Renders nothing when the caller administers neither.
 function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   interface Member { userId: number; role: string; name: string; email: string; login?: string; provider: string }
   interface Grant { repo: string; userId: number; role: string; name: string; email: string; login?: string }
@@ -122,14 +124,14 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
   const [form, setForm] = useState({ user: '', role: 'viewer' });
   const [notice, setNotice] = useState('');
 
-  const members = useQuery({ queryKey: ['members'], queryFn: () => api<Member[]>('/api/members'), retry: false });
+  const members = useQuery({ queryKey: ['t', tenant, 'members'], queryFn: () => api<Member[]>('/api/members'), retry: false });
   const grants = useQuery({
-    queryKey: ['grants', active],
+    queryKey: ['t', tenant, 'grants', active],
     queryFn: () => api<{ grants: Grant[]; invites: Invite[] }>(`/api/repos/${active}/grants`),
     enabled: !!active,
     retry: false,
   });
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['grants', active] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['t', tenant, 'grants', active] });
   const add = useMutation({
     mutationFn: () => api<{ status: string }>(`/api/repos/${active}/grants`, { method: 'POST', body: JSON.stringify(form) }),
     onSuccess: (r) => {
@@ -243,17 +245,18 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
 // become workspaces or reference sources. Renders nothing for config tenants
 // or when no GitHub App is configured (the list request 4xxes).
 function GitHubReposPanel({ onError }: { onError: (m: string) => void }) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   interface GhRepo { fullName: string; private: boolean; description?: string; defaultBranch: string; state?: string; id?: string }
   const repos = useQuery({
-    queryKey: ['github-repos'],
+    queryKey: ['t', tenant, 'github-repos'],
     queryFn: () => api<GhRepo[]>('/api/github/repos'),
     retry: false,
   });
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['github-repos'] });
-    qc.invalidateQueries({ queryKey: ['repos'] });
-    qc.invalidateQueries({ queryKey: ['projects'] });
+    qc.invalidateQueries({ queryKey: ['t', tenant, 'github-repos'] });
+    qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
+    qc.invalidateQueries({ queryKey: ['t', tenant, 'projects'] });
   };
   const add = useMutation({
     mutationFn: (v: { fullName: string; mode: string }) =>
@@ -312,13 +315,14 @@ function GitHubReposPanel({ onError }: { onError: (m: string) => void }) {
 // (url/openapi/confluence) carry their last-sync status and a manual re-import
 // button; plain git sources show only their name.
 function SourceRow({ source, onError }: { source: RepoInfo; onError: (m: string) => void }) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   const sync = useMutation({
     mutationFn: () => api<{ status: string; fileCount: number }>(`/api/sources/${source.id}/sync`, { method: 'POST' }),
     onSuccess: () => {
       onError('');
-      qc.invalidateQueries({ queryKey: ['repos'] });
-      qc.invalidateQueries({ queryKey: ['tree'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'tree'] });
     },
     onError: (e) => onError(String((e as Error).message || e)),
   });

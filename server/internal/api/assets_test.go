@@ -13,7 +13,7 @@ func TestRawResponsesSandboxed(t *testing.T) {
 	h, _, _ := testGroundingServer(t)
 	cookie := login(t, h)
 
-	req := httptest.NewRequest("GET", "/api/repos/w/raw/.specquill/config.yml", nil)
+	req := httptest.NewRequest("GET", apiURL("/api/repos/w/raw/.specquill/config.yml"), nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

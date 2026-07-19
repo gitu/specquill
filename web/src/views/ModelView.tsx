@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { useTenant } from '../api/hooks';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
@@ -16,6 +17,7 @@ const TYPE_COLOR: Record<string, string> = {
 };
 
 export function ModelView() {
+  const tenant = useTenant();
   const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
@@ -33,8 +35,8 @@ export function ModelView() {
         method: 'PUT',
         body: JSON.stringify({ content: scaffoldFor(path, app.repoId || '') || '', baseSha: '' }),
       });
-      qc.invalidateQueries({ queryKey: ['status', app.repoId] });
-      qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', app.repoId] });
     }
     nav('/editor/' + path);
   };

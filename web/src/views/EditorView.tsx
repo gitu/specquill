@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useFileAtHead, useFileQuery, useMe, usePresence, useSaveFile } from '../api/hooks';
+import { useFileAtHead, useFileQuery, useMe, usePresence, useSaveFile, useTenant } from '../api/hooks';
 import { api, rawUrl, uploadAsset } from '../api/client';
 import { useCollabSession } from '../collab/useCollabSession';
 import { userColor } from '../collab/session';
@@ -60,6 +60,7 @@ function kindOf(name: string): Kind {
 }
 
 export function EditorView() {
+  const tenant = useTenant();
   const nav = useNav();
   const app = useApp();
   const { '*': splat } = useParams();
@@ -149,8 +150,8 @@ export function EditorView() {
     // deliberately NOT cleared on unmount — the final flush acks after the
     // view releases the session
     session.onFlushed = () => {
-      qc.invalidateQueries({ queryKey: ['status', fileRepo, app.branch] });
-      qc.invalidateQueries({ queryKey: ['file', fileRepo, app.branch, path] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', fileRepo, app.branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'file', fileRepo, app.branch, path] });
     };
     return () => session.setSerializer(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,7 +257,7 @@ export function EditorView() {
     if (!fileRepo || readOnly) return null;
     try {
       const res = await uploadAsset(fileRepo, app.branch, docDir ? `${docDir}/assets` : 'assets', imgFile);
-      qc.invalidateQueries({ queryKey: ['status', fileRepo, app.branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', fileRepo, app.branch] });
       // repo-relative → doc-relative (always directly under <docdir>/assets)
       return 'assets/' + res.path.split('/').pop();
     } catch (e) {
@@ -520,9 +521,9 @@ export function EditorView() {
                       method: 'PUT',
                       body: JSON.stringify({ content, baseSha: '' }),
                     });
-                    qc.invalidateQueries({ queryKey: ['file', fileRepo] });
-                    qc.invalidateQueries({ queryKey: ['status', app.repoId] });
-                    qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
+                    qc.invalidateQueries({ queryKey: ['t', tenant, 'file', fileRepo] });
+                    qc.invalidateQueries({ queryKey: ['t', tenant, 'status', app.repoId] });
+                    qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', app.repoId] });
                   })()}
                   style={sx('height:28px;padding:0 12px;border:1px solid var(--reg-line);border-radius:7px;background:var(--surface);color:var(--reg);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer')}>
                   Create {name}

@@ -1,6 +1,7 @@
 // Copilot API: SSE chat streaming + draft-edit application.
 import { useQuery } from '@tanstack/react-query';
-import { api } from './client';
+import { api, apiPath } from './client';
+import { useTenant } from './hooks';
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 export interface CopilotInfo { enabled: boolean; model?: string; groundedSources?: string[] }
@@ -9,22 +10,25 @@ export interface DraftResult { branch: string; summary: string; applied: string[
 // info is per-project: grounded sources depend on the active project's
 // references. repoId scopes the probe; omit it to fall back to the sole project.
 export function useCopilotInfo(repoId?: string) {
+  const tenant = useTenant();
   const url = repoId ? `/api/copilot/info?repo=${encodeURIComponent(repoId)}` : '/api/copilot/info';
-  return useQuery({ queryKey: ['copilot-info', repoId ?? ''], queryFn: () => api<CopilotInfo>(url), staleTime: 300_000 });
+  return useQuery({ queryKey: ['t', tenant, 'copilot-info', repoId ?? ''], queryFn: () => api<CopilotInfo>(url), staleTime: 300_000 });
 }
 
 /**
  * POST the active project's copilot/chat and consume the SSE stream. onDelta
- * fires per chunk; resolves with the full reply text. repoId targets the active
- * project so grounding follows the project switcher (omit → sole-project alias).
+ * fires per chunk; resolves with the full reply text. repoId targets the
+ * active project so grounding follows the project switcher — required: the
+ * copilot is always project-scoped (the legacy sole-project alias is gone).
  */
 export async function streamChat(
-  repoId: string | undefined,
+  repoId: string,
   body: { messages: ChatMessage[]; focusPath?: string; branch?: string },
   onDelta: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await fetch(repoId ? `/api/repos/${encodeURIComponent(repoId)}/copilot/chat` : '/api/copilot/chat', {
+  if (!repoId) throw new Error('copilot chat needs an active project');
+  const res = await fetch(apiPath(`/api/repos/${encodeURIComponent(repoId)}/copilot/chat`), {
     method: 'POST',
     headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -61,7 +65,7 @@ export async function streamChat(
   return full;
 }
 
-export function draftEdits(repoId: string | undefined, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
-  const url = repoId ? `/api/repos/${encodeURIComponent(repoId)}/copilot/draft` : '/api/copilot/draft';
-  return api<DraftResult>(url, { method: 'POST', body: JSON.stringify(body) });
+export function draftEdits(repoId: string, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
+  if (!repoId) return Promise.reject(new Error('copilot draft needs an active project'));
+  return api<DraftResult>(`/api/repos/${encodeURIComponent(repoId)}/copilot/draft`, { method: 'POST', body: JSON.stringify(body) });
 }
