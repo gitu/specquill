@@ -211,15 +211,33 @@ type Config struct {
 	Sources  []SourceConfig  `yaml:"sources"`
 	// Grants: source names granted to the default tenant (stage 2).
 	// Omitted/empty = all sources granted (self-host convenience).
-	Grants  []string      `yaml:"grants"`
-	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
-	Git     GitConfig     `yaml:"git"`
+	Grants    []string        `yaml:"grants"`
+	Repos     []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Git       GitConfig       `yaml:"git"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Session   SessionConfig   `yaml:"session"`
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
 	GitHubApp GitHubAppConfig `yaml:"github_app"`
 	AI        AIConfig        `yaml:"ai"`
+	Sandbox   SandboxConfig   `yaml:"sandbox"`
 }
+
+// SandboxConfig controls per-tenant filesystem isolation of git subprocesses.
+// A tenant's git operations are jailed in a mount namespace rooted at that
+// tenant's data dir, so a compromised or buggy operation cannot reach another
+// tenant's clones. Off by default so dev, CI and self-host need no privileges.
+type SandboxConfig struct {
+	// Mode: "" / "off" (no isolation), "bwrap" (bubblewrap mount namespace),
+	// or "namespace" (raw CLONE_NEWNS self-re-exec — reserved, not yet built).
+	Mode string `yaml:"mode"`
+	// Require fails startup when Mode is enabled but the mechanism is
+	// unavailable (missing bwrap, userns disabled). When false, an unavailable
+	// mechanism degrades to "off" with a warning — convenient for dev laptops.
+	Require bool `yaml:"require"`
+}
+
+// Enabled reports whether any isolation mechanism is selected.
+func (s SandboxConfig) Enabled() bool { return s.Mode != "" && s.Mode != "off" }
 
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -363,6 +381,11 @@ func (c *Config) validate() error {
 	case "", "member", "viewer", "none":
 	default:
 		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
+	}
+	switch c.Sandbox.Mode {
+	case "", "off", "bwrap", "namespace":
+	default:
+		return fmt.Errorf("sandbox.mode must be off, bwrap or namespace (got %q)", c.Sandbox.Mode)
 	}
 	if c.Database.URL == "" && c.Database.URLEnv == "" {
 		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")

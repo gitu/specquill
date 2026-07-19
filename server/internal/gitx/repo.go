@@ -39,6 +39,7 @@ type Repo struct {
 	Cfg       config.RepoConfig
 	key       string   // canonical "<tenant_slug>/<repo_id>" — store rows, room keys
 	mgr       *Manager // back-pointer: Notify + TokenFor hooks
+	root      string   // <dataDir>/tenants/<slug> — the per-tenant sandbox jail root
 	gitDir    string   // bare clone
 	wtRoot    string   // worktrees live here, one dir per branch
 	committer config.GitConfig
@@ -63,6 +64,9 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		committer: cfg.Git,
 		repos:     map[string]*Repo{},
 	}
+	if err := configureSandbox(cfg.DataDir, cfg.Sandbox.Mode, cfg.Sandbox.Require); err != nil {
+		return nil, err
+	}
 	for _, rc := range cfg.Repos {
 		m.add(DefaultTenant, rc)
 	}
@@ -72,13 +76,15 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 // add registers a repo under a tenant without cloning (see ensure/Init).
 func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
 	key := tenant + "/" + rc.ID
-	root := filepath.Join(m.dataDir, "tenants", tenant, rc.ID)
+	tenantRoot := filepath.Join(m.dataDir, "tenants", tenant)
+	repoRoot := filepath.Join(tenantRoot, rc.ID)
 	r := &Repo{
 		Cfg:       rc,
 		key:       key,
 		mgr:       m,
-		gitDir:    filepath.Join(root, "git"),
-		wtRoot:    filepath.Join(root, "worktrees"),
+		root:      tenantRoot,
+		gitDir:    filepath.Join(repoRoot, "git"),
+		wtRoot:    filepath.Join(repoRoot, "worktrees"),
 		committer: m.committer,
 		branchMu:  map[string]*sync.Mutex{},
 		done:      make(chan struct{}),
@@ -199,13 +205,14 @@ func (r *Repo) ensure() error {
 	// mirror repos have no remote: init an empty bare repo whose default branch
 	// the importer.Runner will populate. No clone, no fetch.
 	if r.Cfg.Mirror {
-		_, err := run("", nil, "init", "--bare", "-b", r.Cfg.DefaultBranch, r.gitDir)
+		// run from the tenant root so the sandbox jails init into this tenant
+		_, err := run(r.root, nil, "init", "--bare", "-b", r.Cfg.DefaultBranch, r.gitDir)
 		if err == nil {
 			r.setLastFetch(time.Now())
 		}
 		return err
 	}
-	if _, err := run("", nil, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir); err != nil {
+	if _, err := run(r.root, nil, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir); err != nil {
 		return err
 	}
 	// Writable repos keep local heads authoritative; remote state is tracked

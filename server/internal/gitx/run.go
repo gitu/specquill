@@ -28,7 +28,16 @@ func run(dir string, extraEnv []string, args ...string) (string, error) {
 }
 
 func runFull(dir string, extraEnv []string, stdin []byte, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.Command("git", args...)
+	name, argv := "git", args
+	// per-tenant jail: when a sandbox is configured and this call runs inside a
+	// tenant's tree, wrap git in a mount namespace that hides sibling tenants.
+	// Derived from dir alone, so no call site changes.
+	if activeSandbox != nil {
+		if jailRoot := activeSandbox.tenantRootFor(dir); jailRoot != "" {
+			name, argv = activeSandbox.wrapGit(jailRoot, dir, args)
+		}
+	}
+	cmd := exec.Command(name, argv...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	cmd.Env = append(cmd.Env, extraEnv...)
