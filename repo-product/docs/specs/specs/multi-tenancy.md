@@ -13,8 +13,7 @@ installation sync, token provider, role sync, repo picker, push webhooks)
 is code-complete and integration-tested against a fake GitHub; only the app
 *registration* itself is outstanding (operational steps: the cloud
 deployment guide, "Multi-tenant hosting"). **Phase C is the layered-auth
-refactor** ([REQ-021](../requirements/REQ-021.md)–[REQ-023](
-../requirements/REQ-023.md)): the four-level role ladder, tenant-in-URL,
+refactor** ([REQ-021](../requirements/REQ-021.md)–[REQ-023](../requirements/REQ-023.md)): the four-level role ladder, tenant-in-URL,
 the first-class config tenant, and the encrypted credential store. This
 document is the full design reference — where the boundaries are and why;
 [tenants.md](tenants.md) specifies the implemented behavior.
@@ -74,8 +73,7 @@ credentials        (id, tenant_id, name, username, nonce, ciphertext, key_id,
                     see credentials.md); referenced by tenant_repos and sources
 ```
 
-Roles everywhere are the four-level ladder `viewer < editor < maintainer
-< admin` ([authentication.md](authentication.md)). Everything else keys by
+Roles everywhere are the four-level ladder `viewer < editor < maintainer < admin` ([authentication.md](authentication.md)). Everything else keys by
 the qualified repo string and needs no tenant_id. Isolation upgrades
 available without re-architecture, in order of demand: Postgres RLS on the
 qualified-key prefix as defense-in-depth, then a Neon project per

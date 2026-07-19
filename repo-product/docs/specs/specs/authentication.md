@@ -80,7 +80,7 @@ Every repository route is gated by one effective role per (user, repo),
 
 Derived roles come from the git host (GitHub permission mapping:
 `pull` → viewer, `triage`/`push` → editor, `maintain` → maintainer,
-`admin` → admin) or from the tenant's default role; explicit per-repo
+`admin` → admin) or, for config-provider tenants, from the tenant's default role; explicit per-repo
 grants ([REQ-020](../requirements/REQ-020.md)) layer on top. The
 effective role is **max(derived, granted)**.
 
