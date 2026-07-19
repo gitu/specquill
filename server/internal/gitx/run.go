@@ -30,7 +30,15 @@ func run(dir string, extraEnv []string, args ...string) (string, error) {
 func runFull(dir string, extraEnv []string, stdin []byte, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		// transport allowlist: a remote value like `ext::sh -c '…'` or `fd::`
+		// is a transport carried in the string itself, so a leading-"--"
+		// separator does NOT neuter it — only an explicit protocol allowlist
+		// does. Blocks the ext/fd command-execution helpers (clone, fetch,
+		// push, redirects, submodules) while keeping the transports specquill
+		// actually uses; `file` stays for local-path clones in dev and tests.
+		"GIT_ALLOW_PROTOCOL=file:git:http:https:ssh")
 	cmd.Env = append(cmd.Env, extraEnv...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
