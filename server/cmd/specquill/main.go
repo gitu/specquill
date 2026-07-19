@@ -97,56 +97,60 @@ func serve(configPath string, dev bool) error {
 	}
 	defer release()
 
-	// mirror the YAML repos into the built-in default tenant's registry
-	// (repo-product/docs/specs/specs/multi-tenancy.md — GitHub App installations add further tenants)
-	def, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
-	if err != nil {
-		return err
-	}
-	decls := make([]store.TenantRepo, 0, len(cfg.Repos))
-	for _, rc := range cfg.Repos {
-		decls = append(decls, store.TenantRepo{
-			RepoID: rc.ID, Mode: string(rc.Mode), Remote: rc.Remote, DefaultBranch: rc.DefaultBranch,
-		})
-	}
-	if err := st.SyncTenantRepos(def.ID, decls); err != nil {
-		return err
-	}
-	// projects + the global source catalog + default-tenant grants
-	// (config-managed rows reconcile to the YAML; api-managed rows persist)
-	projDecls := make([]store.Project, 0, len(cfg.Projects))
-	for _, pc := range cfg.Projects {
-		projDecls = append(projDecls, store.Project{ProjectID: pc.ID, RepoID: pc.ID, ContentRoot: pc.ContentRoot})
-	}
-	if err := st.SyncTenantProjects(def.ID, projDecls); err != nil {
-		return err
-	}
-	srcDecls := make([]store.Source, 0, len(cfg.Sources))
-	for _, sc := range cfg.Sources {
-		srcDecls = append(srcDecls, store.Source{
-			Name: sc.Name, Kind: sc.Kind, Remote: sc.Remote, TokenEnv: sc.TokenEnv,
-			DefaultBranch: sc.DefaultBranch, SyncInterval: int64(sc.SyncInterval.Seconds()),
-		})
-	}
-	if err := st.SyncGlobalSources(srcDecls); err != nil {
-		return err
-	}
-	granted := cfg.Grants
-	if len(granted) == 0 { // omitted = all sources (self-host convenience)
-		for _, sc := range cfg.Sources {
-			granted = append(granted, sc.Name)
-		}
-	}
-	grantIDs := make([]int64, 0, len(granted))
-	for _, name := range granted {
-		src, err := st.SourceByName(def.ID, name)
+	// mirror the YAML content into the deployment's config tenant, when one
+	// is declared (REQ-022.4/5 — a hosted deployment boots tenant-less and
+	// gains tenants through GitHub App installations)
+	var def *store.Tenant
+	if cfg.Tenant != nil {
+		def, err = st.EnsureTenant(cfg.Tenant.Slug, "config", 0, cfg.Tenant.DisplayName)
 		if err != nil {
-			return fmt.Errorf("grants: source %s: %w", name, err)
+			return err
 		}
-		grantIDs = append(grantIDs, src.ID)
-	}
-	if err := st.SyncGrants(def.ID, grantIDs); err != nil {
-		return err
+		decls := make([]store.TenantRepo, 0, len(cfg.Repos))
+		for _, rc := range cfg.Repos {
+			decls = append(decls, store.TenantRepo{
+				RepoID: rc.ID, Mode: string(rc.Mode), Remote: rc.Remote, DefaultBranch: rc.DefaultBranch,
+			})
+		}
+		if err := st.SyncTenantRepos(def.ID, decls); err != nil {
+			return err
+		}
+		// projects + the global source catalog + config-tenant grants
+		// (config-managed rows reconcile to the YAML; api-managed rows persist)
+		projDecls := make([]store.Project, 0, len(cfg.Projects))
+		for _, pc := range cfg.Projects {
+			projDecls = append(projDecls, store.Project{ProjectID: pc.ID, RepoID: pc.ID, ContentRoot: pc.ContentRoot})
+		}
+		if err := st.SyncTenantProjects(def.ID, projDecls); err != nil {
+			return err
+		}
+		srcDecls := make([]store.Source, 0, len(cfg.Sources))
+		for _, sc := range cfg.Sources {
+			srcDecls = append(srcDecls, store.Source{
+				Name: sc.Name, Kind: sc.Kind, Remote: sc.Remote, TokenEnv: sc.TokenEnv,
+				DefaultBranch: sc.DefaultBranch, SyncInterval: int64(sc.SyncInterval.Seconds()),
+			})
+		}
+		if err := st.SyncGlobalSources(srcDecls); err != nil {
+			return err
+		}
+		granted := cfg.Grants
+		if len(granted) == 0 { // omitted = all sources (self-host convenience)
+			for _, sc := range cfg.Sources {
+				granted = append(granted, sc.Name)
+			}
+		}
+		grantIDs := make([]int64, 0, len(granted))
+		for _, name := range granted {
+			src, err := st.SourceByName(def.ID, name)
+			if err != nil {
+				return fmt.Errorf("grants: source %s: %w", name, err)
+			}
+			grantIDs = append(grantIDs, src.ID)
+		}
+		if err := st.SyncGrants(def.ID, grantIDs); err != nil {
+			return err
+		}
 	}
 
 	git, err := gitx.NewManager(cfg)
@@ -256,10 +260,12 @@ func serve(configPath string, dev bool) error {
 	// their mirror repos on a schedule; git.Init() has already created the empty
 	// bare repos, Start() does the first import
 	imp := importer.NewRunner(git, st)
-	for _, sc := range cfg.Sources {
-		if !sc.IsGit() {
-			imp.Register(def.Slug, def.ID, sc)
-			log.Printf("importer registered: %s (%s)", sc.Name, sc.Kind)
+	if def != nil {
+		for _, sc := range cfg.Sources {
+			if !sc.IsGit() {
+				imp.Register(def.Slug, def.ID, sc)
+				log.Printf("importer registered: %s (%s)", sc.Name, sc.Kind)
+			}
 		}
 	}
 	imp.Start(context.Background())

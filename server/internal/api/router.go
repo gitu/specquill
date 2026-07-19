@@ -67,10 +67,17 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
 			s.devUser = u
-			// the dev user administers the default tenant (management API)
-			if def, err := opts.Store.TenantBySlug(gitx.DefaultTenant); err == nil {
-				_ = opts.Store.EnsureMember(def.ID, u.ID, "admin")
-				_ = opts.Store.SetMemberRole(def.ID, u.ID, "admin")
+			// the dev user administers the config tenant (management API)
+			if cfg.Tenant != nil {
+				if def, err := opts.Store.TenantBySlug(cfg.Tenant.Slug); err == nil {
+					_ = opts.Store.EnsureMember(def.ID, u.ID, "admin")
+					_ = opts.Store.SetMemberRole(def.ID, u.ID, "admin")
+				}
+				// a second fixture tenant so the switcher and cross-tenant
+				// isolation are exercisable in dev/e2e (empty: no repos)
+				if acme, err := opts.Store.EnsureTenant("acme", "config", 0, "Acme (dev fixture)"); err == nil {
+					_ = opts.Store.EnsureMember(acme.ID, u.ID, "admin")
+				}
 			}
 			log.Printf("dev mode: auto-authenticating as %s <%s>", u.Name, u.Email)
 		}

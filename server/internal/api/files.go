@@ -45,7 +45,7 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	syncs, _ := s.store.TenantSourceSyncs(t.ID)
-	var out []repoInfo
+	out := []repoInfo{} // empty tenants serialize as [], not null
 	for _, repo := range s.git.Repos() {
 		if repo.Tenant() != t.Slug {
 			continue

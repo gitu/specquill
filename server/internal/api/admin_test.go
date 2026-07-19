@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"specquill/server/internal/config"
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
@@ -29,7 +28,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
+	ten, err := st.TenantBySlug("default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +87,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 func TestSourceBrowsingRequiresGrant(t *testing.T) {
 	h, st, git := testServerFull(t, false)
 	cookie := login(t, h)
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
+	ten, err := st.TenantBySlug("default")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,7 +41,7 @@ deploy cleanly.
   config: edit, commit, push (staging updates on the next main build).
   **Before the first deploy** fill in the real `base_url`, the writable repo
   `remote`, the GitHub OAuth `client_id` + `allowed_users`, and
-  `admin_emails`.
+  `tenant.admin_emails`.
 - **The store is Postgres — use Neon in production.** Users, sessions, PRs,
   review comments, approvals, workspace-branch claims and the collab update
   logs all live in the database referenced by the `SPECQUILL_DATABASE_URL`
@@ -269,7 +269,7 @@ GitHub account** — never ship that on a public URL. Denied users land on the
 login page with an explanatory error.
 
 **Who administers.** Everyone who logs in is auto-enrolled into the built-in
-`default` tenant as a **member** (edit, commit, PRs). `auth.admin_emails`
+config tenant as an **editor** (edit, commit, PRs). `tenant.admin_emails`
 promotes matching users (any provider, matched on email) to **admin** on
 login — admins manage projects, sources and grants via the Admin view /
 management API. Set at least your own email before the first deploy, or the

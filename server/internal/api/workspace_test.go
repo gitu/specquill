@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
@@ -36,7 +35,7 @@ func promoteTenantRole(t *testing.T, st *store.Store, email, role string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
+	ten, err := st.TenantBySlug("default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +54,7 @@ func apiURL(url string) string {
 		return url
 	}
 	if strings.HasPrefix(url, "/api/") && !strings.HasPrefix(url, "/api/t/") {
-		return "/api/t/" + gitx.DefaultTenant + url[len("/api"):]
+		return "/api/t/" + "default" + url[len("/api"):]
 	}
 	return url
 }

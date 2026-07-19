@@ -73,6 +73,9 @@ auth:
     allowed_users: [you]             # EMPTY LIST ADMITS ANY GITHUB ACCOUNT
   local:
     enabled: false                   # or true for password accounts instead
+
+tenant:                              # the deployment's own tenant (/t/<slug>/…)
+  slug: default
   admin_emails: [you@example.com]    # who administers (projects/sources/grants)
 
 session:

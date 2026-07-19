@@ -22,14 +22,14 @@ import (
 
 func TestRemoteFullName(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/Acme/Specs.git":  "acme/specs",
-		"https://github.com/acme/specs":      "acme/specs",
-		"http://ghe.corp/org/repo.git":       "org/repo",
-		"ssh://git@github.com/acme/specs":    "acme/specs",
-		"git@github.com:acme/specs.git":      "acme/specs",
-		"/data/origin/trading-specs.git":     "",
-		"":                                   "",
-		"https://github.com":                 "",
+		"https://github.com/Acme/Specs.git": "acme/specs",
+		"https://github.com/acme/specs":     "acme/specs",
+		"http://ghe.corp/org/repo.git":      "org/repo",
+		"ssh://git@github.com/acme/specs":   "acme/specs",
+		"git@github.com:acme/specs.git":     "acme/specs",
+		"/data/origin/trading-specs.git":    "",
+		"":                                  "",
+		"https://github.com":                "",
 	}
 	for remote, want := range cases {
 		if got := remoteFullName(remote); got != want {
@@ -65,6 +65,7 @@ func webhookTestServer(t *testing.T) (http.Handler, string) {
 	t.Setenv("TEST_WEBHOOK_SECRET", "hook-secret")
 
 	cfg := &config.Config{
+		Tenant:   &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir:  filepath.Join(tmp, "data"),
 		Git:      config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Session:  config.SessionConfig{TTL: time.Hour},
@@ -73,7 +74,7 @@ func webhookTestServer(t *testing.T) (http.Handler, string) {
 		Repos:    []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: "https://github.com/acme/specs.git", DefaultBranch: "main"}},
 	}
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,4 +168,3 @@ func TestGitHubWebhook(t *testing.T) {
 		t.Fatalf("unrelated repo matched: %s", rec.Body.String())
 	}
 }
-

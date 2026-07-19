@@ -11,7 +11,6 @@ import (
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
@@ -19,7 +18,7 @@ import (
 // (repo_grants FK needs the row; the boot sync does this in production).
 func wRepoRow(t *testing.T, st *store.Store) *store.Tenant {
 	t.Helper()
-	def, err := st.TenantBySlug(gitx.DefaultTenant)
+	def, err := st.TenantBySlug("default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +85,8 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 // configured admin still bootstraps.
 func TestDefaultRoleNone(t *testing.T) {
 	h, st, _ := testServerCfg(t, false, func(c *config.Config) {
-		c.Auth.DefaultRole = "none"
-		c.Auth.AdminEmails = []string{"boss@test.local"}
+		c.Tenant.DefaultRole = "none"
+		c.Tenant.AdminEmails = []string{"boss@test.local"}
 	})
 	hash, _ := auth.HashPassword("hunter2secret")
 	if err := st.AddLocalUser("boss", "Boss Test", "boss@test.local", hash); err != nil {
@@ -131,8 +130,8 @@ func TestDefaultRoleNone(t *testing.T) {
 // first login, revoke.
 func TestGrantsAPI(t *testing.T) {
 	h, st, _ := testServerCfg(t, false, func(c *config.Config) {
-		c.Auth.DefaultRole = "viewer"
-		c.Auth.AdminEmails = []string{"flo@test.local"}
+		c.Tenant.DefaultRole = "viewer"
+		c.Tenant.AdminEmails = []string{"flo@test.local"}
 	})
 	cookie := login(t, h) // flo → admin via admin_emails
 	wRepoRow(t, st)

@@ -99,7 +99,8 @@ grants: [reg]
 
 func TestValidationErrors(t *testing.T) {
 	cases := []struct{ yml, want string }{
-		{`projects: []` + commonTail, "at least one project"},
+		{`tenant: {default_role: owner}
+projects: [{id: a, remote: r}]` + commonTail, "tenant.default_role"},
 		{`projects: [{id: a, remote: r}, {id: a, remote: r}]` + commonTail, "duplicate"},
 		{`projects: [{id: a, remote: r}]
 sources: [{name: a, kind: git, remote: r}]` + commonTail, "duplicate"},
@@ -116,6 +117,40 @@ grants: [nope]` + commonTail, "unknown source"},
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("case %d: want error containing %q, got %v", i, c.want, err)
 		}
+	}
+}
+
+// A hosted deployment boots with zero projects and no tenant block
+// (REQ-022.5); a config with content synthesizes the tenant (REQ-022.4).
+func TestTenantSynthesis(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.yml")
+	_ = os.WriteFile(p, []byte(`projects: [{id: a, remote: r}]`+commonTail), 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tenant == nil || cfg.Tenant.Slug != "default" || cfg.Tenant.DefaultRole != "editor" {
+		t.Fatalf("synthesized tenant wrong: %+v", cfg.Tenant)
+	}
+
+	_ = os.WriteFile(p, []byte(`tenant: {slug: acme, display_name: Acme}
+projects: [{id: a, remote: r}]`+commonTail), 0o644)
+	cfg, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tenant.Slug != "acme" || cfg.Tenant.DisplayName != "Acme" || cfg.Tenant.DefaultRole != "editor" {
+		t.Fatalf("explicit tenant wrong: %+v", cfg.Tenant)
+	}
+
+	// hosted: no content, no tenant — boots clean
+	_ = os.WriteFile(p, []byte(`projects: []`+commonTail), 0o644)
+	cfg, err = Load(p)
+	if err != nil {
+		t.Fatalf("zero-project config must validate (hosted mode): %v", err)
+	}
+	if cfg.Tenant != nil {
+		t.Fatalf("tenant synthesized without content: %+v", cfg.Tenant)
 	}
 }
 

@@ -25,6 +25,7 @@ func fixture(t *testing.T) (*Manager, string) {
 	mustRun(t, src, "push", "-q", origin, "main")
 
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir: filepath.Join(tmp, "data"),
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Repos: []config.RepoConfig{
