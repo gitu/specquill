@@ -58,6 +58,7 @@ func githubTestServer(t *testing.T, gh *httptest.Server, allowed, adminEmails []
 
 	t.Setenv("TEST_GH_SECRET", "shhh")
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor", AdminEmails: adminEmails},
 		DataDir: tmp + "/data",
 		BaseURL: "http://app.test",
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
@@ -67,12 +68,11 @@ func githubTestServer(t *testing.T, gh *httptest.Server, allowed, adminEmails []
 				Enabled: true, ClientID: "cid", ClientSecretEnv: "TEST_GH_SECRET",
 				AllowedUsers: allowed, WebBase: gh.URL, APIBase: gh.URL,
 			},
-			AdminEmails: adminEmails,
 		},
 		Repos: []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"}},
 	}
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

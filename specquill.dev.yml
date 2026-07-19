@@ -7,6 +7,12 @@ base_url: http://localhost:8643
 database:
   url: postgres://specquill:specquill@127.0.0.1:5433/specquill?sslmode=disable
 
+# the deployment's own (config-provider) tenant — deliberately NOT "default"
+# in dev so hardcoded-slug regressions surface immediately. URLs: /t/dev/…
+tenant:
+  slug: dev
+  display_name: Dev
+
 projects:
   - id: trading-specs
     remote: ./data/origin/trading-specs.git

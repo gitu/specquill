@@ -101,6 +101,7 @@ func testImporterServer(t *testing.T, remoteURL string) (http.Handler, *store.St
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init")
 
 	cfg := &config.Config{
+		Tenant:   &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir:  filepath.Join(tmp, "data"),
 		Git:      config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Session:  config.SessionConfig{TTL: time.Hour, CookieSecure: false},
@@ -111,7 +112,7 @@ func testImporterServer(t *testing.T, remoteURL string) (http.Handler, *store.St
 	cfg.Normalize() // materializes project "w" + mirror repo "api" into cfg.Repos
 
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

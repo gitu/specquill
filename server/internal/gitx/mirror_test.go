@@ -12,6 +12,7 @@ import (
 func mirrorManager(t *testing.T) *Repo {
 	t.Helper()
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir: filepath.Join(t.TempDir(), "data"),
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Repos:   []config.RepoConfig{{ID: "mirror", Mode: config.ReadOnly, DefaultBranch: "main", Mirror: true}},

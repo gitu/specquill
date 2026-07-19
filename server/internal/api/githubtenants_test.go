@@ -105,6 +105,7 @@ func ghAppTestServerFull(t *testing.T) (http.Handler, *ghAppFixture, string, *st
 	t.Setenv("TEST_GH_SECRET", "oauth-secret")
 
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir: filepath.Join(tmp, "data"),
 		BaseURL: "http://app.test",
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},

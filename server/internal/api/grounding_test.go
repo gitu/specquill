@@ -23,7 +23,7 @@ import (
 func TestGroundingRequiresGrant(t *testing.T) {
 	h, st, git := testGroundingServer(t)
 	cookie := login(t, h)
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
+	ten, err := st.TenantBySlug("default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +107,7 @@ func testGroundingServer(t *testing.T) (http.Handler, *store.Store, *gitx.Manage
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
 
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir: filepath.Join(tmp, "data"),
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Session: config.SessionConfig{TTL: time.Hour, CookieSecure: false},
@@ -114,7 +115,7 @@ func testGroundingServer(t *testing.T) (http.Handler, *store.Store, *gitx.Manage
 		Repos:   []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"}},
 	}
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

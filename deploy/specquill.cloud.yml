@@ -45,9 +45,15 @@ auth:
   #   scopes: [openid, profile, email]
   local:
     enabled: false                 # no local fallback logins in the cloud
-  # bootstrap tenant administration: these users get the admin role in the
-  # default tenant on login (projects/sources/grants management API + UI)
+
+# the deployment's own (config-provider) tenant; omit the whole block for a
+# purely GitHub-App-hosted deployment with zero configured projects
+tenant:
+  slug: default
+  # bootstrap tenant administration: these users get the admin role on
+  # login (projects/sources/grants management API + UI)
   admin_emails: [you@example.com]
+  # default_role: editor          # editor (default) | maintainer | viewer | none
 
 session:
   ttl: 10m

@@ -12,6 +12,15 @@ database:
 
 # projects are writable editing workspaces (a git repo, optionally rooted at a
 # content_root subfolder for monorepos)
+# The deployment's own tenant (an ordinary config-provider tenant beside
+# GitHub-App installations). Omitted + projects present -> synthesized as
+# slug "default"; omit projects AND tenant for a purely hosted deployment.
+# tenant:
+#   slug: acme                    # URL segment: /t/acme/...
+#   display_name: Acme
+#   default_role: editor          # editor (default) | maintainer | viewer | none
+#   admin_emails: [ops@acme.example]
+
 projects:
   - id: trading-specs
     remote: https://github.com/acme/trading-specs.git

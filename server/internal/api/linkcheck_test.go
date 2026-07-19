@@ -51,6 +51,7 @@ func TestLinkCheck(t *testing.T) {
 	run("-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
 	cfg := &config.Config{
+		Tenant:   &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir:  filepath.Join(tmp, "data"),
 		Git:      config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Session:  config.SessionConfig{TTL: time.Hour, CookieSecure: false},
@@ -59,7 +60,7 @@ func TestLinkCheck(t *testing.T) {
 	}
 	cfg.Normalize()
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

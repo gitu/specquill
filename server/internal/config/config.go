@@ -115,20 +115,29 @@ type DevUser struct {
 }
 
 type AuthConfig struct {
-	OIDC   OIDCConfig       `yaml:"oidc"`
-	GitHub GitHubAuthConfig `yaml:"github"`
-	Local  LocalAuthConfig  `yaml:"local"`
-	// AdminEmails bootstrap tenant administration: users whose email matches
-	// (case-insensitive, any provider) get the admin role in the default
-	// tenant on login. Without it a fresh deployment has members only and
-	// the management API is unreachable.
-	AdminEmails []string `yaml:"admin_emails"`
-	DevUser     *DevUser `yaml:"dev_user"`
-	// DefaultRole is the role every authenticated user is auto-enrolled with
-	// in the default (config) tenant: editor (default, self-host semantics),
-	// maintainer, viewer, or none — with none, users reach only repos
-	// explicitly granted to them (REQ-020, restricted on-prem deployments).
+	OIDC    OIDCConfig       `yaml:"oidc"`
+	GitHub  GitHubAuthConfig `yaml:"github"`
+	Local   LocalAuthConfig  `yaml:"local"`
+	DevUser *DevUser         `yaml:"dev_user"`
+}
+
+// TenantConfig declares the deployment's own (on-prem) tenant — an ordinary
+// config-provider tenant, first-class beside GitHub-App installations
+// (REQ-022.4). The YAML projects/sources/grants sync into it at boot. When
+// the block is omitted but projects or sources exist, Normalize synthesizes
+// it (slug "default"); a hosted deployment omits both and boots tenant-less.
+type TenantConfig struct {
+	Slug        string `yaml:"slug"`         // URL segment: /t/<slug>/…
+	DisplayName string `yaml:"display_name"` // switcher label
+	// DefaultRole is the role every authenticated user is auto-enrolled
+	// with: editor (default, self-host semantics), maintainer, viewer, or
+	// none — with none, users reach only repos explicitly granted to them
+	// (REQ-020, restricted on-prem deployments).
 	DefaultRole string `yaml:"default_role"`
+	// AdminEmails bootstrap tenant administration: users whose email matches
+	// (case-insensitive, any provider) get the admin role on login. Without
+	// it a fresh deployment has no reachable management API.
+	AdminEmails []string `yaml:"admin_emails"`
 }
 
 type SessionConfig struct {
@@ -207,6 +216,7 @@ type Config struct {
 	DataDir  string          `yaml:"data_dir"`
 	BaseURL  string          `yaml:"base_url"`
 	Database DatabaseConfig  `yaml:"database"`
+	Tenant   *TenantConfig   `yaml:"tenant"`
 	Projects []ProjectConfig `yaml:"projects"`
 	Sources  []SourceConfig  `yaml:"sources"`
 	// Grants: source names granted to the default tenant (stage 2).
@@ -270,6 +280,22 @@ func Load(path string) (*Config, error) {
 // Idempotent — Load calls it, and test fixtures that build Config literals
 // may call it again.
 func (c *Config) Normalize() {
+	// the config tenant: synthesized when content is declared without one —
+	// the ONLY place a default slug exists (REQ-022.4)
+	if c.Tenant == nil && (len(c.Projects) > 0 || len(c.Sources) > 0 || len(c.Repos) > 0) {
+		c.Tenant = &TenantConfig{}
+	}
+	if c.Tenant != nil {
+		if c.Tenant.Slug == "" {
+			c.Tenant.Slug = "default"
+		}
+		if c.Tenant.DisplayName == "" {
+			c.Tenant.DisplayName = "Workspace"
+		}
+		if c.Tenant.DefaultRole == "" {
+			c.Tenant.DefaultRole = "editor"
+		}
+	}
 	legacy := c.Repos
 	if len(c.Projects) > 0 || len(c.Sources) > 0 {
 		legacy = nil // already normalized (or v2 config); never map twice
@@ -359,10 +385,12 @@ func (c *Config) validate() error {
 	if !c.Auth.OIDC.Enabled && !c.Auth.GitHub.Enabled && !c.Auth.Local.Enabled {
 		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
 	}
-	switch c.Auth.DefaultRole {
-	case "", "editor", "maintainer", "viewer", "none":
-	default:
-		return fmt.Errorf("auth.default_role must be editor, maintainer, viewer or none (got %q)", c.Auth.DefaultRole)
+	if c.Tenant != nil {
+		switch c.Tenant.DefaultRole {
+		case "", "editor", "maintainer", "viewer", "none":
+		default:
+			return fmt.Errorf("tenant.default_role must be editor, maintainer, viewer or none (got %q)", c.Tenant.DefaultRole)
+		}
 	}
 	if c.Database.URL == "" && c.Database.URLEnv == "" {
 		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")
@@ -370,9 +398,8 @@ func (c *Config) validate() error {
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")
 	}
-	if len(c.Projects) == 0 {
-		return fmt.Errorf("at least one project must be configured (projects: or a legacy writable repos: entry)")
-	}
+	// zero projects is legal: a hosted deployment starts empty and gains
+	// tenants through GitHub App installations (REQ-022.5)
 	// projects and sources share the /api/repos/{x} namespace — ids must be
 	// unique across both
 	seen := map[string]bool{}

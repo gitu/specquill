@@ -53,10 +53,6 @@ type Repo struct {
 	done chan struct{} // closed by Manager.RemoveRepo; stops the sync loop
 }
 
-// DefaultTenant is the built-in tenant that mirrors the YAML repos list
-// (self-hosting); GitHub App installations become further tenants.
-const DefaultTenant = "default"
-
 func NewManager(cfg *config.Config) (*Manager, error) {
 	m := &Manager{
 		dataDir:   cfg.DataDir,
@@ -64,7 +60,10 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		repos:     map[string]*Repo{},
 	}
 	for _, rc := range cfg.Repos {
-		m.add(DefaultTenant, rc)
+		if cfg.Tenant == nil {
+			return nil, fmt.Errorf("repos configured without a tenant block (config.Normalize not applied?)")
+		}
+		m.add(cfg.Tenant.Slug, rc)
 	}
 	return m, nil
 }

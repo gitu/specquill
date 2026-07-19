@@ -49,6 +49,7 @@ func setup(t *testing.T) *env {
 	run("-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
 	cfg := &config.Config{
+		Tenant:  &config.TenantConfig{Slug: "default", DisplayName: "Workspace", DefaultRole: "editor"},
 		DataDir: filepath.Join(tmp, "data"),
 		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
 		Repos:   []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"}},

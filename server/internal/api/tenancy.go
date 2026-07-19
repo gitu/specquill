@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"specquill/server/internal/auth"
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
@@ -67,11 +66,12 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 }
 
 // memberships returns the user's tenants, auto-enrolling first-time users
-// into the default config tenant when one exists — with the role from
-// auth.default_role (editor unless configured; none disables auto-enroll,
-// leaving access to explicit per-repo grants). Users whose email is in
-// auth.admin_emails are promoted to admin there — the bootstrap for a fresh
-// deployment, where otherwise nobody could reach the management API.
+// into the deployment's config tenant when one is declared — with the role
+// from tenant.default_role (editor unless configured; none disables
+// auto-enroll, leaving access to explicit per-repo grants). Users whose
+// email is in tenant.admin_emails are promoted to admin there — the
+// bootstrap for a fresh deployment, where otherwise nobody could reach the
+// management API.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 	// github tenants first: roles derive from repo permissions (TTL-cached;
 	// a no-op unless the GitHub App is configured and the user is a github
@@ -89,11 +89,14 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 		}
 	}
 	if !real {
-		def, err := s.store.TenantBySlug(gitx.DefaultTenant)
-		if err != nil || def.Provider != "config" {
-			return ms, nil // no self-host tenant → membership comes from GitHub sync (or grants)
+		if s.cfg.Tenant == nil {
+			return ms, nil // hosted: membership comes from GitHub sync (or grants)
 		}
-		role := s.cfg.Auth.DefaultRole
+		def, err := s.store.TenantBySlug(s.cfg.Tenant.Slug)
+		if err != nil || def.Provider != "config" {
+			return ms, nil
+		}
+		role := s.cfg.Tenant.DefaultRole
 		if role == "" {
 			role = "editor"
 		}
@@ -125,7 +128,10 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 }
 
 func (s *Server) isConfiguredAdmin(email string) bool {
-	for _, a := range s.cfg.Auth.AdminEmails {
+	if s.cfg.Tenant == nil {
+		return false
+	}
+	for _, a := range s.cfg.Tenant.AdminEmails {
 		if strings.EqualFold(a, email) {
 			return true
 		}
