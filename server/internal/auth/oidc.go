@@ -79,12 +79,15 @@ type Claims struct {
 }
 
 // Finish validates the callback and returns the identity claims.
-func (o *OIDC) Finish(w http.ResponseWriter, r *http.Request) (*Claims, error) {
+func (o *OIDC) Finish(w http.ResponseWriter, r *http.Request, secure bool) (*Claims, error) {
 	cookie, err := r.Cookie(oauthCookie)
 	if err != nil {
 		return nil, fmt.Errorf("missing oauth state cookie")
 	}
-	http.SetCookie(w, &http.Cookie{Name: oauthCookie, Value: "", Path: "/auth", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthCookie, Value: "", Path: "/auth", MaxAge: -1,
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
 	var state, verifier string
 	if i := len(cookie.Value); i > 0 {
 		parts := [2]string{}

@@ -47,7 +47,7 @@ func (s *Server) authGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "github login not enabled")
 		return
 	}
-	id, err := s.github.Finish(w, r)
+	id, err := s.github.Finish(w, r, s.cfg.Session.CookieSecure)
 	if err != nil {
 		log.Printf("github callback: %v", err)
 		http.Redirect(w, r, "/#/login?error=github", http.StatusFound)
@@ -81,7 +81,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "oidc not enabled")
 		return
 	}
-	claims, err := s.oidc.Finish(w, r)
+	claims, err := s.oidc.Finish(w, r, s.cfg.Session.CookieSecure)
 	if err != nil {
 		log.Printf("oidc callback: %v", err)
 		http.Redirect(w, r, "/#/login?error=oidc", http.StatusFound)

@@ -45,7 +45,10 @@ func (s *Sessions) Clear(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(SessionCookie); err == nil {
 		_ = s.Store.DeleteSession(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: SessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: s.Secure, SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // Resolve returns the logged-in user for a request, or nil.

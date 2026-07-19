@@ -50,7 +50,10 @@ func (r *Repo) DiffRange(target, source string) ([]DiffFile, error) {
 // DiffWorktree diffs uncommitted changes in a branch worktree against HEAD,
 // including untracked files (synthesized as all-additions).
 func (r *Repo) DiffWorktree(branch string) ([]DiffFile, error) {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return nil, err
+	}
 	wt, err := r.Worktree(branch)
 	if err != nil {
 		return nil, err
@@ -185,7 +188,11 @@ func parseUnifiedDiff(raw string) []DiffFile {
 
 // Head returns the commit sha of a branch.
 func (r *Repo) Head(branch string) (string, error) {
-	out, err := run(r.gitDir, nil, "rev-parse", "refs/heads/"+r.ResolveRef(branch))
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return "", err
+	}
+	out, err := run(r.gitDir, nil, "rev-parse", "refs/heads/"+branch)
 	if err != nil {
 		return "", err
 	}

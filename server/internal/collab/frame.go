@@ -37,8 +37,15 @@ type Peer struct {
 	Name   string `json:"name"`
 }
 
+// maxControlPayload bounds encoded control frames. Real payloads are tiny
+// (peer lists, shas); the cap guards the allocation below.
+const maxControlPayload = 1 << 20
+
 func encodeControl(c Control) []byte {
 	raw, _ := json.Marshal(c)
+	if len(raw) > maxControlPayload {
+		raw = []byte(`{"kind":"error","code":"oversize","msg":"control payload too large"}`)
+	}
 	out := make([]byte, 1+len(raw))
 	out[0] = FrameControl
 	copy(out[1:], raw)

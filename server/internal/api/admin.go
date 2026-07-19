@@ -159,6 +159,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "contentRoot must not traverse")
 		return
 	}
+	// a remote starting with "-" would be parsed by git as an option
+	// (e.g. --upload-pack executes commands) — refuse it outright
+	if strings.HasPrefix(body.Remote, "-") {
+		jsonError(w, http.StatusBadRequest, "invalid remote")
+		return
+	}
 	if _, err := s.store.TenantProject(t.ID, body.ID); err == nil {
 		jsonError(w, http.StatusConflict, "project "+body.ID+" already exists")
 		return

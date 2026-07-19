@@ -75,12 +75,15 @@ type GitHubIdentity struct {
 }
 
 // Finish validates the callback, exchanges the code, and resolves the user.
-func (g *GitHub) Finish(w http.ResponseWriter, r *http.Request) (*GitHubIdentity, error) {
+func (g *GitHub) Finish(w http.ResponseWriter, r *http.Request, secure bool) (*GitHubIdentity, error) {
 	cookie, err := r.Cookie(ghOauthCookie)
 	if err != nil {
 		return nil, fmt.Errorf("missing oauth state cookie")
 	}
-	http.SetCookie(w, &http.Cookie{Name: ghOauthCookie, Value: "", Path: "/auth", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: ghOauthCookie, Value: "", Path: "/auth", MaxAge: -1,
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
 	if r.URL.Query().Get("state") != cookie.Value {
 		return nil, fmt.Errorf("state mismatch")
 	}

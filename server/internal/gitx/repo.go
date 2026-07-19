@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -204,7 +205,7 @@ func (r *Repo) ensure() error {
 		}
 		return err
 	}
-	if _, err := run("", nil, "clone", "--bare", r.Cfg.Remote, r.gitDir); err != nil {
+	if _, err := run("", nil, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir); err != nil {
 		return err
 	}
 	// Writable repos keep local heads authoritative; remote state is tracked
@@ -236,6 +237,10 @@ func slug(branch string) string {
 // Worktree returns the checkout directory for branch, creating it lazily.
 // Only valid on writable repos.
 func (r *Repo) Worktree(branch string) (string, error) {
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return "", err
+	}
 	if !r.Writable() {
 		return "", fmt.Errorf("repo %s is read-only", r.Cfg.ID)
 	}
@@ -273,13 +278,35 @@ func (r *Repo) ResolveRef(ref string) string {
 	return ref
 }
 
+// refRe constrains refs to what specquill deals in — branch names, tags and
+// shas: slash-separated segments of word chars, dots and dashes, bounded by
+// alphanumerics.
+var refRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$`)
+
+// resolveRef defaults empty refs to the configured default branch and
+// rejects anything git could misparse: option lookalikes (leading "-"),
+// traversal (".."), and meta characters. Every gitx entry point taking a
+// client-supplied ref funnels through here before the value reaches git
+// argv or a filesystem path.
+func (r *Repo) resolveRef(ref string) (string, error) {
+	if ref == "" {
+		return r.Cfg.DefaultBranch, nil
+	}
+	if strings.HasPrefix(ref, "-") || strings.Contains(ref, "..") || !refRe.MatchString(ref) {
+		return "", fmt.Errorf("invalid ref %q", ref)
+	}
+	return ref, nil
+}
+
 // safeRelPath validates a client-supplied repo path: relative, no traversal.
 func safeRelPath(p string) (string, error) {
-	if p == "" {
-		return "", fmt.Errorf("empty path")
+	// ".." anywhere is rejected outright — no repo file legitimately needs
+	// it, and it keeps the traversal check independent of Clean's rewriting
+	if p == "" || strings.Contains(p, "..") {
+		return "", fmt.Errorf("invalid path %q", p)
 	}
 	clean := filepath.ToSlash(filepath.Clean(p))
-	if strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+	if !filepath.IsLocal(clean) {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
 	if strings.HasPrefix(clean, ".git/") || clean == ".git" {

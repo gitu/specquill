@@ -50,7 +50,14 @@ func (r *Repo) mergeTree(target, source string) (tree string, conflicts []string
 // The merging user is author and committer; the service identity lands as a
 // Co-authored-by trailer.
 func (r *Repo) Merge(target, source, message, authorName, authorEmail, strategy string) (string, *MergeCheck, error) {
-	target, source = r.ResolveRef(target), r.ResolveRef(source)
+	target, err := r.resolveRef(target)
+	if err != nil {
+		return "", nil, err
+	}
+	source, err = r.resolveRef(source)
+	if err != nil {
+		return "", nil, err
+	}
 	if !r.BranchExists(target) || !r.BranchExists(source) {
 		return "", nil, fmt.Errorf("branch not found")
 	}

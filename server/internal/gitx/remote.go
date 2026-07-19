@@ -50,7 +50,10 @@ func (r *Repo) Fetch() error {
 // Pull fast-forwards branch onto origin/<branch> after a fetch. It never
 // merges: dirty worktrees and diverged branches return typed errors.
 func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
-	branch = r.ResolveRef(branch)
+	branch, err = r.resolveRef(branch)
+	if err != nil {
+		return "", false, err
+	}
 	if err := r.Fetch(); err != nil {
 		return "", false, err
 	}
@@ -78,10 +81,13 @@ func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
 
 // Push publishes a branch to origin.
 func (r *Repo) Push(branch string) error {
-	branch = r.ResolveRef(branch)
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	args, env := r.credentialArgsEnv()
-	_, err := run(r.gitDir, env, append(args, "push", "origin", branch)...)
+	_, err = run(r.gitDir, env, append(args, "push", "origin", branch)...)
 	return err
 }
