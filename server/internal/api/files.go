@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 )
@@ -22,7 +23,7 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		DefaultBranch     string   `json:"defaultBranch"`
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
-		Role              string   `json:"role"` // caller's effective role (viewer|member|admin)
+		Role              string   `json:"role"` // caller's effective role (viewer|editor|maintainer|admin)
 	}
 	t, ok := s.tenant(w, r)
 	if !ok {
@@ -60,11 +61,11 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		// repos the caller has no effective role on are invisible (REQ-020:
 		// grant-only users see exactly their granted repos)
 		role := s.effectiveRepoRole(u, t, repo.Cfg.ID)
-		if roleRank[role] < roleRank["viewer"] {
+		if role < authz.Viewer {
 			continue
 		}
 		info := repoInfo{
-			Role: role,
+			Role:              role.String(),
 			ID:                repo.Cfg.ID,
 			Kind:              kind,
 			Mode:              string(repo.Cfg.Mode),

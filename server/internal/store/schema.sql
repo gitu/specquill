@@ -52,7 +52,7 @@ ALTER TABLE tenant_repos ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAU
 CREATE TABLE IF NOT EXISTS tenant_members (
   tenant_id BIGINT NOT NULL REFERENCES tenants(id),
   user_id   BIGINT NOT NULL REFERENCES users(id),
-  role      TEXT NOT NULL DEFAULT 'member',   -- admin | member | viewer
+  role      TEXT NOT NULL DEFAULT 'editor',   -- admin | maintainer | editor | viewer
   synced_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, user_id)
 );
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS repo_grants (
   tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
   repo_id    TEXT   NOT NULL,
   user_id    BIGINT NOT NULL REFERENCES users(id),
-  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is tenant-scoped)
+  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | editor | maintainer | admin (REQ-021)
   granted_by BIGINT REFERENCES users(id),
   created_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, repo_id, user_id),

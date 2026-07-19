@@ -125,9 +125,9 @@ type AuthConfig struct {
 	AdminEmails []string `yaml:"admin_emails"`
 	DevUser     *DevUser `yaml:"dev_user"`
 	// DefaultRole is the role every authenticated user is auto-enrolled with
-	// in the default (config) tenant: member (default, self-host semantics),
-	// viewer, or none — with none, users reach only repos explicitly granted
-	// to them (REQ-020, restricted on-prem deployments).
+	// in the default (config) tenant: editor (default, self-host semantics),
+	// maintainer, viewer, or none — with none, users reach only repos
+	// explicitly granted to them (REQ-020, restricted on-prem deployments).
 	DefaultRole string `yaml:"default_role"`
 }
 
@@ -211,9 +211,9 @@ type Config struct {
 	Sources  []SourceConfig  `yaml:"sources"`
 	// Grants: source names granted to the default tenant (stage 2).
 	// Omitted/empty = all sources granted (self-host convenience).
-	Grants  []string      `yaml:"grants"`
-	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
-	Git     GitConfig     `yaml:"git"`
+	Grants    []string        `yaml:"grants"`
+	Repos     []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Git       GitConfig       `yaml:"git"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Session   SessionConfig   `yaml:"session"`
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
@@ -360,9 +360,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
 	}
 	switch c.Auth.DefaultRole {
-	case "", "member", "viewer", "none":
+	case "", "editor", "maintainer", "viewer", "none":
 	default:
-		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
+		return fmt.Errorf("auth.default_role must be editor, maintainer, viewer or none (got %q)", c.Auth.DefaultRole)
 	}
 	if c.Database.URL == "" && c.Database.URLEnv == "" {
 		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")

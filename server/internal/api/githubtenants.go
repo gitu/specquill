@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/config"
 	"specquill/server/internal/store"
 )
@@ -27,7 +28,7 @@ type roleCache struct {
 	m  map[string]roleEntry // "<tenantID>:<userID>"
 }
 type roleEntry struct {
-	role    string // admin | member | viewer | "" (no access)
+	role    string // authz ladder string: admin | maintainer | editor | viewer | "" (no access)
 	expires time.Time
 }
 
@@ -47,20 +48,6 @@ func (c *roleCache) put(key, role string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.m[key] = roleEntry{role: role, expires: time.Now().Add(roleTTL)}
-}
-
-// githubRole maps a GitHub repo permission onto a tenant role.
-func githubRole(permission string) string {
-	switch permission {
-	case "admin":
-		return "admin"
-	case "write", "maintain":
-		return "member"
-	case "read", "triage":
-		return "viewer"
-	default:
-		return ""
-	}
 }
 
 // syncGitHubMemberships derives the user's role in every github tenant from
@@ -107,8 +94,7 @@ func (s *Server) syncGitHubMemberships(u *store.User) {
 					}
 				}
 			}
-			resolved, failed := "", false
-			rank := map[string]int{"viewer": 1, "member": 2, "admin": 3}
+			resolved, failed := authz.None, false
 			for _, fullName := range names {
 				perm, err := s.ghApp.Permission(ten.Installation, fullName, login)
 				if err != nil {
@@ -116,14 +102,12 @@ func (s *Server) syncGitHubMemberships(u *store.User) {
 					failed = true
 					break
 				}
-				if r := githubRole(perm); rank[r] > rank[resolved] {
-					resolved = r
-				}
+				resolved = authz.Max(resolved, authz.FromGitHub(perm))
 			}
 			if failed {
 				continue // keep whatever membership exists
 			}
-			role = resolved
+			role = resolved.String()
 			s.ghRoles.put(key, role)
 		}
 		cur, err := s.store.MemberRole(ten.ID, u.ID)

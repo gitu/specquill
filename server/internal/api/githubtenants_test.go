@@ -251,12 +251,12 @@ func TestGitHubAppRoleMapping(t *testing.T) {
 		t.Fatal(rec.Body.String())
 	}
 
-	// write → member
+	// write → editor
 	fx.permissions["flo"] = "write"
 	_, cookie := githubLogin(t, h)
 	code, body := tenantReq(t, h, cookie, "GET", "/api/me", "acme", nil)
-	if code != http.StatusOK || !strings.Contains(body, `"role":"member"`) {
-		t.Fatalf("write → member: %d %s", code, body)
+	if code != http.StatusOK || !strings.Contains(body, `"role":"editor"`) {
+		t.Fatalf("write → editor: %d %s", code, body)
 	}
 
 	// read → viewer, on a fresh server (the role TTL cache pins per instance)
@@ -273,5 +273,21 @@ func TestGitHubAppRoleMapping(t *testing.T) {
 	code, body = tenantReq(t, h2, cookie2, "GET", "/api/me", "acme", nil)
 	if code != http.StatusOK || !strings.Contains(body, `"role":"viewer"`) {
 		t.Fatalf("read → viewer: %d %s", code, body)
+	}
+
+	// maintain → maintainer (REQ-021.3), again on a fresh instance
+	h3, fx3, _ := ghAppTestServer(t)
+	rec = signedHook(t, h3, "installation", map[string]any{
+		"action":       "created",
+		"installation": map[string]any{"id": 7, "account": map[string]any{"login": "acme"}},
+	}, "app-hook-secret")
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	fx3.permissions["flo"] = "maintain"
+	_, cookie3 := githubLogin(t, h3)
+	code, body = tenantReq(t, h3, cookie3, "GET", "/api/me", "acme", nil)
+	if code != http.StatusOK || !strings.Contains(body, `"role":"maintainer"`) {
+		t.Fatalf("maintain → maintainer: %d %s", code, body)
 	}
 }

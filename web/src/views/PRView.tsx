@@ -33,7 +33,9 @@ export function PRView() {
   const p = pr.data;
   const files = diff.data?.files || [];
   const currentApprovals = p.approvals.filter((a) => a.current);
-  const canMerge = p.state === 'open' && p.mergeable !== false;
+  // merging into a protected target is maintainer-gated (REQ-021.2)
+  const mayMerge = app.canMerge || !app.protectedBranches.includes(p.target);
+  const canMerge = p.state === 'open' && p.mergeable !== false && mayMerge;
 
   const doAction = async (action: 'approve' | 'merge' | 'close', payload?: unknown) => {
     setError('');
@@ -64,7 +66,7 @@ export function PRView() {
           {p.mergeable === false && <span style={sx('font-size:11.5px;color:var(--del);font-weight:600')}>⚠ conflicts: {(p.conflicts || []).join(', ')}</span>}
           <div style={sx('flex:1')} />
           {error && <span style={sx('color:var(--del);font-size:12px')}>{error}</span>}
-          {p.state === 'open' && app.repoRole !== 'viewer' && (
+          {p.state === 'open' && app.canEdit && (
             <>
               <button onClick={() => doAction('close')} style={sx('height:32px;padding:0 12px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12.5px;cursor:pointer')}>Close</button>
               <button onClick={() => doAction('approve')} style={sx('height:32px;padding:0 14px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
@@ -80,7 +82,7 @@ export function PRView() {
                 disabled={!canMerge || act.isPending}
                 style={sx('height:32px;padding:0 15px;border:none;border-radius:8px;background:var(--data);color:#fff;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;' + (!canMerge ? 'opacity:.5' : ''))}
               >
-                {act.isPending ? 'Working…' : 'Merge'}
+                {act.isPending ? 'Working…' : mayMerge ? 'Merge' : 'Merge (maintainer)'}
               </button>
             </>
           )}

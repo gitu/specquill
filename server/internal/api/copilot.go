@@ -9,6 +9,7 @@ import (
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 )
@@ -398,8 +399,8 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 	}
 	// same gate as the writableH copilot routes: copilot drafts write
 	u := auth.UserFrom(r.Context())
-	if roleRank[s.effectiveRepoRole(u, t, ps[0].RepoID)] < roleRank["member"] {
-		jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
+	if s.effectiveRepoRole(u, t, ps[0].RepoID) < authz.Editor {
+		jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
 		return nil, false
 	}
 	repo, ok := s.git.Repo(t.Slug + "/" + ps[0].RepoID)

@@ -155,7 +155,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
   if (!members.data) return null; // 403 (not an admin) or still loading
   const roleChip = (role: string) =>
     'font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
-    (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'member' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
+    (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'maintainer' ? 'background:var(--prod-bg);color:var(--prod)' : role === 'editor' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
   const input = 'height:30px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px';
   const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
   return (
@@ -213,7 +213,9 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
             onChange={(e) => setForm({ ...form, user: e.target.value })} style={sx(input + ';flex:1;min-width:200px')} />
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={sx(input + ';width:110px')}>
             <option value="viewer">viewer</option>
-            <option value="member">member</option>
+            <option value="editor">editor</option>
+            <option value="maintainer">maintainer</option>
+            <option value="admin">admin</option>
           </select>
           <button type="submit" disabled={add.isPending || !active}
             style={sx('height:30px;padding:0 14px;border:none;border-radius:7px;background:var(--brand);color:var(--brand-fg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>

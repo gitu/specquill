@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
 )
 
 func login(t *testing.T, h http.Handler) *http.Cookie {
@@ -22,6 +25,26 @@ func login(t *testing.T, h http.Handler) *http.Cookie {
 	}
 	t.Fatal("no session cookie")
 	return nil
+}
+
+// promoteTenantRole sets the user's role in the default config tenant —
+// tests exercising gates above the auto-enrolled editor floor use it.
+func promoteTenantRole(t *testing.T, st *store.Store, email, role string) {
+	t.Helper()
+	u, err := st.UserByEmailOrLogin(email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ten, err := st.TenantBySlug(gitx.DefaultTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureMember(ten.ID, u.ID, role); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetMemberRole(ten.ID, u.ID, role); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, url string, body any) (int, map[string]any) {

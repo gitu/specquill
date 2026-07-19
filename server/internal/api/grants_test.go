@@ -39,7 +39,7 @@ func userID(t *testing.T, st *store.Store, identifier string) int64 {
 }
 
 // The viewer-write gap: a viewer reads (incl. PRs) and comments but every
-// mutation is refused; a per-repo member grant lifts the same user to write.
+// mutation is refused; a per-repo editor grant lifts the same user to write.
 func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	h, st, _ := testServerFull(t, false)
 	cookie := login(t, h)
@@ -72,8 +72,8 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 		t.Fatalf("me: %d %v", code, out)
 	}
 
-	// explicit member grant on the repo wins over the derived viewer role
-	if err := st.UpsertRepoGrant(def.ID, "w", flo, "member", 0); err != nil {
+	// explicit editor grant on the repo wins over the derived viewer role
+	if err := st.UpsertRepoGrant(def.ID, "w", flo, "editor", 0); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/specs/a.md", map[string]string{"content": "x"}); code != http.StatusOK {
@@ -137,14 +137,14 @@ func TestGrantsAPI(t *testing.T) {
 	cookie := login(t, h) // flo → admin via admin_emails
 	wRepoRow(t, st)
 
-	// role validation
-	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "x@y.z", "role": "admin"})
+	// role validation: only ladder roles are grantable (REQ-021)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "x@y.z", "role": "member"})
 	if code != http.StatusBadRequest {
-		t.Fatalf("admin grant must be rejected: got %d %v", code, out)
+		t.Fatalf("unknown role must be rejected: got %d %v", code, out)
 	}
 
 	// unknown identity → invite
-	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "Eve@Test.Local", "role": "member"})
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "Eve@Test.Local", "role": "editor"})
 	if code != http.StatusOK || out["status"] != "invited" || out["kind"] != "email" {
 		t.Fatalf("invite: want invited/email, got %d %v", code, out)
 	}
@@ -154,7 +154,7 @@ func TestGrantsAPI(t *testing.T) {
 	}
 
 	// eve logs in → invite becomes a grant; her default-role viewer floor is
-	// elevated to member on w
+	// elevated to editor on w
 	hash, _ := auth.HashPassword("hunter2secret")
 	if err := st.AddLocalUser("eve", "Eve Test", "eve@test.local", hash); err != nil {
 		t.Fatal(err)
@@ -234,12 +234,12 @@ func TestGitHubPerRepoDerivationAndGrant(t *testing.T) {
 		t.Fatalf("derived viewer write: want 403 role_forbidden, got %d %s", code, body)
 	}
 
-	// an explicit member grant elevates past the git permission
+	// an explicit editor grant elevates past the git permission
 	flo, err := st.UserByEmailOrLogin("flo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRepoGrant(acme.ID, "specs", flo.ID, "member", 0); err != nil {
+	if err := st.UpsertRepoGrant(acme.ID, "specs", flo.ID, "editor", 0); err != nil {
 		t.Fatal(err)
 	}
 	code, body = tenantReq(t, h, cookie, "PUT", "/api/repos/specs/files/notes.md", "acme", map[string]string{"content": "x"})
@@ -251,7 +251,7 @@ func TestGitHubPerRepoDerivationAndGrant(t *testing.T) {
 	if err := st.DeleteMember(acme.ID, flo.ID); err != nil {
 		t.Fatal(err)
 	}
-	if role, err := st.RepoGrantRole(acme.ID, "specs", flo.ID); err != nil || role != "member" {
+	if role, err := st.RepoGrantRole(acme.ID, "specs", flo.ID); err != nil || role != "editor" {
 		t.Fatalf("grant lost on revocation: %v %q", err, role)
 	}
 }

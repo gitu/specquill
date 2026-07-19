@@ -1,8 +1,10 @@
 package api
 
-// Per-repo grant management (REQ-020) — tenant-admin gated. A grant targets
-// an existing user by email or GitHub login; unknown identities become
-// pending invites, claimed on the invitee's first login.
+// Per-repo grant management (REQ-020) — repo-admin gated (REQ-021.4): a
+// tenant admin derives repo admin everywhere, and a per-repo admin grant
+// confers it without any tenant-level rights. A grant targets an existing
+// user by email or GitHub login; unknown identities become pending invites,
+// claimed on the invitee's first login.
 
 import (
 	"encoding/json"
@@ -12,8 +14,32 @@ import (
 	"strings"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/store"
 )
+
+// repoAdminH gates repo-scoped management on the EFFECTIVE repo role
+// (≥ admin) — unlike roleH it honors GitHub repo-admin derivation and
+// explicit admin grants, not just the tenant_members row.
+func (s *Server) repoAdminH(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		t, ok := s.tenant(w, r)
+		if !ok {
+			return
+		}
+		repoID, err := s.grantRepoID(t, r.PathValue("repo"))
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "unknown repo")
+			return
+		}
+		u := auth.UserFrom(r.Context())
+		if s.effectiveRepoRole(u, t, repoID) < authz.Admin {
+			jsonError2(w, http.StatusForbidden, "requires repo admin role", "role_forbidden")
+			return
+		}
+		h(w, r)
+	}
+}
 
 // grantRepoID resolves the {repo} URL segment to the tenant_repos repo id
 // (grants are per repository — a monorepo's projects share one grant).
@@ -86,9 +112,8 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "user (email or github login) is required")
 		return
 	}
-	if body.Role != "viewer" && body.Role != "member" {
-		// per-repo admin is meaningless — repo/project management is tenant-scoped
-		jsonError(w, http.StatusBadRequest, "role must be viewer or member")
+	if !authz.ValidGrant(body.Role) {
+		jsonError(w, http.StatusBadRequest, "role must be viewer, editor, maintainer or admin")
 		return
 	}
 	caller := auth.UserFrom(r.Context())

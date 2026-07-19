@@ -30,8 +30,12 @@ interface AppState {
   switchBranch: (b: string, opts?: { carryDraft?: boolean }) => void;
   protectedBranches: string[];
   isProtectedBranch: boolean;
-  /** the caller's effective role on the active project (REQ-020) */
-  repoRole: 'viewer' | 'member' | 'admin';
+  /** the caller's effective role on the active project (REQ-020/REQ-021) */
+  repoRole: 'viewer' | 'editor' | 'maintainer' | 'admin';
+  /** ladder-derived gates — write chrome, merge-into-protected, repo admin */
+  canEdit: boolean;
+  canMerge: boolean;
+  canAdmin: boolean;
   theme: 'light' | 'dark';        // resolved — what actually renders
   themeMode: ThemeMode;           // the preference behind it
   systemTheme: 'light' | 'dark';  // what the OS currently prefers
@@ -55,6 +59,9 @@ interface AppState {
 const Ctx = createContext<AppState>(null as unknown as AppState);
 export const useApp = () => useContext(Ctx);
 
+// REQ-021 ladder ranks — gates compare with >= so unknown roles stay closed
+const RANK = { viewer: 0, editor: 1, maintainer: 2, admin: 3 } as const;
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
   const navigate = useNavigate();
@@ -68,6 +75,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     projects.find((r) => r.id === urlPid) ||
     projects.find((r) => r.id === projectId) ||
     projects[0];
+  const repoRole = (writable?.role && writable.role in RANK ? writable.role : 'viewer') as
+    'viewer' | 'editor' | 'maintainer' | 'admin';
   const [branch, setBranch] = useState('');
 
   // remember the project the URL names (back/forward included)
@@ -216,8 +225,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       protectedBranches,
       isProtectedBranch: protectedBranches.includes(effBranch),
       // least privilege until the repo list answers — write chrome must not
-      // flash for viewers; 'member' only as backcompat when role is absent
-      repoRole: writable ? writable.role || 'member' : 'viewer',
+      // flash for viewers
+      repoRole,
+      canEdit: RANK[repoRole] >= RANK.editor,
+      canMerge: RANK[repoRole] >= RANK.maintainer,
+      canAdmin: RANK[repoRole] >= RANK.admin,
       theme,
       themeMode,
       systemTheme,
