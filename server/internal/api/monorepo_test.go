@@ -147,7 +147,7 @@ func TestMonorepoContentRoot(t *testing.T) {
 // doJSONList decodes a JSON array response into its `path` fields (tree).
 func doJSONList(t *testing.T, h http.Handler, cookie *http.Cookie, method, url string) (int, []string) {
 	t.Helper()
-	req := httptest.NewRequest(method, url, nil)
+	req := httptest.NewRequest(method, apiURL(url), nil)
 	req.Header.Set("X-SpecQuill", "1")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

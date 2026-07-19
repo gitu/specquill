@@ -126,7 +126,7 @@ func TestMoveAndHistory(t *testing.T) {
 // doJSONList2 decodes a JSON array and extracts one string field per element.
 func doJSONList2(t *testing.T, h http.Handler, cookie *http.Cookie, method, url, field string) (int, []string) {
 	t.Helper()
-	req := httptest.NewRequest(method, url, nil)
+	req := httptest.NewRequest(method, apiURL(url), nil)
 	req.Header.Set("X-SpecQuill", "1")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

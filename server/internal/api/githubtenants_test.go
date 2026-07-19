@@ -160,9 +160,11 @@ func tenantReq(t *testing.T, h http.Handler, cookie *http.Cookie, method, url, t
 		b, _ := json.Marshal(body)
 		payload = *strings.NewReader(string(b))
 	}
+	if bare, _, _ := strings.Cut(url, "?"); bare != "/api/me" && strings.HasPrefix(url, "/api/") {
+		url = "/api/t/" + tenant + url[len("/api"):]
+	}
 	req := httptest.NewRequest(method, url, &payload)
 	req.Header.Set("X-SpecQuill", "1")
-	req.Header.Set("X-SpecQuill-Tenant", tenant)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

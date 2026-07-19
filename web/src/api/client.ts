@@ -9,25 +9,30 @@ export class ApiError extends Error {
   }
 }
 
-/** The pinned tenant (multi-tenant setups); '' lets the server infer the
- * user's only membership. Every API call carries it as X-SpecQuill-Tenant. */
-export function activeTenant(): string {
-  return localStorage.getItem('specquill-tenant') || '';
+/** The tenant named by the current /t/<tenant> route — set synchronously
+ * during the tenant layout's render (top-down, before any child queryFn
+ * fires). The API path is the only tenant channel (REQ-022). */
+let routeTenant = '';
+export function setRouteTenant(slug: string) {
+  routeTenant = slug;
 }
 
-/** Pin a tenant and reload — all cached state is tenant-scoped. */
-export function switchTenant(slug: string) {
-  if (slug) localStorage.setItem('specquill-tenant', slug);
-  else localStorage.removeItem('specquill-tenant');
-  window.location.href = '/';
+/** Rewrites a tenant-scoped '/api/x' path onto '/api/t/<tenant>/x'. Global
+ * endpoints (/api/me, /auth/*) pass through. Throws outside a /t/ route —
+ * failing loud beats a cross-tenant request. */
+export function apiPath(path: string): string {
+  if (!path.startsWith('/api/')) return path;
+  const bare = path.split('?')[0];
+  if (bare === '/api/me') return path;
+  if (!routeTenant) throw new Error('tenant-scoped API call outside /t/ route: ' + path);
+  return '/api/t/' + encodeURIComponent(routeTenant) + path.slice('/api'.length);
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiPath(path), {
     ...init,
     headers: {
       'X-SpecQuill': '1',
-      ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}),
       // FormData bodies set their own multipart boundary
       ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
@@ -46,17 +51,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** URL serving a repo file's raw bytes (images embedded in documents).
- * Carries the tenant as a query param — <img> tags can't send headers. */
+ * The tenant rides the path, so <img> tags need no header or query param. */
 export function rawUrl(repo: string, ref: string, path: string): string {
-  const tenant = activeTenant() ? `&tenant=${encodeURIComponent(activeTenant())}` : '';
-  return `/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}${tenant}`;
+  return apiPath(`/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}`);
 }
 
 /** binary-safe file save (excalidraw PNGs); same baseSha contract as PUT files */
 export async function putRaw(repo: string, branch: string, path: string, body: Blob, baseSha: string): Promise<{ sha: string }> {
-  const res = await fetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
+  const res = await fetch(apiPath(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`), {
     method: 'PUT',
-    headers: { 'X-SpecQuill': '1', ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}) },
+    headers: { 'X-SpecQuill': '1' },
     body,
   });
   if (!res.ok) {

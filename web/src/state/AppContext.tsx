@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useRepos, useSnapshot } from '../api/hooks';
 import { buildModel, WorkspaceModel } from '../lib/model';
 import { EntityDef, parseEntities } from '../lib/entities';
@@ -66,11 +66,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
+  // the tenant segment of /t/<tenant>/… — remembered state is tenant-scoped
+  // (the same project id may exist in two tenants)
+  const tenant = useParams().tenant || '';
   const projects = (repos.data || []).filter((r) => r.kind === 'project');
-  const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('specquill-project') || '');
+  const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('specquill-project:' + tenant) || '');
   // the URL is the source of truth for the active project; localStorage only
-  // seeds project-less entry points ("/", legacy deep links)
-  const urlPid = pathname.match(/^\/p\/([^/]+)/)?.[1];
+  // seeds project-less entry points (/t/<tenant>, legacy deep links)
+  const urlPid = pathname.match(/^\/t\/[^/]+\/p\/([^/]+)/)?.[1];
   const writable =
     projects.find((r) => r.id === urlPid) ||
     projects.find((r) => r.id === projectId) ||
@@ -82,15 +85,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // remember the project the URL names (back/forward included)
   useEffect(() => {
     if (urlPid && projects.some((r) => r.id === urlPid) && urlPid !== projectId) {
-      localStorage.setItem('specquill-project', urlPid);
+      localStorage.setItem('specquill-project:' + tenant, urlPid);
       setProjectId(urlPid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlPid, repos.data]);
 
-  // a URL naming an unknown project falls back to the default entry point
+  // a URL naming an unknown project falls back to the tenant entry point
   useEffect(() => {
-    if (repos.data && urlPid && !projects.some((r) => r.id === urlPid)) navigate('/', { replace: true });
+    if (repos.data && urlPid && !projects.some((r) => r.id === urlPid)) navigate('/t/' + tenant, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlPid, repos.data]);
 
@@ -129,11 +132,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // canonicalized into the path — except invite links (&invite=1), which the
   // editor handles itself. localStorage remains the fallback for URLs
   // naming no branch at all.
-  const pathBranch = (pathname.match(/^\/p\/[^/]+\/b\/([^/]+)/) || [])[1];
+  const pathBranch = (pathname.match(/^\/t\/[^/]+\/p\/[^/]+\/b\/([^/]+)/) || [])[1];
   const urlParams = new URLSearchParams(search);
   const queryBranch = urlParams.has('invite') ? '' : urlParams.get('branch') || '';
   const urlBranch = pathBranch ? decodeURIComponent(pathBranch) : queryBranch;
-  const storedBranch = (writable && localStorage.getItem('specquill-branch:' + writable.id)) || '';
+  const storedBranch = (writable && localStorage.getItem('specquill-branch:' + tenant + ':' + writable.id)) || '';
   const effBranch = branch || urlBranch || storedBranch || writable?.defaultBranch || 'main';
   const snapshot = useSnapshot(writable?.id, effBranch);
 
@@ -150,7 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // remembered per-project branch on reloads
   useEffect(() => {
     if (!repos.data || !writable?.id) return;
-    const m = pathname.match(/^\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
+    const m = pathname.match(/^\/t\/[^/]+\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
     if (!m) return;
     const cur = m[2] ? decodeURIComponent(m[2]) : '';
     const sp = new URLSearchParams(search);
@@ -158,19 +161,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (cur === effBranch && !legacy) return;
     if (legacy) sp.delete('branch');
     const q = sp.toString();
-    navigate('/p/' + m[1] + '/b/' + encodeURIComponent(effBranch) + (m[3] || '') + (q ? '?' + q : ''), { replace: true });
+    navigate('/t/' + tenant + '/p/' + m[1] + '/b/' + encodeURIComponent(effBranch) + (m[3] || '') + (q ? '?' + q : ''), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effBranch, pathname, search, repos.data, writable?.id]);
 
   useEffect(() => {
-    if (writable?.id && branch) localStorage.setItem('specquill-branch:' + writable.id, branch);
+    if (writable?.id && branch) localStorage.setItem('specquill-branch:' + tenant + ':' + writable.id, branch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branch, writable?.id]);
 
   // a remembered branch that no longer exists (merged, deleted, fixture
   // reset) must not wedge the workspace — drop it and fall back to default
   useEffect(() => {
     if (snapshot.error && !branch && storedBranch && writable?.id) {
-      localStorage.removeItem('specquill-branch:' + writable.id);
+      localStorage.removeItem('specquill-branch:' + tenant + ':' + writable.id);
       setBranch(writable.defaultBranch || 'main');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -202,14 +206,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (id === writable?.id) return;
         // same discipline as switchBranch: never lose an open draft
         void flushAllDrafts().finally(() => {
-          localStorage.setItem('specquill-project', id);
+          localStorage.setItem('specquill-project:' + tenant, id);
           setProjectId(id);
           setBranch(''); // back to the new project's default branch
           // land on the same view in the new project; file paths and query
           // state don't carry across projects
-          const view = pathname.replace(/^\/p\/[^/]+(?:\/b\/[^/]+)?/, '').split('/')[1];
-          if ((PROJECT_VIEWS as readonly string[]).includes(view)) navigate(`/p/${id}/${view}`);
-          else if (pathname.startsWith('/p/')) navigate(`/p/${id}`);
+          const view = pathname.replace(/^\/t\/[^/]+\/p\/[^/]+(?:\/b\/[^/]+)?/, '').split('/')[1];
+          if ((PROJECT_VIEWS as readonly string[]).includes(view)) navigate(`/t/${tenant}/p/${id}/${view}`);
+          else navigate(`/t/${tenant}/p/${id}`);
         });
       },
       branch: effBranch,
@@ -254,7 +258,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [writable?.id, repos.data, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
+  }, [writable?.id, tenant, repos.data, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

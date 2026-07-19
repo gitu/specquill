@@ -10,7 +10,7 @@ import (
 // unprotected branch merges at editor.
 func TestMergeRequiresMaintainerOnProtected(t *testing.T) {
 	h, st, _ := testServerFull(t, true) // main protected
-	cookie := login(t, h)              // auto-enrolled as editor
+	cookie := login(t, h)               // auto-enrolled as editor
 	wRepoRow(t, st)
 
 	prep := func(branch, file string) float64 {

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
+import { setRouteTenant } from './api/client';
+import { useMe } from './api/hooks';
 import { sx } from './lib/sx';
 import { WorktreeChangesDrawer } from './components/WorktreeChangesDrawer';
 import { AppProvider, useApp } from './state/AppContext';
@@ -73,6 +75,21 @@ function Shell() {
 }
 
 export default function App() {
+  const { tenant } = useParams();
+  // synchronous, render-time: render is top-down, so every child queryFn
+  // sees the tenant before it fires (idempotent module-var assignment)
+  setRouteTenant(tenant || '');
+  const me = useMe();
+  // remember for tenant-less entry points ("/", legacy links) — a UI hint,
+  // never an auth channel
+  useEffect(() => {
+    if (tenant) localStorage.setItem('specquill-last-tenant', tenant);
+  }, [tenant]);
+  // an unknown/inaccessible tenant slug falls back to the resolver at "/"
+  if (me.data && !(me.data.tenants || []).some((m) => m.tenant.slug === tenant)) {
+    localStorage.removeItem('specquill-last-tenant');
+    return <Navigate to="/" replace />;
+  }
   return (
     <AppProvider>
       <ToastProvider>

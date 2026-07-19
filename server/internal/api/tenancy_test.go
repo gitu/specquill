@@ -36,9 +36,8 @@ func TestTenantIsolation(t *testing.T) {
 	}
 
 	// without membership: acme is unreachable, even named explicitly
-	req := httptest.NewRequest("GET", "/api/repos/specs/tree", nil)
+	req := httptest.NewRequest("GET", "/api/t/acme/repos/specs/tree", nil)
 	req.Header.Set("X-SpecQuill", "1")
-	req.Header.Set("X-SpecQuill-Tenant", "acme")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -60,9 +59,8 @@ func TestTenantIsolation(t *testing.T) {
 	if err := st.EnsureMember(acme.ID, u.ID, "editor"); err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest("GET", "/api/repos/specs/tree", nil)
+	req = httptest.NewRequest("GET", "/api/t/acme/repos/specs/tree", nil)
 	req.Header.Set("X-SpecQuill", "1")
-	req.Header.Set("X-SpecQuill-Tenant", "acme")
 	req.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -70,10 +68,20 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatalf("member acme access: want 200, got %d %s", rec.Code, rec.Body.String())
 	}
 
-	// …and with two memberships an unqualified request must name the tenant
-	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/tree", nil)
-	if code != http.StatusBadRequest || out["code"] != "tenant_required" {
-		t.Fatalf("ambiguous tenant: want 400 tenant_required, got %d %v", code, out)
+	// …and a URL naming no tenant does not exist (REQ-022: the path is the
+	// only tenant channel — there is no header or inference fallback)
+	req = httptest.NewRequest("GET", "/api/repos/w/tree", nil)
+	req.Header.Set("X-SpecQuill", "1")
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("tenant-less API path: want 404, got %d %s", rec.Code, rec.Body.String())
+	}
+	// an unknown tenant slug in the path is refused for members of others
+	code, out := doJSON(t, h, cookie, "GET", "/api/t/nosuch/repos/w/tree", nil)
+	if code != http.StatusForbidden || out["code"] != "tenant_forbidden" {
+		t.Fatalf("unknown tenant: want 403 tenant_forbidden, got %d %v", code, out)
 	}
 
 	// disk isolation: the two tenants' clones live under separate roots

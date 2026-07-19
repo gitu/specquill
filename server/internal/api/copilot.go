@@ -8,8 +8,6 @@ import (
 	"sync"
 
 	"specquill/server/internal/ai"
-	"specquill/server/internal/auth"
-	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 )
@@ -64,14 +62,8 @@ func (s *Server) copilotProject(r *http.Request) *project.Project {
 	return project.New(repo, target.ProjectID, target.ContentRoot, false)
 }
 
-// POST /api/repos/{repo}/copilot/chat {messages, focusPath?, branch?} → SSE
-// stream. /api/copilot/chat is the legacy alias (tenant's sole project).
-func (s *Server) copilotChatAlias(w http.ResponseWriter, r *http.Request) {
-	if repo, ok := s.soleProject(w, r); ok {
-		s.copilotChat(w, r, repo)
-	}
-}
-
+// POST /api/t/{tenant}/repos/{repo}/copilot/chat {messages, focusPath?,
+// branch?} → SSE stream.
 func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
@@ -125,15 +117,9 @@ type draftEdit struct {
 	Replace string `json:"replace"`
 }
 
-// POST /api/copilot/draft {changePath, files, branch?}
+// POST /api/t/{tenant}/repos/{repo}/copilot/draft {changePath, files, branch?}
 // Asks the model for surgical edits and applies them as *uncommitted saves*
 // on a copilot branch — the human reviews via status → commit → PR.
-func (s *Server) copilotDraftAlias(w http.ResponseWriter, r *http.Request) {
-	if repo, ok := s.soleProject(w, r); ok {
-		s.copilotDraft(w, r, repo)
-	}
-}
-
 func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
@@ -383,32 +369,6 @@ func filterByPaths(files map[string]string, prefixes []string) map[string]string
 		}
 	}
 	return out
-}
-
-// soleProject resolves the tenant's first project — the legacy /api/copilot/*
-// alias routes use it; per-project routes carry {repo} and resolve normally.
-func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return nil, false
-	}
-	ps, err := s.store.TenantProjects(t.ID)
-	if err != nil || len(ps) == 0 {
-		jsonError(w, http.StatusInternalServerError, "no project configured")
-		return nil, false
-	}
-	// same gate as the writableH copilot routes: copilot drafts write
-	u := auth.UserFrom(r.Context())
-	if s.effectiveRepoRole(u, t, ps[0].RepoID) < authz.Editor {
-		jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
-		return nil, false
-	}
-	repo, ok := s.git.Repo(t.Slug + "/" + ps[0].RepoID)
-	if !ok {
-		jsonError(w, http.StatusInternalServerError, "project repo not initialized")
-		return nil, false
-	}
-	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true
 }
 
 // POST /api/repos/{repo}/commit-message?branch= — draft a commit message from

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"specquill/server/internal/gitx"
@@ -47,13 +48,25 @@ func promoteTenantRole(t *testing.T, st *store.Store, email, role string) {
 	}
 }
 
+// apiURL scopes a tenant-scoped API path under the default test tenant —
+// the tenant lives in the URL (REQ-022); /api/me stays global.
+func apiURL(url string) string {
+	if bare, _, _ := strings.Cut(url, "?"); bare == "/api/me" {
+		return url
+	}
+	if strings.HasPrefix(url, "/api/") && !strings.HasPrefix(url, "/api/t/") {
+		return "/api/t/" + gitx.DefaultTenant + url[len("/api"):]
+	}
+	return url
+}
+
 func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, url string, body any) (int, map[string]any) {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
-	req := httptest.NewRequest(method, url, &buf)
+	req := httptest.NewRequest(method, apiURL(url), &buf)
 	req.Header.Set("X-SpecQuill", "1")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

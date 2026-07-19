@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTenant } from '../api/hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
@@ -16,6 +17,7 @@ const NEW_SUB = '+new';
 // comes from the family's ID scheme (config `ids:` or built-in) with live
 // conflict detection against the workspace snapshot.
 export function NewDocDialog({ initialKind, onClose }: { initialKind?: string; onClose: () => void }) {
+  const tenant = useTenant();
   const app = useApp();
   const nav = useNav();
   const qc = useQueryClient();
@@ -89,8 +91,8 @@ export function NewDocDialog({ initialKind, onClose }: { initialKind?: string; o
         method: 'PUT',
         body: JSON.stringify({ content: newDocTemplate(path, entities, { id, title: title.trim() || id }), baseSha: '' }),
       });
-      qc.invalidateQueries({ queryKey: ['status', app.repoId] });
-      qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', app.repoId] });
       nav('/editor/' + path);
       onClose();
     } catch (e) {

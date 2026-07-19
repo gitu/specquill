@@ -10,73 +10,58 @@ import (
 	"specquill/server/internal/store"
 )
 
-// Tenant resolution (repo-product/docs/specs/specs/multi-tenancy.md): API URLs carry the short repo
-// id; the tenant comes from the request — the X-SpecQuill-Tenant header (or
-// ?tenant= for websocket connects, which can't set headers), else the
-// user's only membership. Users with no membership yet are auto-enrolled
-// into the built-in `default` (config) tenant — self-host semantics.
+// Tenant resolution (REQ-022, repo-product/docs/specs/specs/multi-tenancy.md):
+// the tenant is named by the URL path — every tenant-scoped route lives under
+// /api/t/{tenant}/… — and checked against the caller's visibility (a
+// membership row, or a repo grant surfaced as a synthetic membership). There
+// is no header or query fallback. Users with no membership yet are
+// auto-enrolled into the built-in `default` (config) tenant — self-host
+// semantics.
 func (s *Server) tenant(w http.ResponseWriter, r *http.Request) (*store.Tenant, bool) {
 	u := auth.UserFrom(r.Context())
 	if u == nil {
 		jsonError(w, http.StatusUnauthorized, "authentication required")
 		return nil, false
 	}
-	want := r.Header.Get("X-SpecQuill-Tenant")
+	want := r.PathValue("tenant")
 	if want == "" {
-		want = r.URL.Query().Get("tenant")
+		jsonError2(w, http.StatusBadRequest, "tenant missing from URL", "tenant_required")
+		return nil, false
 	}
 	ms, err := s.memberships(u)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return nil, false
 	}
-	if want != "" {
-		for i := range ms {
-			if ms[i].Tenant.Slug == want {
-				return &ms[i].Tenant, true
-			}
+	for i := range ms {
+		if ms[i].Tenant.Slug == want {
+			return &ms[i].Tenant, true
 		}
-		jsonError2(w, http.StatusForbidden, "not a member of tenant "+want, "tenant_forbidden")
-		return nil, false
 	}
-	switch len(ms) {
-	case 0:
-		jsonError2(w, http.StatusForbidden, "no tenant membership", "tenant_forbidden")
-		return nil, false
-	case 1:
-		return &ms[0].Tenant, true
-	default:
-		jsonError2(w, http.StatusBadRequest, "multiple tenants — set X-SpecQuill-Tenant", "tenant_required")
-		return nil, false
-	}
+	jsonError2(w, http.StatusForbidden, "not a member of tenant "+want, "tenant_forbidden")
+	return nil, false
 }
 
 // tenantQuiet resolves the request's tenant like tenant() but writes no error
 // response — for best-effort paths (grounding) where the caller already
-// resolved the tenant. Returns nil when resolution is ambiguous or fails.
+// resolved the tenant. Returns nil when resolution fails.
 func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 	u := auth.UserFrom(r.Context())
 	if u == nil {
 		return nil
 	}
-	want := r.Header.Get("X-SpecQuill-Tenant")
+	want := r.PathValue("tenant")
 	if want == "" {
-		want = r.URL.Query().Get("tenant")
+		return nil
 	}
 	ms, err := s.memberships(u)
 	if err != nil {
 		return nil
 	}
-	if want != "" {
-		for i := range ms {
-			if ms[i].Tenant.Slug == want {
-				return &ms[i].Tenant
-			}
+	for i := range ms {
+		if ms[i].Tenant.Slug == want {
+			return &ms[i].Tenant
 		}
-		return nil
-	}
-	if len(ms) == 1 {
-		return &ms[0].Tenant
 	}
 	return nil
 }

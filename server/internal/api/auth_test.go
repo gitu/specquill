@@ -88,7 +88,7 @@ func testServerCfg(t *testing.T, protectMain bool, mut func(*config.Config)) (ht
 func TestAPIRequiresAuth(t *testing.T) {
 	h := testServer(t)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/repos", nil))
+	h.ServeHTTP(rec, httptest.NewRequest("GET", apiURL("/api/repos"), nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", rec.Code)
 	}

@@ -4,12 +4,16 @@ import { useNarrow } from '../hooks/useMediaQuery';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useBranches, useCreateBranch, useMe, usePRs, useStatus, useSync } from '../api/hooks';
-import { activeTenant, api, switchTenant } from '../api/client';
+import { useNavigate, useParams } from 'react-router-dom';
+import { api } from '../api/client';
+import { flushAllDrafts } from '../lib/draftRegistry';
 import { CreatePRDialog } from './CreatePRDialog';
 import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
   const nav = useNav();
+  const navigate = useNavigate();
+  const { tenant } = useParams();
   const app = useApp();
   const branches = useBranches(app.repoId);
   const me = useMe();
@@ -52,11 +56,19 @@ export function TopBar() {
         {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
       </div>
 
-      {/* tenant switcher (hidden with a single membership) */}
-      {(me.data?.tenants?.length ?? 0) > 1 && (
+      {/* tenant switcher (hidden with a single membership; narrow screens
+          use deep links — the header width budget is spoken for) */}
+      {!narrow && (me.data?.tenants?.length ?? 0) > 1 && (
         <select
-          value={activeTenant() || me.data!.tenants![0].tenant.slug}
-          onChange={(e) => switchTenant(e.target.value)}
+          value={tenant}
+          onChange={(e) => {
+            const slug = e.target.value;
+            if (slug === tenant) return;
+            // plain navigation, no reload (REQ-022.3) — same draft
+            // discipline as the project switcher; project/branch state
+            // never carries across tenants
+            void flushAllDrafts().finally(() => navigate('/t/' + slug));
+          }}
           title="Tenant"
           style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;cursor:pointer;max-width:150px")}
         >

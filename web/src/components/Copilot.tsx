@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTenant } from '../api/hooks';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
@@ -15,6 +16,7 @@ const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'C
 // The Copilot panel: streaming chat grounded on the branch snapshot, plus the
 // "draft edits" flow that applies model-proposed edits to a copilot branch.
 export function Copilot() {
+  const tenant = useTenant();
   const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
@@ -67,7 +69,7 @@ export function Copilot() {
       ];
       const result = await draftEdits(app.repoId, { changePath: change.path, files: [...new Set(files)] });
       setEntries((es) => [...es, { kind: 'draft', result }]);
-      qc.invalidateQueries({ queryKey: ['branches'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches'] });
     } catch (e) {
       setError(String((e as Error).message || e));
     } finally {

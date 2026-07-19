@@ -1,6 +1,7 @@
 // End-to-end flow against a running dev server (-dev auto-auth):
 // navigate → edit → save → commit → branch → PR → approve → merge.
 import { expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 const stamp = Date.now().toString(36);
 const BRANCH = `feature/e2e-${stamp}`;
@@ -8,22 +9,22 @@ const BRANCH = `feature/e2e-${stamp}`;
 test.describe.configure({ mode: 'serial' });
 
 test('dashboard shows live KPIs', async ({ page }) => {
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByText('Trace coverage')).toBeVisible();
   await expect(page.getByText('Requirement changes')).toBeVisible();
 });
 
 test('matrix and graph render from the model', async ({ page }) => {
-  await page.goto('/p/trading-specs/matrix');
+  await page.goto(`${APP}/p/trading-specs/matrix`);
   await expect(page.getByText('Traceability matrix')).toBeVisible();
   await expect(page.getByText(/requirements × \d+ artifacts/)).toBeVisible();
-  await page.goto('/p/trading-specs/graph');
+  await page.goto(`${APP}/p/trading-specs/graph`);
   await expect(page.getByText('Lineage · from links')).toBeVisible();
 });
 
 test('search palette finds a requirement', async ({ page }) => {
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await page.getByText('Search requirements, specs, fields, changes…').first().click();
   const input = page.getByPlaceholder('Search requirements, specs, fields, changes…');
@@ -34,7 +35,7 @@ test('search palette finds a requirement', async ({ page }) => {
 });
 
 test('branch → edit → save → commit → PR → approve → merge', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor/specs/venue.md');
+  await page.goto(`${APP}/p/trading-specs/editor/specs/venue.md`);
   await expect(page.getByText('Venue Identification', { exact: false }).first()).toBeVisible();
 
   // create a branch via the switcher (prompt dialog)
@@ -73,16 +74,16 @@ test('branch → edit → save → commit → PR → approve → merge', async (
   await expect(page.getByText('merged', { exact: true })).toBeVisible();
 
   // main now carries the change in the editor
-  await page.goto('/p/trading-specs/editor/specs/venue.md');
+  await page.goto(`${APP}/p/trading-specs/editor/specs/venue.md`);
   await expect(page.getByText(`E2E marker ${stamp}.`)).toBeVisible();
 });
 
 // regression: switching between already-visited (query-cached) files used to
 // leave the editor blank because the draft reset raced the populate effect
 test('rapid switching between cached files always renders', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor/requirements/REQ-051.md');
+  await page.goto(`${APP}/p/trading-specs/editor/requirements/REQ-051.md`);
   await expect(page.getByText('REQ-051.1', { exact: false })).toBeVisible();
-  await page.goto('/p/trading-specs/editor/requirements/REQ-063.md');
+  await page.goto(`${APP}/p/trading-specs/editor/requirements/REQ-063.md`);
   await expect(page.getByText('REQ-063.1', { exact: false })).toBeVisible();
   for (let i = 0; i < 3; i++) {
     await page.getByText('REQ-051.md').first().click(); // tree entry (cached now)
@@ -93,7 +94,7 @@ test('rapid switching between cached files always renders', async ({ page }) => 
 });
 
 test('default view setting controls the root redirect', async ({ page }) => {
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await page.getByTitle('Settings').click();
   await page.getByRole('combobox').last().selectOption('matrix');
   await page.goto('/');
@@ -107,7 +108,7 @@ test('default view setting controls the root redirect', async ({ page }) => {
 });
 
 test('excalidraw modal opens with a usable editor UI', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor/diagrams/data-flow.excalidraw');
+  await page.goto(`${APP}/p/trading-specs/editor/diagrams/data-flow.excalidraw`);
   await expect(page.getByText('data-flow.excalidraw').first()).toBeVisible();
   await page.getByTitle('Click to edit the sketch').click();
   // toolbar present = styles loaded and the canvas is interactive
@@ -121,17 +122,17 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
   // self-heal: restore REQ-090 on the workspace (prior failed runs leave the
   // inserted mermaid in the doc, and clicking it opens the overlay)
   {
-    const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-SpecQuill': '1' }, data: {} });
+    const wsRes = await request.post(`${API}/repos/trading-specs/workspace`, { headers: { 'X-SpecQuill': '1' }, data: {} });
     const wsb = ((await wsRes.json()) as { branch: string }).branch;
-    const head = (await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}&at=head`)).json()) as { content: string };
-    const cur = (await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}`)).json()) as { sha: string };
+    const head = (await (await request.get(`${API}/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}&at=head`)).json()) as { content: string };
+    const cur = (await (await request.get(`${API}/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(wsb)}`)).json()) as { sha: string };
     if (head.content !== undefined && cur.sha) {
-      await request.put(`/api/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(wsb)}`, {
+      await request.put(`${API}/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(wsb)}`, {
         headers: { 'X-SpecQuill': '1' }, data: { content: head.content, baseSha: cur.sha },
       });
     }
   }
-  await page.goto('/p/trading-specs/editor/requirements/REQ-090.md');
+  await page.goto(`${APP}/p/trading-specs/editor/requirements/REQ-090.md`);
   // main is protected: entering Edit auto-switches to the personal workspace
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByText(/you're now on your workspace ws\//)).toBeVisible();
@@ -151,23 +152,23 @@ test('insert buttons add a mermaid block and an embedded sketch', async ({ page,
 
   // cleanup: sketches are now *.excalidraw.png created on first SAVE — closing
   // without drawing leaves no file, so the delete may 404 (that's fine)
-  const wsRes = await request.post('/api/repos/trading-specs/workspace', { headers: { 'X-SpecQuill': '1' }, data: {} });
+  const wsRes = await request.post(`${API}/repos/trading-specs/workspace`, { headers: { 'X-SpecQuill': '1' }, data: {} });
   const ws = (await wsRes.json()) as { branch: string };
   await request.delete(
-    `/api/repos/trading-specs/files/diagrams/e2e-${stamp}.excalidraw.png?branch=${encodeURIComponent(ws.branch)}`,
+    `${API}/repos/trading-specs/files/diagrams/e2e-${stamp}.excalidraw.png?branch=${encodeURIComponent(ws.branch)}`,
     { headers: { 'X-SpecQuill': '1' } },
   ).catch(() => {});
   // restore the autosaved doc to its committed content
-  const head = await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}&at=head`)).json() as { content: string };
-  const cur = await (await request.get(`/api/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}`)).json() as { sha: string };
-  await request.put(`/api/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(ws.branch)}`, {
+  const head = await (await request.get(`${API}/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}&at=head`)).json() as { content: string };
+  const cur = await (await request.get(`${API}/repos/trading-specs/files/requirements/REQ-090.md?ref=${encodeURIComponent(ws.branch)}`)).json() as { sha: string };
+  await request.put(`${API}/repos/trading-specs/files/requirements/REQ-090.md?branch=${encodeURIComponent(ws.branch)}`, {
     headers: { 'X-SpecQuill': '1' },
     data: { content: head.content, baseSha: cur.sha },
   });
 });
 
 test('read-only input repo refuses editing', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor/~regulations/regulations/dora.md');
+  await page.goto(`${APP}/p/trading-specs/editor/~regulations/regulations/dora.md`);
   await expect(page.getByText('read-only · regulations')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save' })).toBeHidden();
 });

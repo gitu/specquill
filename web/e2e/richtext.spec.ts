@@ -1,24 +1,24 @@
 // Rich editing: slash menu, selection toolbar, link dialog, outline.
 import { APIRequestContext, expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 const REPO = 'trading-specs';
-const H = { 'X-SpecQuill': '1' };
 const DOC = `scratch-rich-${Date.now().toString(36)}.md`;
 const BODY = '# Rich scratch\n\nintro paragraph words here\n\n## Section two\n\nmore text\n\n## Section three\n\ntail\n';
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
-  const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
+  const res = await request.post(`${API}/repos/${REPO}/workspace`, { headers: H, data: {} });
   return ((await res.json()) as { branch: string }).branch;
 }
 
 test('slash menu, selection toolbar, link dialog and outline', async ({ page, request }) => {
   const branch = await wsBranch(request);
-  await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H }).catch(() => {});
-  await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
+  await request.delete(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H }).catch(() => {});
+  await request.put(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
     headers: H, data: { content: BODY, baseSha: '' },
   });
 
-  await page.goto(`/p/trading-specs/editor/${DOC}`);
+  await page.goto(`${APP}/p/trading-specs/editor/${DOC}`);
   // the scratch doc lives on the workspace branch only
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
@@ -75,12 +75,12 @@ test('slash menu, selection toolbar, link dialog and outline', async ({ page, re
   await expect(page.locator('[data-outline]')).toBeVisible();
 
   // cleanup: close the room, delete the scratch file
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await expect
     .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
+      const rooms = (await (await request.get(`${API}/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
       return rooms.filter((r) => r.users.length > 0).length;
     }, { timeout: 20_000 })
     .toBe(0);
-  await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
+  await request.delete(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

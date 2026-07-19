@@ -1,6 +1,7 @@
 // useWorkspace — transparently moves edits off protected branches onto the
 // caller's personal workspace branch (ws/<user>), created/ff'd server-side.
 import { useCallback, useRef } from 'react';
+import { useTenant } from '../api/hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useApp } from '../state/AppContext';
@@ -22,6 +23,7 @@ const STATE_NOTE: Record<string, string> = {
 };
 
 export function useWorkspace() {
+  const tenant = useTenant();
   const app = useApp();
   const qc = useQueryClient();
   const toasts = useToasts();
@@ -38,7 +40,7 @@ export function useWorkspace() {
     const p = (async () => {
       const ws = await api<WorkspaceState>(`/api/repos/${app.repoId}/workspace`, { method: 'POST', body: '{}' });
       app.switchBranch(ws.branch, { carryDraft: true });
-      qc.invalidateQueries({ queryKey: ['branches', app.repoId] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', app.repoId] });
       toasts.push({
         text: `${app.branch} is protected — you're now on your workspace ${ws.branch}` +
           (ws.created ? ' (created from main)' : STATE_NOTE[ws.state] || ''),

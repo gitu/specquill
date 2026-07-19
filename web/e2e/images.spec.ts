@@ -1,8 +1,8 @@
 // Image upload/paste + inline formatting.
 import { APIRequestContext, expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 const REPO = 'trading-specs';
-const H = { 'X-SpecQuill': '1' };
 const DOC = 'requirements/REQ-051.md';
 // 1x1 red PNG
 const PNG = Buffer.from(
@@ -11,13 +11,13 @@ const PNG = Buffer.from(
 );
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
-  const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
+  const res = await request.post(`${API}/repos/${REPO}/workspace`, { headers: H, data: {} });
   return ((await res.json()) as { branch: string }).branch;
 }
 
 test('asset upload round-trips through the raw endpoint', async ({ request }) => {
   const branch = await wsBranch(request);
-  const up = await request.post(`/api/repos/${REPO}/assets?branch=${encodeURIComponent(branch)}&dir=requirements/assets`, {
+  const up = await request.post(`${API}/repos/${REPO}/assets?branch=${encodeURIComponent(branch)}&dir=requirements/assets`, {
     headers: H,
     multipart: { file: { name: 'e2e dot.png', mimeType: 'image/png', buffer: PNG } },
   });
@@ -25,50 +25,50 @@ test('asset upload round-trips through the raw endpoint', async ({ request }) =>
   const { path } = (await up.json()) as { path: string };
   expect(path).toMatch(/^requirements\/assets\/e2e-dot(-\d+)?\.png$/);
 
-  const raw = await request.get(`/api/repos/${REPO}/raw/${path}?ref=${encodeURIComponent(branch)}`);
+  const raw = await request.get(`${API}/repos/${REPO}/raw/${path}?ref=${encodeURIComponent(branch)}`);
   expect(raw.ok()).toBe(true);
   expect(raw.headers()['content-type']).toBe('image/png');
   expect(Buffer.compare(await raw.body(), PNG)).toBe(0);
 
   // uploads to the protected default branch are refused
-  const denied = await request.post(`/api/repos/${REPO}/assets?branch=main&dir=assets`, {
+  const denied = await request.post(`${API}/repos/${REPO}/assets?branch=main&dir=assets`, {
     headers: H,
     multipart: { file: { name: 'nope.png', mimeType: 'image/png', buffer: PNG } },
   });
   expect(denied.status()).toBe(403);
   // non-image types are refused
-  const badType = await request.post(`/api/repos/${REPO}/assets?branch=${encodeURIComponent(branch)}&dir=assets`, {
+  const badType = await request.post(`${API}/repos/${REPO}/assets?branch=${encodeURIComponent(branch)}&dir=assets`, {
     headers: H,
     multipart: { file: { name: 'evil.html', mimeType: 'text/html', buffer: Buffer.from('<script/>') } },
   });
   expect(badType.status()).toBe(400);
 
-  await request.delete(`/api/repos/${REPO}/files/${path}?branch=${encodeURIComponent(branch)}`, { headers: H });
+  await request.delete(`${API}/repos/${REPO}/files/${path}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });
 
 async function restoreDoc(request: APIRequestContext, branch: string) {
   // wait for live rooms only — orphaned rooms (unflushed logs) linger by design
   await expect
     .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
+      const rooms = (await (await request.get(`${API}/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
       return rooms.filter((r) => r.users.length > 0).length;
     }, { timeout: 20_000 })
     .toBe(0);
-  const head = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
-  const cur = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}`)).json()) as { sha: string };
-  await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
+  const head = (await (await request.get(`${API}/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
+  const cur = (await (await request.get(`${API}/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}`)).json()) as { sha: string };
+  await request.put(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
     headers: H, data: { content: head.content, baseSha: cur.sha },
   });
-  const tree = (await (await request.get(`/api/repos/${REPO}/tree?ref=${encodeURIComponent(branch)}`)).json()) as { path: string }[];
+  const tree = (await (await request.get(`${API}/repos/${REPO}/tree?ref=${encodeURIComponent(branch)}`)).json()) as { path: string }[];
   for (const e of tree.filter((t) => /^requirements\/assets\/shot.*\.png$/.test(t.path))) {
-    await request.delete(`/api/repos/${REPO}/files/${e.path}?branch=${encodeURIComponent(branch)}`, { headers: H });
+    await request.delete(`${API}/repos/${REPO}/files/${e.path}?branch=${encodeURIComponent(branch)}`, { headers: H });
   }
 }
 
 test('editor: upload button embeds an image; bold toolbar formats text', async ({ page, request }) => {
   const branch = await wsBranch(request);
   await restoreDoc(request, branch); // clean slate (prior runs may have left embeds)
-  await page.goto(`/p/trading-specs/editor/${DOC}`);
+  await page.goto(`${APP}/p/trading-specs/editor/${DOC}`);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.locator('.milkdown-editable')).toBeVisible({ timeout: 15_000 });
 
@@ -92,6 +92,6 @@ test('editor: upload button embeds an image; bold toolbar formats text', async (
   await expect(page.locator('#specquill-doc img[src*="/raw/requirements/assets/shot"]').first()).toBeVisible({ timeout: 10_000 });
 
   // restore: close the room, put the committed content back, drop the asset
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await restoreDoc(request, branch);
 });

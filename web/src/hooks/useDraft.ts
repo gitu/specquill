@@ -3,6 +3,7 @@
 // the sub-second window / crashes, survives branch switches, and exposes a
 // conflict state instead of ever silently merging.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTenant } from '../api/hooks';
 import { api } from '../api/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { registerDraftFlush } from '../lib/draftRegistry';
@@ -53,6 +54,7 @@ export function useDraft({ repo, branch, path, file, enabled, onRecovered, befor
   beforePersist?: () => string | null;
 }) {
   const qc = useQueryClient();
+  const tenant = useTenant();
   const [draft, setDraft] = useState<Draft>({ path: '', raw: '', dirty: false, gen: 0 });
   const [syncState, setSyncState] = useState<SyncState>('clean');
   const lsKey = `${LS_PREFIX}${repo}:${branch}:${path}`;
@@ -144,9 +146,9 @@ export function useDraft({ repo, branch, path, file, enabled, onRecovered, befor
         scheduleAutosave(DEBOUNCE_MS);
       }
       s.firstChangeAt = 0;
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['file', repo, branch, path] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'file', repo, branch, path] });
     } catch (e) {
       const status = (e as { status?: number }).status;
       if (status === 409) {
@@ -216,7 +218,7 @@ export function useDraft({ repo, branch, path, file, enabled, onRecovered, befor
       setDraft({ path: '', raw: '', dirty: false, gen: 0 }); // reseed from refetch
       try { localStorage.removeItem(lsKey); } catch { /* ignore */ }
       setSyncState('clean');
-      await qc.invalidateQueries({ queryKey: ['file', repo, branch, path] });
+      await qc.invalidateQueries({ queryKey: ['t', tenant, 'file', repo, branch, path] });
     } else {
       // adopt the server's current sha, then overwrite with mine
       const fresh = await api<FileData>(`/api/repos/${repo}/files/${path}?ref=${encodeURIComponent(branch)}`);

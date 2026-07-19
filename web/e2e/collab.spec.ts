@@ -3,13 +3,13 @@
 // real sessions), which still exercises the full CRDT/relay path; co-author
 // trailers are asserted API-level with a second local user in the Go suite.
 import { Browser, BrowserContext, Page, expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 const REPO = 'trading-specs';
-const H = { 'X-SpecQuill': '1' };
 const DOC = 'requirements/REQ-095.md';
 
 async function openEditor(page: Page, branch: string) {
-  await page.goto(`/p/trading-specs/editor/${DOC}`);
+  await page.goto(`${APP}/p/trading-specs/editor/${DOC}`);
   await expect(page.getByText('ICT Incident Reporting').first()).toBeVisible();
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
@@ -19,7 +19,7 @@ async function openEditor(page: Page, branch: string) {
 
 test('two browsers co-edit the same document live', async ({ page, request, browser }) => {
   // workspace branch for the session
-  const ws = ((await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string }).branch;
+  const ws = ((await (await request.post(`${API}/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string }).branch;
 
   const ctxB: BrowserContext = await browser.newContext();
   const b: Page = await ctxB.newPage();
@@ -49,37 +49,37 @@ test('two browsers co-edit the same document live', async ({ page, request, brow
   await expect(page.getByText('Saved ✓')).toBeVisible({ timeout: 15_000 });
   await expect
     .poll(async () => {
-      const f = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}`)).json()) as { content: string };
+      const f = (await (await request.get(`${API}/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}`)).json()) as { content: string };
       return f.content.includes(`collab-${stamp}-alpha`) && f.content.includes(`collab-${stamp}-beta`);
     }, { timeout: 15_000 })
     .toBe(true);
 
   // direct PUTs are refused while the room is live
-  const put = await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(ws)}`, {
+  const put = await request.put(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(ws)}`, {
     headers: H, data: { content: 'x', baseSha: '' },
   });
   expect(put.status()).toBe(409);
   expect(((await put.json()) as { code: string }).code).toBe('room_active');
 
   // presence reports the room
-  const presence = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { path: string; users: unknown[] }[];
+  const presence = (await (await request.get(`${API}/repos/${REPO}/presence`)).json()) as { path: string; users: unknown[] }[];
   const room = presence.find((p) => p.path === DOC);
   expect(room).toBeTruthy();
   expect(room!.users.length).toBe(2);
 
   // restore the doc for other tests
-  await b.goto('/p/trading-specs/dashboard');
-  await page.goto('/p/trading-specs/dashboard');
+  await b.goto(`${APP}/p/trading-specs/dashboard`);
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   // live rooms only — orphaned rooms (unflushed logs) linger by design
   await expect
     .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
+      const rooms = (await (await request.get(`${API}/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
       return rooms.filter((r) => r.users.length > 0).length;
     }, { timeout: 20_000 })
     .toBe(0);
-  const head = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}&at=head`)).json()) as { content: string };
-  const cur = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}`)).json()) as { sha: string };
-  await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(ws)}`, {
+  const head = (await (await request.get(`${API}/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}&at=head`)).json()) as { content: string };
+  const cur = (await (await request.get(`${API}/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(ws)}`)).json()) as { sha: string };
+  await request.put(`${API}/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(ws)}`, {
     headers: H, data: { content: head.content, baseSha: cur.sha },
   });
   } finally {

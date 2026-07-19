@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams } from 'react-router-dom';
 import { api, Branch, FileResp, RepoInfo, SnapshotResp, TreeEntry } from './client';
 
 export interface StatusResp {
@@ -16,8 +17,16 @@ export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/api/me'), staleTime: 60_000 });
 }
 
+/** Tenant segment of the current /t/<tenant> route — the first element of
+ * every tenant-scoped query key, so caches never bleed across tenants
+ * (REQ-022.2: the same repo id may exist in two tenants). */
+export function useTenant(): string {
+  return useParams().tenant || '';
+}
+
 export function useRepos() {
-  return useQuery({ queryKey: ['repos'], queryFn: () => api<RepoInfo[]>('/api/repos') });
+  const tenant = useTenant();
+  return useQuery({ queryKey: ['t', tenant, 'repos'], queryFn: () => api<RepoInfo[]>('/api/repos') });
 }
 
 export interface ProjectRef { source: string; kind: string; okf?: boolean; grounding: boolean; paths?: string[] }
@@ -26,7 +35,8 @@ export interface ProjectInfo {
   references: ProjectRef[]; warnings?: string[];
 }
 export function useProjects() {
-  return useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
+  const tenant = useTenant();
+  return useQuery({ queryKey: ['t', tenant, 'projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
 }
 
 export interface PresencePeer { connId: number; userId: number; name: string }
@@ -34,8 +44,9 @@ export interface PresenceRoom { branch: string; path: string; users: PresencePee
 
 /** who is co-editing what (live rooms + orphaned unflushed sessions) */
 export function usePresence(repo: string | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['presence', repo],
+    queryKey: ['t', tenant, 'presence', repo],
     queryFn: () => api<PresenceRoom[]>(`/api/repos/${repo}/presence`),
     enabled: !!repo,
     refetchInterval: 10_000,
@@ -43,8 +54,9 @@ export function usePresence(repo: string | undefined) {
 }
 
 export function useSnapshot(repo: string | undefined, ref: string) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['snapshot', repo, ref],
+    queryKey: ['t', tenant, 'snapshot', repo, ref],
     queryFn: () => api<SnapshotResp>(`/api/repos/${repo}/snapshot?ref=${encodeURIComponent(ref)}`),
     enabled: !!repo,
     staleTime: 5_000,
@@ -52,32 +64,36 @@ export function useSnapshot(repo: string | undefined, ref: string) {
 }
 
 export function useFileQuery(repo: string | undefined, ref: string, path: string | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['file', repo, ref, path],
+    queryKey: ['t', tenant, 'file', repo, ref, path],
     queryFn: () => api<FileResp>(`/api/repos/${repo}/files/${path}?ref=${encodeURIComponent(ref)}`),
     enabled: !!repo && !!path,
   });
 }
 
 export function useBranches(repo: string | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['branches', repo],
+    queryKey: ['t', tenant, 'branches', repo],
     queryFn: () => api<Branch[]>(`/api/repos/${repo}/branches`),
     enabled: !!repo,
   });
 }
 
 export function useTree(repo: string | undefined, ref: string) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['tree', repo, ref],
+    queryKey: ['t', tenant, 'tree', repo, ref],
     queryFn: () => api<TreeEntry[]>(`/api/repos/${repo}/tree?ref=${encodeURIComponent(ref)}`),
     enabled: !!repo,
   });
 }
 
 export function useStatus(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['status', repo, branch],
+    queryKey: ['t', tenant, 'status', repo, branch],
     queryFn: () => api<StatusResp>(`/api/repos/${repo}/status?branch=${encodeURIComponent(branch)}`),
     enabled: !!repo,
     refetchInterval: 15_000,
@@ -107,59 +123,65 @@ export interface PRComment {
 }
 
 export function usePRs(repo: string | undefined, state = 'open') {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['prs', repo, state],
+    queryKey: ['t', tenant, 'prs', repo, state],
     queryFn: () => api<PR[]>(`/api/repos/${repo}/prs?state=${state}`),
     enabled: !!repo,
   });
 }
 
 export function usePR(repo: string | undefined, n: number | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['pr', repo, n],
+    queryKey: ['t', tenant, 'pr', repo, n],
     queryFn: () => api<PR>(`/api/repos/${repo}/prs/${n}`),
     enabled: !!repo && !!n,
   });
 }
 
 export function usePRDiff(repo: string | undefined, n: number | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['prdiff', repo, n],
+    queryKey: ['t', tenant, 'prdiff', repo, n],
     queryFn: () => api<{ files: DiffFile[] }>(`/api/repos/${repo}/prs/${n}/diff`),
     enabled: !!repo && !!n,
   });
 }
 
 export function usePRComments(repo: string | undefined, n: number | undefined) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['prcomments', repo, n],
+    queryKey: ['t', tenant, 'prcomments', repo, n],
     queryFn: () => api<PRComment[]>(`/api/repos/${repo}/prs/${n}/comments`),
     enabled: !!repo && !!n,
   });
 }
 
 export function useCreatePR(repo: string | undefined) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { title: string; body?: string; source: string; target?: string }) =>
       api<PR>(`/api/repos/${repo}/prs`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['prs', repo] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['t', tenant, 'prs', repo] }),
   });
 }
 
 export function usePRAction(repo: string | undefined, n: number | undefined) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ action, payload }: { action: 'approve' | 'merge' | 'close' | 'comments'; payload?: unknown }) =>
       api(`/api/repos/${repo}/prs/${n}/${action}`, { method: 'POST', body: JSON.stringify(payload ?? {}) }),
     onSuccess: (_, { action }) => {
-      qc.invalidateQueries({ queryKey: ['pr', repo, n] });
-      qc.invalidateQueries({ queryKey: ['prs', repo] });
-      qc.invalidateQueries({ queryKey: ['prcomments', repo, n] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'pr', repo, n] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'prs', repo] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'prcomments', repo, n] });
       if (action === 'merge') {
-        qc.invalidateQueries({ queryKey: ['snapshot'] });
-        qc.invalidateQueries({ queryKey: ['branches', repo] });
-        qc.invalidateQueries({ queryKey: ['status'] });
+        qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot'] });
+        qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', repo] });
+        qc.invalidateQueries({ queryKey: ['t', tenant, 'status'] });
       }
     },
   });
@@ -168,8 +190,9 @@ export function usePRAction(repo: string | undefined, n: number | undefined) {
 // ---------------------------------------------------------------- mutations
 
 export function useWorktreeDiff(repo: string | undefined, branch: string, enabled: boolean) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['worktreediff', repo, branch],
+    queryKey: ['t', tenant, 'worktreediff', repo, branch],
     queryFn: () => api<{ files: DiffFile[] }>(`/api/repos/${repo}/diff/worktree?branch=${encodeURIComponent(branch)}`),
     enabled: !!repo && enabled,
     refetchInterval: enabled ? 5_000 : false,
@@ -178,8 +201,9 @@ export function useWorktreeDiff(repo: string | undefined, branch: string, enable
 
 // committed baseline (object db), for the changed-line gutter in source mode
 export function useFileAtHead(repo: string | undefined, branch: string, path: string | undefined, enabled: boolean) {
+  const tenant = useTenant();
   return useQuery({
-    queryKey: ['fileathead', repo, branch, path],
+    queryKey: ['t', tenant, 'fileathead', repo, branch, path],
     queryFn: () => api<FileResp>(`/api/repos/${repo}/files/${path}?ref=${encodeURIComponent(branch)}&at=head`),
     enabled: !!repo && !!path && enabled,
     staleTime: 10_000,
@@ -187,15 +211,16 @@ export function useFileAtHead(repo: string | undefined, branch: string, path: st
 }
 
 export function usePull(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       api<{ head: string; updated: boolean }>(`/api/repos/${repo}/pull?branch=${encodeURIComponent(branch)}`, { method: 'POST', body: '{}' }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['file', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['branches', repo] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'file', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', repo] });
     },
   });
 }
@@ -212,6 +237,7 @@ export function useUpdateWorkspace(repo: string | undefined) {
 }
 
 export function useSaveFile(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ path, content, baseSha }: { path: string; content: string; baseSha: string }) =>
@@ -220,27 +246,29 @@ export function useSaveFile(repo: string | undefined, branch: string) {
         body: JSON.stringify({ content, baseSha }),
       }),
     onSuccess: (_, { path }) => {
-      qc.invalidateQueries({ queryKey: ['file', repo, branch, path] });
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'file', repo, branch, path] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', repo, branch] });
     },
   });
 }
 
 export function useDeleteFile(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ path }: { path: string }) =>
       api<{ ok: boolean }>(`/api/repos/${repo}/files/${path}?branch=${encodeURIComponent(branch)}`, { method: 'DELETE' }),
     onSuccess: (_, { path }) => {
-      qc.invalidateQueries({ queryKey: ['file', repo, branch, path] });
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'file', repo, branch, path] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'snapshot', repo, branch] });
     },
   });
 }
 
 export function useCommit(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ message, paths }: { message: string; paths?: string[] }) =>
@@ -249,13 +277,14 @@ export function useCommit(repo: string | undefined, branch: string) {
         body: JSON.stringify({ message, paths }),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['branches', repo] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', repo] });
     },
   });
 }
 
 export function useCreateBranch(repo: string | undefined) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ name, from }: { name: string; from: string }) =>
@@ -263,11 +292,12 @@ export function useCreateBranch(repo: string | undefined) {
         method: 'POST',
         body: JSON.stringify({ name, from }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['branches', repo] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', repo] }),
   });
 }
 
 export function useSync(repo: string | undefined, branch: string) {
+  const tenant = useTenant();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ push }: { push: boolean }) => {
@@ -275,9 +305,9 @@ export function useSync(repo: string | undefined, branch: string) {
       if (push) await api(`/api/repos/${repo}/push?branch=${encodeURIComponent(branch)}`, { method: 'POST', body: '{}' });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
-      qc.invalidateQueries({ queryKey: ['branches', repo] });
-      qc.invalidateQueries({ queryKey: ['repos'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'branches', repo] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
     },
   });
 }

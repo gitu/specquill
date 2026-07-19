@@ -2,11 +2,11 @@
 // content_root docs/specs), the TopBar switcher, and isolation between
 // projects. Requires the dev fixture with both projects.
 import { expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
-const H = { 'X-SpecQuill': '1' };
 
 test('project switcher scopes the workspace to the selected project', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor');
+  await page.goto(`${APP}/p/trading-specs/editor`);
   // default project is trading-specs
   await expect(page.locator('aside').getByText('TRADING-SPECS', { exact: true })).toBeVisible();
   // the copilot advertises its granted grounding source (P4)
@@ -32,27 +32,27 @@ test('project switcher scopes the workspace to the selected project', async ({ p
 });
 
 test('monorepo project serves project-relative API paths only', async ({ request }) => {
-  const tree = (await (await request.get('/api/repos/specquill-docs/tree', { headers: H })).json()) as { path: string }[];
+  const tree = (await (await request.get(`${API}/repos/specquill-docs/tree`, { headers: H })).json()) as { path: string }[];
   const paths = tree.map((e) => e.path);
   expect(paths).toContain('requirements/REQ-003.md');
   expect(paths.some((p) => p.startsWith('docs/'))).toBe(false);
   expect(paths.some((p) => p.includes('server.go'))).toBe(false);
 
   // sibling monorepo content is unreachable, even with traversal
-  const res = await request.get('/api/repos/specquill-docs/files/..%2F..%2Fsrc%2Fserver.go.txt', { headers: H });
+  const res = await request.get(`${API}/repos/specquill-docs/files/..%2F..%2Fsrc%2Fserver.go.txt`, { headers: H });
   expect(res.ok()).toBe(false);
 });
 
 test('management api: role-gated project lifecycle', async ({ request }) => {
   // the dev user is tenant admin; a bogus remote must fail cleanly
-  const bad = await request.post('/api/projects', {
+  const bad = await request.post(`${API}/projects`, {
     headers: H,
     data: { id: 'nope', remote: '/does/not/exist.git' },
   });
   expect(bad.status()).toBe(502);
 
   // config-managed projects refuse deletion
-  const del = await request.delete('/api/projects/trading-specs', { headers: H });
+  const del = await request.delete(`${API}/projects/trading-specs`, { headers: H });
   expect(del.status()).toBe(409);
 });
 
@@ -60,7 +60,7 @@ test('cross-repo reference renders as an external graph node', async ({ page }) 
   // trading-specs grounds on the external regulations source; its txn-report
   // spec links ~regulations/regulations/mifid-ii.md (specquill-docs, by
   // contrast, is self-contained and references nothing).
-  await page.goto('/p/trading-specs/graph');
+  await page.goto(`${APP}/p/trading-specs/graph`);
   // the ~regulations link becomes an external node…
   // (scoped to the graph canvas — the copilot panel also shows a ~regulations chip)
   await expect(page.getByRole('main').getByText('~regulations')).toBeVisible({ timeout: 10_000 });

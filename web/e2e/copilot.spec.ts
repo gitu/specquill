@@ -1,15 +1,16 @@
 // Copilot e2e — needs the dev server AND scripts/mock-llm.py running.
 import { expect, test } from '@playwright/test';
+import { API, APP, H } from './helpers';
 
 test.beforeEach(async ({ request }) => {
-  const info = await request.get('/api/copilot/info');
+  const info = await request.get(`${API}/copilot/info`);
   const body = (await info.json()) as { enabled: boolean; model?: string };
   // assertions expect the deterministic mock provider (scripts/mock-llm.py)
   test.skip(!body.enabled || body.model !== 'mock-1', 'copilot not running against mock-llm');
 });
 
 test('chat streams a grounded reply', async ({ page }) => {
-  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
+  await page.goto(`${APP}/p/trading-specs/editor/specs/txn-report.md`);
   const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('Enter');
@@ -22,7 +23,7 @@ test('chat streams a grounded reply', async ({ page }) => {
 });
 
 test('draft edits land on a copilot branch for review', async ({ page }) => {
-  await page.goto('/p/trading-specs/dashboard');
+  await page.goto(`${APP}/p/trading-specs/dashboard`);
   await page.getByRole('button', { name: /Draft edits & open as diff/ }).click();
   await expect(page.getByText('Edits drafted on')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('copilot/2026-06-mifid-rts22').first()).toBeVisible();
