@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"specquill/server/internal/secrets"
 )
 
 //go:embed schema.sql
@@ -22,7 +24,8 @@ var schema string
 var ErrNotFound = errors.New("not found")
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	sealer *secrets.Sealer // encrypts tenant_credentials; nil = credential store off
 }
 
 type User struct {

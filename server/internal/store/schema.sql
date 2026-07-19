@@ -226,3 +226,24 @@ CREATE TABLE IF NOT EXISTS repo_grant_invites (
   UNIQUE (tenant_id, repo_id, kind, matcher),
   FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
 );
+
+-- per-tenant credentials encrypted at rest (secrets.Sealer). The secret VALUE
+-- is never stored in plaintext and never returned by any read API; only the
+-- ciphertext (nonce||AES-GCM) and non-secret metadata live here. AAD binds the
+-- ciphertext to (tenant_id, kind, ref) so a row cannot be decrypted in another
+-- tenant's context. Deleting a tenant cascades its credentials away.
+CREATE TABLE IF NOT EXISTS tenant_credentials (
+  id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id    BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind         TEXT   NOT NULL,                 -- git_pat | git_basic | importer_token | oidc_secret
+  ref          TEXT   NOT NULL DEFAULT '',      -- slot name (e.g. repo_id / source name); '' = tenant default
+  username     TEXT   NOT NULL DEFAULT '',      -- non-secret (git_basic user; else x-access-token)
+  secret_blob  BYTEA  NOT NULL,                 -- nonce || AES-256-GCM ciphertext
+  key_version  INT    NOT NULL DEFAULT 1,
+  created_by   BIGINT REFERENCES users(id),
+  created_at   BIGINT NOT NULL,
+  rotated_at   BIGINT NOT NULL DEFAULT 0,
+  last_used_at BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (tenant_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS tenant_credentials_lookup ON tenant_credentials (tenant_id, kind, ref);

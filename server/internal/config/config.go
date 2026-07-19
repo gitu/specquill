@@ -163,6 +163,20 @@ type GitHubAppConfig struct {
 
 func (g GitHubAppConfig) Enabled() bool { return g.AppID != 0 }
 
+// SecretsConfig supplies the master key that encrypts per-tenant credentials
+// at rest (tenant_credentials). The key is 32 bytes, base64- or hex-encoded,
+// from an env var or a mounted file — mirroring the GitHub-App key pattern so
+// the secret never lives in the config file. When neither is set, the
+// encrypted credential store is simply disabled (lookups miss and the legacy
+// installation-token / token_env resolution is unchanged).
+type SecretsConfig struct {
+	MasterKeyEnv  string `yaml:"master_key_env"`
+	MasterKeyPath string `yaml:"master_key_path"`
+}
+
+// Enabled reports whether a master key source is configured.
+func (s SecretsConfig) Enabled() bool { return s.MasterKeyEnv != "" || s.MasterKeyPath != "" }
+
 // DatabaseConfig locates the Postgres store (users, sessions, PR review
 // state, collab logs). Production configs must use url_env so the DSN —
 // which carries credentials — never lives in a file.
@@ -219,6 +233,7 @@ type Config struct {
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
 	GitHubApp GitHubAppConfig `yaml:"github_app"`
 	AI        AIConfig        `yaml:"ai"`
+	Secrets   SecretsConfig   `yaml:"secrets"`
 }
 
 func Load(path string) (*Config, error) {

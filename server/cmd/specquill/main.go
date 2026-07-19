@@ -33,6 +33,7 @@ import (
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/scaffold"
+	"specquill/server/internal/secrets"
 	"specquill/server/internal/store"
 	"specquill/server/internal/webui"
 )
@@ -90,6 +91,17 @@ func serve(configPath string, dev bool) error {
 		return err
 	}
 	defer st.Close()
+
+	// encryptor for per-tenant credentials at rest (nil when no master key is
+	// configured — the credential store is then simply disabled)
+	sealer, err := secrets.NewSealer(cfg.Secrets)
+	if err != nil {
+		return err
+	}
+	st.SetSealer(sealer)
+	if sealer != nil {
+		log.Printf("credential store enabled (encrypted at rest)")
+	}
 
 	release, err := gitx.LockDataDir(cfg.DataDir)
 	if err != nil {
@@ -162,36 +174,22 @@ func serve(configPath string, dev bool) error {
 		if err != nil {
 			return err
 		}
+		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
+	}
+	// git fetch/push credential resolution, highest precedence first:
+	// (1) an encrypted per-tenant credential, (2) a GitHub-App installation
+	// token, (3) token_env — the last handled downstream in credentialArgsEnv
+	// when this hook returns false. Tokens still reach git via env only.
+	if sealer != nil || ghApp != nil {
 		git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
-			if ten, err := st.TenantBySlug(r.Tenant()); err == nil && ten.Provider == "github" && ten.Installation != 0 {
-				tok, err := ghApp.InstallationToken(ten.Installation)
-				if err != nil {
-					log.Printf("github app: token for %s: %v", r.Key(), err)
-					return "", "", false
-				}
-				return "x-access-token", tok, true
+			if u, t, ok := managedCredential(st, r); ok {
+				return u, t, true
 			}
-			// config-tenant repos on github.com ride the app too when it is
-			// installed on them — no PAT needed; anything else (app not
-			// installed, non-GitHub host) falls back to token_env
-			if full, ok := githubapp.RepoFromRemote(r.Cfg.Remote); ok {
-				inst, err := ghApp.RepoInstallation(full)
-				if err != nil {
-					if err != githubapp.ErrNotInstalled {
-						log.Printf("github app: installation for %s: %v", full, err)
-					}
-					return "", "", false
-				}
-				tok, err := ghApp.InstallationToken(inst)
-				if err != nil {
-					log.Printf("github app: token for %s: %v", r.Key(), err)
-					return "", "", false
-				}
-				return "x-access-token", tok, true
+			if ghApp != nil {
+				return ghAppToken(st, ghApp, r)
 			}
 			return "", "", false
 		}
-		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
 	}
 
 	// api-managed repos (added in-app) survive reconciliation — re-register
@@ -373,4 +371,61 @@ func initCmd(args []string) error {
 		return err
 	}
 	return scaffold.Init(dir, *name, strings.Split(*typesFlag, ","))
+}
+
+// managedCredential resolves an encrypted per-tenant credential for a repo's
+// fetch/push, if one is stored. It prefers a repo-scoped slot over the tenant
+// default, and a PAT over basic auth. A PAT/token uses the x-access-token
+// username unless the row stored one. Returns false when none is stored (or
+// the credential store is disabled), so the caller falls through.
+func managedCredential(st *store.Store, r *gitx.Repo) (username, secret string, ok bool) {
+	ten, err := st.TenantBySlug(r.Tenant())
+	if err != nil {
+		return "", "", false
+	}
+	for _, slot := range []struct{ kind, ref string }{
+		{"git_pat", r.Cfg.ID}, {"git_basic", r.Cfg.ID},
+		{"git_pat", ""}, {"git_basic", ""},
+	} {
+		user, sec, err := st.GetCredentialSecret(ten.ID, slot.kind, slot.ref)
+		if err != nil {
+			continue
+		}
+		if user == "" {
+			user = "x-access-token"
+		}
+		return user, string(sec), true
+	}
+	return "", "", false
+}
+
+// ghAppToken mints a GitHub-App installation token for a repo: the repo's own
+// tenant installation for github tenants, else the installation covering the
+// github.com remote for config-tenant repos. Returns false to fall through to
+// token_env.
+func ghAppToken(st *store.Store, ghApp *githubapp.App, r *gitx.Repo) (string, string, bool) {
+	if ten, err := st.TenantBySlug(r.Tenant()); err == nil && ten.Provider == "github" && ten.Installation != 0 {
+		tok, err := ghApp.InstallationToken(ten.Installation)
+		if err != nil {
+			log.Printf("github app: token for %s: %v", r.Key(), err)
+			return "", "", false
+		}
+		return "x-access-token", tok, true
+	}
+	if full, ok := githubapp.RepoFromRemote(r.Cfg.Remote); ok {
+		inst, err := ghApp.RepoInstallation(full)
+		if err != nil {
+			if err != githubapp.ErrNotInstalled {
+				log.Printf("github app: installation for %s: %v", full, err)
+			}
+			return "", "", false
+		}
+		tok, err := ghApp.InstallationToken(inst)
+		if err != nil {
+			log.Printf("github app: token for %s: %v", r.Key(), err)
+			return "", "", false
+		}
+		return "x-access-token", tok, true
+	}
+	return "", "", false
 }
