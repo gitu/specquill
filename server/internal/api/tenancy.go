@@ -21,14 +21,25 @@ func (s *Server) tenant(w http.ResponseWriter, r *http.Request) (*store.Tenant, 
 		jsonError(w, http.StatusUnauthorized, "authentication required")
 		return nil, false
 	}
-	want := r.Header.Get("X-SpecQuill-Tenant")
-	if want == "" {
-		want = r.URL.Query().Get("tenant")
-	}
 	ms, err := s.memberships(u)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return nil, false
+	}
+	// the request Host pins the tenant when subdomain routing is configured;
+	// it is authoritative, but the user must still be a member of it
+	if ht := s.hostTenant(r); ht != nil {
+		for i := range ms {
+			if ms[i].Tenant.ID == ht.ID {
+				return &ms[i].Tenant, true
+			}
+		}
+		jsonError2(w, http.StatusForbidden, "not a member of tenant "+ht.Slug, "tenant_forbidden")
+		return nil, false
+	}
+	want := r.Header.Get("X-SpecQuill-Tenant")
+	if want == "" {
+		want = r.URL.Query().Get("tenant")
 	}
 	if want != "" {
 		for i := range ms {
@@ -59,13 +70,21 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 	if u == nil {
 		return nil
 	}
-	want := r.Header.Get("X-SpecQuill-Tenant")
-	if want == "" {
-		want = r.URL.Query().Get("tenant")
-	}
 	ms, err := s.memberships(u)
 	if err != nil {
 		return nil
+	}
+	if ht := s.hostTenant(r); ht != nil {
+		for i := range ms {
+			if ms[i].Tenant.ID == ht.ID {
+				return &ms[i].Tenant
+			}
+		}
+		return nil
+	}
+	want := r.Header.Get("X-SpecQuill-Tenant")
+	if want == "" {
+		want = r.URL.Query().Get("tenant")
 	}
 	if want != "" {
 		for i := range ms {
@@ -79,6 +98,45 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 		return &ms[0].Tenant
 	}
 	return nil
+}
+
+// hostTenant resolves the tenant named by the request Host when subdomain
+// routing is enabled (base_domain set): <slug>.<base_domain> → that tenant.
+// Returns nil for the apex, an unknown subdomain, localhost, or when
+// base_domain is unset — callers then fall back to header/query selection, so
+// self-host behavior is unchanged.
+func (s *Server) hostTenant(r *http.Request) *store.Tenant {
+	base := s.cfg.BaseDomain
+	if base == "" {
+		return nil
+	}
+	host := r.Host
+	if s.cfg.TrustedProxy {
+		if xf := r.Header.Get("X-Forwarded-Host"); xf != "" {
+			host = xf
+		}
+	}
+	host = strings.ToLower(host)
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i] // strip port
+	}
+	label, ok := strings.CutSuffix(host, "."+strings.ToLower(base))
+	if !ok || label == "" || strings.Contains(label, ".") {
+		return nil // apex, deeper subdomain, or a different domain
+	}
+	t, err := s.store.TenantBySlug(label)
+	if err != nil {
+		return nil
+	}
+	return t
+}
+
+// hostTenantID is hostTenant's id, or 0 when the Host does not pin a tenant.
+func (s *Server) hostTenantID(r *http.Request) int64 {
+	if t := s.hostTenant(r); t != nil {
+		return t.ID
+	}
+	return 0
 }
 
 // memberships returns the user's tenants, auto-enrolling first-time users

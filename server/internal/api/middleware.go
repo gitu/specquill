@@ -15,10 +15,20 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), s.devUser)))
 			return
 		}
-		u := s.sessions.Resolve(r)
+		u, boundTenant := s.sessions.Resolve(r)
 		if u == nil {
 			jsonError(w, http.StatusUnauthorized, "authentication required")
 			return
+		}
+		// a session bound to one tenant is not honored on another tenant's
+		// host — defense in depth beyond the host-only cookie (covers the
+		// shared apex). Unbound sessions (self-host default) skip this.
+		if boundTenant != 0 {
+			if ht := s.hostTenant(r); ht != nil && ht.ID != boundTenant {
+				s.sessions.Clear(w, r)
+				jsonError(w, http.StatusUnauthorized, "session not valid for this tenant")
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), u)))
 	})

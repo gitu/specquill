@@ -203,17 +203,25 @@ type AIConfig struct {
 }
 
 type Config struct {
-	Listen   string          `yaml:"listen"`
-	DataDir  string          `yaml:"data_dir"`
-	BaseURL  string          `yaml:"base_url"`
-	Database DatabaseConfig  `yaml:"database"`
-	Projects []ProjectConfig `yaml:"projects"`
-	Sources  []SourceConfig  `yaml:"sources"`
+	Listen  string `yaml:"listen"`
+	DataDir string `yaml:"data_dir"`
+	BaseURL string `yaml:"base_url"`
+	// BaseDomain, when set, enables per-tenant subdomain routing: a request to
+	// <slug>.<base_domain> resolves to that tenant. Empty (self-host default)
+	// keeps the header/query tenant selection and changes nothing.
+	BaseDomain string `yaml:"base_domain"`
+	// TrustedProxy allows honoring X-Forwarded-Host for tenant resolution.
+	// Only enable behind a proxy that sets it authoritatively — the Host is
+	// otherwise attacker-controlled and could cause tenant confusion.
+	TrustedProxy bool            `yaml:"trusted_proxy"`
+	Database     DatabaseConfig  `yaml:"database"`
+	Projects     []ProjectConfig `yaml:"projects"`
+	Sources      []SourceConfig  `yaml:"sources"`
 	// Grants: source names granted to the default tenant (stage 2).
 	// Omitted/empty = all sources granted (self-host convenience).
-	Grants  []string      `yaml:"grants"`
-	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
-	Git     GitConfig     `yaml:"git"`
+	Grants    []string        `yaml:"grants"`
+	Repos     []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Git       GitConfig       `yaml:"git"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Session   SessionConfig   `yaml:"session"`
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`

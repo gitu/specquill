@@ -131,7 +131,9 @@ func (s *Store) LocalUserHash(username string) (userID int64, hash string, err e
 
 // ---------------------------------------------------------------- sessions
 
-func (s *Store) CreateSession(userID int64, ttl time.Duration) (string, error) {
+// CreateSession mints a session for a user, optionally bound to a tenant
+// (tenantID 0 = unbound, honored on any host — the self-host default).
+func (s *Store) CreateSession(userID, tenantID int64, ttl time.Duration) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -141,29 +143,33 @@ func (s *Store) CreateSession(userID int64, ttl time.Duration) (string, error) {
 	// opportunistic prune — idle-expired sessions are otherwise only
 	// deleted when their cookie comes back
 	_, _ = s.exec("DELETE FROM sessions WHERE expires_at < ?", now)
-	_, err := s.exec("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-		id, userID, now, now+int64(ttl.Seconds()))
+	_, err := s.exec("INSERT INTO sessions (id, user_id, tenant_id, created_at, expires_at) VALUES (?, ?, NULLIF(?, 0), ?, ?)",
+		id, userID, tenantID, now, now+int64(ttl.Seconds()))
 	return id, err
 }
 
-// SessionUser resolves a session to its user and slides the expiry.
-func (s *Store) SessionUser(sessionID string, ttl time.Duration) (*User, error) {
+// SessionUser resolves a session to its user and the tenant it is bound to
+// (0 = unbound), sliding the expiry.
+func (s *Store) SessionUser(sessionID string, ttl time.Duration) (*User, int64, error) {
 	var userID int64
 	var expiresAt int64
-	err := s.queryRow("SELECT user_id, expires_at FROM sessions WHERE id = ?", sessionID).Scan(&userID, &expiresAt)
+	var tenantID sql.NullInt64
+	err := s.queryRow("SELECT user_id, tenant_id, expires_at FROM sessions WHERE id = ?", sessionID).
+		Scan(&userID, &tenantID, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, 0, ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	now := time.Now().Unix()
 	if expiresAt < now {
 		_, _ = s.exec("DELETE FROM sessions WHERE id = ?", sessionID)
-		return nil, ErrNotFound
+		return nil, 0, ErrNotFound
 	}
 	_, _ = s.exec("UPDATE sessions SET expires_at = ? WHERE id = ?", now+int64(ttl.Seconds()), sessionID)
-	return s.UserByID(userID)
+	u, err := s.UserByID(userID)
+	return u, tenantID.Int64, err
 }
 
 func (s *Store) DeleteSession(sessionID string) error {

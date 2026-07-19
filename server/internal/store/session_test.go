@@ -14,11 +14,11 @@ func TestSessionIdleExpiry(t *testing.T) {
 	}
 
 	// expired session (idle past the TTL) resolves to not-found and is deleted
-	id, err := st.CreateSession(u.ID, -1*time.Second)
+	id, err := st.CreateSession(u.ID, 0, -1*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SessionUser(id, 10*time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, _, err := st.SessionUser(id, 10*time.Minute); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired session resolved: %v", err)
 	}
 	var n int
@@ -27,13 +27,13 @@ func TestSessionIdleExpiry(t *testing.T) {
 	}
 
 	// live session slides: each resolve pushes expires_at to now+ttl
-	id, err = st.CreateSession(u.ID, 10*time.Minute)
+	id, err = st.CreateSession(u.ID, 0, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var before int64
 	_ = st.queryRow("SELECT expires_at FROM sessions WHERE id = ?", id).Scan(&before)
-	if _, err := st.SessionUser(id, time.Hour); err != nil {
+	if _, _, err := st.SessionUser(id, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	var after int64
@@ -43,8 +43,8 @@ func TestSessionIdleExpiry(t *testing.T) {
 	}
 
 	// creating a session prunes other idle-expired rows
-	stale, _ := st.CreateSession(u.ID, -1*time.Second)
-	if _, err := st.CreateSession(u.ID, 10*time.Minute); err != nil {
+	stale, _ := st.CreateSession(u.ID, 0, -1*time.Second)
+	if _, err := st.CreateSession(u.ID, 0, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.queryRow("SELECT COUNT(*) FROM sessions WHERE id = ?", stale).Scan(&n); err != nil || n != 0 {

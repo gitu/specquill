@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS tenant_repos (
   PRIMARY KEY (tenant_id, repo_id)
 );
 ALTER TABLE tenant_repos ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'config';
+-- per-tenant session binding: a cookie minted on one tenant's host is not
+-- honored on another's (NULL = unbound, the self-host default).
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS tenant_id BIGINT;
 
 CREATE TABLE IF NOT EXISTS tenant_members (
   tenant_id BIGINT NOT NULL REFERENCES tenants(id),

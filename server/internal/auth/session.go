@@ -26,8 +26,10 @@ func NewSessions(st *store.Store, cfg *config.Config) *Sessions {
 	return &Sessions{Store: st, TTL: cfg.Session.TTL, Secure: cfg.Session.CookieSecure}
 }
 
-func (s *Sessions) Issue(w http.ResponseWriter, userID int64) error {
-	id, err := s.Store.CreateSession(userID, s.TTL)
+// Issue mints a session cookie for userID, bound to tenantID (0 = unbound,
+// honored on any host — the self-host default).
+func (s *Sessions) Issue(w http.ResponseWriter, userID, tenantID int64) error {
+	id, err := s.Store.CreateSession(userID, tenantID, s.TTL)
 	if err != nil {
 		return err
 	}
@@ -51,17 +53,18 @@ func (s *Sessions) Clear(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Resolve returns the logged-in user for a request, or nil.
-func (s *Sessions) Resolve(r *http.Request) *store.User {
+// Resolve returns the logged-in user for a request and the tenant its session
+// is bound to (0 = unbound), or (nil, 0) when there is no valid session.
+func (s *Sessions) Resolve(r *http.Request) (*store.User, int64) {
 	c, err := r.Cookie(SessionCookie)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	u, err := s.Store.SessionUser(c.Value, s.TTL)
+	u, tenantID, err := s.Store.SessionUser(c.Value, s.TTL)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	return u
+	return u, tenantID
 }
 
 // WithUser / UserFrom pass the authenticated user through the request context.

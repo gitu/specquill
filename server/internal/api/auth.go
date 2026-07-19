@@ -69,7 +69,7 @@ func (s *Server) authGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		log.Printf("github callback: set login: %v", err)
 	}
 	s.claimInvites(u.ID, id.Email, id.Login)
-	if err := s.sessions.Issue(w, u.ID); err != nil {
+	if err := s.sessions.Issue(w, u.ID, s.hostTenantID(r)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -94,7 +94,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.claimInvites(u.ID, claims.Email, "")
-	if err := s.sessions.Issue(w, u.ID); err != nil {
+	if err := s.sessions.Issue(w, u.ID, s.hostTenantID(r)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Server) authLocalLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	if err := s.sessions.Issue(w, userID); err != nil {
+	if err := s.sessions.Issue(w, userID, s.hostTenantID(r)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
