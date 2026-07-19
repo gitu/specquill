@@ -134,8 +134,10 @@ func (s *Server) sourceIsOKF(tenantSlug, name string) bool {
 	return err == nil && okf.EnabledContent(content)
 }
 
-// POST /api/projects {id, remote, contentRoot?, defaultBranch?, tokenEnv?}
-// — admin only; clones the repo and registers the project (managed_by=api).
+// POST /api/projects {id, remote, contentRoot?, defaultBranch?, tokenEnv?,
+// credentialId? | credential: {name?, username?, token}} — admin only;
+// registers the project (managed_by=api) and clones LAST, so the first
+// fetch already authenticates with an inline credential (REQ-023.5).
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.tenant(w, r)
 	if !ok {
@@ -147,6 +149,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		ContentRoot   string `json:"contentRoot"`
 		DefaultBranch string `json:"defaultBranch"`
 		TokenEnv      string `json:"tokenEnv"`
+		CredentialID  int64  `json:"credentialId"`
+		Credential    *struct {
+			Name     string `json:"name"`
+			Username string `json:"username"`
+			Token    string `json:"token"`
+		} `json:"credential"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" || body.Remote == "" {
 		jsonError(w, http.StatusBadRequest, "id and remote are required")
@@ -173,6 +181,23 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if body.DefaultBranch == "" {
 		body.DefaultBranch = "main"
 	}
+	// inline credential: seal + store before any row references it
+	credID := body.CredentialID
+	if body.Credential != nil && body.Credential.Token != "" {
+		if !s.secretsReady(w) {
+			return
+		}
+		name := strings.TrimSpace(body.Credential.Name)
+		if name == "" {
+			name = body.ID + " token"
+		}
+		id, err := s.sealAndStore(t, name, body.Credential.Username, body.Credential.Token, auth.UserFrom(r.Context()).ID)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		credID = id
+	}
 	rc := config.RepoConfig{
 		ID: body.ID, Mode: config.Writable, Remote: body.Remote,
 		DefaultBranch: body.DefaultBranch, TokenEnv: body.TokenEnv,
@@ -180,12 +205,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		ProtectedBranches: []string{body.DefaultBranch},
 		ContentRoot:       strings.Trim(body.ContentRoot, "/"),
 	}
-	if _, err := s.git.AddRepo(t.Slug, rc); err != nil {
-		jsonError(w, http.StatusBadGateway, "clone failed: "+err.Error())
-		return
-	}
 	if err := s.store.UpsertTenantRepo(t.ID, store.TenantRepo{
-		RepoID: body.ID, Mode: string(config.Writable), Remote: body.Remote, DefaultBranch: body.DefaultBranch,
+		RepoID: body.ID, Mode: string(config.Writable), Remote: body.Remote,
+		DefaultBranch: body.DefaultBranch, CredentialID: credID,
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -194,6 +216,16 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		TenantID: t.ID, ProjectID: body.ID, RepoID: body.ID, ContentRoot: rc.ContentRoot,
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// clone LAST: TokenFor resolves the credential rows written above. On
+	// failure the registry rows roll back (the credential stays — the admin
+	// fixes the remote and retries without re-entering the token).
+	if _, err := s.git.AddRepo(t.Slug, rc); err != nil {
+		_ = s.store.DeleteProject(t.ID, body.ID)
+		_ = s.store.DeleteTenantRepo(t.ID, body.ID)
+		s.git.RemoveRepo(t.Slug + "/" + body.ID)
+		jsonError(w, http.StatusBadGateway, "clone failed: "+err.Error())
 		return
 	}
 	s.publish("repos-changed", t.Slug+"/"+body.ID, "")

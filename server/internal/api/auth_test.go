@@ -13,6 +13,7 @@ import (
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/secrets"
 	"specquill/server/internal/store"
 	"testing/fstest"
 )
@@ -79,9 +80,11 @@ func testServerCfg(t *testing.T, protectMain bool, mut func(*config.Config)) (ht
 	if err := git.Init(); err != nil {
 		t.Fatal(err)
 	}
+	box, _ := secrets.NewFromEnv() // nil unless the test sets the master key
 	return New(cfg, git, Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
+		Secrets:  box,
 		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	}), st, git
 }

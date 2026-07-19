@@ -20,16 +20,25 @@ export function AdminView() {
   const projects = useQuery({ queryKey: ['t', tenant, 'projects'], queryFn: () => api<ProjectRow[]>('/api/projects') });
   const repos = useRepos();
   const sources = (repos.data || []).filter((r) => r.kind === 'source');
-  const [form, setForm] = useState({ id: '', remote: '', contentRoot: '' });
+  const [form, setForm] = useState({ id: '', remote: '', contentRoot: '', token: '' });
   const [error, setError] = useState('');
 
   const create = useMutation({
-    mutationFn: () => api<{ id: string }>('/api/projects', { method: 'POST', body: JSON.stringify(form) }),
+    mutationFn: () =>
+      api<{ id: string }>('/api/projects', {
+        method: 'POST',
+        // the token rides only inside credential:{} and is cleared on success
+        body: JSON.stringify({
+          id: form.id, remote: form.remote, contentRoot: form.contentRoot,
+          ...(form.token ? { credential: { token: form.token } } : {}),
+        }),
+      }),
     onSuccess: () => {
-      setForm({ id: '', remote: '', contentRoot: '' });
+      setForm({ id: '', remote: '', contentRoot: '', token: '' });
       setError('');
       qc.invalidateQueries({ queryKey: ['t', tenant, 'projects'] });
       qc.invalidateQueries({ queryKey: ['t', tenant, 'repos'] });
+      qc.invalidateQueries({ queryKey: ['t', tenant, 'credentials'] });
     },
     onError: (e) => setError(String((e as Error).message || e)),
   });
@@ -79,6 +88,7 @@ export function AdminView() {
             <input required placeholder="id" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} style={sx(input + ';width:130px')} />
             <input required placeholder="remote (git url or path)" value={form.remote} onChange={(e) => setForm({ ...form, remote: e.target.value })} style={sx(input + ';flex:1;min-width:200px')} />
             <input placeholder="content root (optional)" value={form.contentRoot} onChange={(e) => setForm({ ...form, contentRoot: e.target.value })} style={sx(input + ';width:180px')} />
+            <input type="password" autoComplete="off" placeholder="access token (private remotes)" value={form.token} onChange={(e) => setForm({ ...form, token: e.target.value })} style={sx(input + ';width:210px')} />
             <button type="submit" disabled={create.isPending}
               style={sx('height:30px;padding:0 14px;border:none;border-radius:7px;background:var(--brand);color:var(--brand-fg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
               {create.isPending ? 'Cloning…' : 'Add project'}
@@ -96,12 +106,68 @@ export function AdminView() {
         )}
 
         <GitHubReposPanel onError={setError} />
+        <CredentialsPanel onError={setError} />
         <AccessPanel
           projects={(repos.data || []).filter((r) => r.kind === 'project' && r.role === 'admin').map((r) => r.id)}
           sources={sources.filter((s) => s.role === 'admin').map((s) => s.id)}
           onError={setError}
         />
       </div>
+    </div>
+  );
+}
+
+
+// CredentialsPanel — tenant-owned repo tokens (REQ-023): sealed server-side,
+// listed as metadata only, rotated in place, never displayed after entry.
+// Renders nothing for non-admins (the list request 403s).
+function CredentialsPanel({ onError }: { onError: (m: string) => void }) {
+  const tenant = useTenant();
+  const qc = useQueryClient();
+  const [rotating, setRotating] = useState<number | null>(null);
+  const [newToken, setNewToken] = useState('');
+  interface CredRow { id: number; name: string; username?: string; createdAt: number; updatedAt: number; repoCount: number }
+  const creds = useQuery({ queryKey: ['t', tenant, 'credentials'], queryFn: () => api<CredRow[]>('/api/credentials'), retry: false });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['t', tenant, 'credentials'] });
+  const rotate = useMutation({
+    mutationFn: ({ id, token }: { id: number; token: string }) =>
+      api(`/api/credentials/${id}`, { method: 'PUT', body: JSON.stringify({ token }) }),
+    onSuccess: () => { setRotating(null); setNewToken(''); invalidate(); },
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  const del = useMutation({
+    mutationFn: (id: number) => api(`/api/credentials/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+    onError: (e) => onError(String((e as Error).message || e)),
+  });
+  if (!creds.data || creds.data.length === 0) return null; // 403, loading, or nothing to show
+  const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
+  const input = 'height:26px;padding:0 8px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11.5px';
+  return (
+    <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+      <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Credentials</div>
+      {creds.data.map((c) => (
+        <div key={c.id} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap')}>
+          <span style={sx('font-size:12.5px;font-weight:600')}>{c.name}</span>
+          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>••••••••</span>
+          <span style={sx('font-size:11px;color:var(--text-3)')}>{c.repoCount} repo{c.repoCount === 1 ? '' : 's'}</span>
+          <span style={sx('flex:1')} />
+          {rotating === c.id ? (
+            <>
+              <input type="password" autoComplete="off" autoFocus placeholder="new token" value={newToken}
+                onChange={(e) => setNewToken(e.target.value)} style={sx(input + ';width:190px')} />
+              <button disabled={!newToken || rotate.isPending} onClick={() => rotate.mutate({ id: c.id, token: newToken })} style={sx(btn)}>Save</button>
+              <button onClick={() => { setRotating(null); setNewToken(''); }} style={sx(btn)}>Cancel</button>
+            </>
+          ) : (
+            <button onClick={() => setRotating(c.id)} style={sx(btn)}>Rotate</button>
+          )}
+          <button disabled={del.isPending || c.repoCount > 0} title={c.repoCount > 0 ? 'detach from its repos first' : undefined}
+            onClick={() => del.mutate(c.id)} style={sx(btn + ';color:var(--del);border-color:var(--reg-line);' + (c.repoCount > 0 ? 'opacity:.5;cursor:default' : ''))}>
+            Delete
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

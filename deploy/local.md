@@ -124,6 +124,9 @@ After=network-online.target postgresql.service
 [Service]
 ExecStart=/usr/local/bin/specquill -config /etc/specquill/specquill.yml
 EnvironmentFile=/etc/specquill/env      # the SPECQUILL_* secrets, mode 0600
+# include SPECQUILL_SECRET_KEY (base64 of 32 random bytes, e.g.
+# `head -c32 /dev/urandom | base64`) to enable the in-app credential store —
+# tenant admins can then connect private repos with a PAT from the Admin UI
 User=specquill
 StateDirectory=specquill                # /var/lib/specquill
 Restart=on-failure
