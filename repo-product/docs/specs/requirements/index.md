@@ -20,3 +20,6 @@
 - [Instant sync via push webhooks](REQ-018.md)
 - [GitHub-App tenants with derived authorization](REQ-019.md)
 - [Per-repository user grants](REQ-020.md)
+- [Four-level repository roles with a protected-merge gate](REQ-021.md)
+- [Tenant-scoped URLs and a first-class config tenant](REQ-022.md)
+- [Encrypted tenant credentials for repo connection](REQ-023.md)

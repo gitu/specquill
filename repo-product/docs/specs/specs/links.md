@@ -27,7 +27,7 @@ any forge; the `/`-absolute form stays readable.
 
 ## Verification
 
-`GET /api/repos/{repo}/linkcheck?ref=…` scans every markdown file of the
+`GET /api/t/{tenant}/repos/{repo}/linkcheck?ref=…` scans every markdown file of the
 branch snapshot — reserved `index.md`/`log.md` included, their listings must
 stay navigable — and checks each class differently:
 

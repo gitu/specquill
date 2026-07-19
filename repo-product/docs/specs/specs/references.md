@@ -3,7 +3,7 @@ type: Specification
 title: References — sources, grants, grounding
 status: draft
 satisfies: [requirements/REQ-004.md]
-updated: 2026-07-09
+updated: 2026-07-19
 ---
 
 # References — sources, grants, grounding
@@ -18,7 +18,9 @@ How [REQ-004](../requirements/REQ-004.md) is realized.
 3. **Selection** — the in-repo config lists references by source name, with
    optional path filters; effective references are the intersection of
    selection and grants, resolved from the default branch only.
-4. **Roles** — viewer/member/admin gate reads, writes and administration.
+4. **Roles** — the per-repo ladder `viewer < editor < maintainer < admin`
+   gates reads, writes, protected merges and administration
+   ([authentication.md](authentication.md)).
 
 ## Grounding
 
