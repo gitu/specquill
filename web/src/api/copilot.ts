@@ -17,16 +17,18 @@ export function useCopilotInfo(repoId?: string) {
 
 /**
  * POST the active project's copilot/chat and consume the SSE stream. onDelta
- * fires per chunk; resolves with the full reply text. repoId targets the active
- * project so grounding follows the project switcher (omit → sole-project alias).
+ * fires per chunk; resolves with the full reply text. repoId targets the
+ * active project so grounding follows the project switcher — required: the
+ * copilot is always project-scoped (the legacy sole-project alias is gone).
  */
 export async function streamChat(
-  repoId: string | undefined,
+  repoId: string,
   body: { messages: ChatMessage[]; focusPath?: string; branch?: string },
   onDelta: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await fetch(apiPath(`/api/repos/${encodeURIComponent(repoId!)}/copilot/chat`), {
+  if (!repoId) throw new Error('copilot chat needs an active project');
+  const res = await fetch(apiPath(`/api/repos/${encodeURIComponent(repoId)}/copilot/chat`), {
     method: 'POST',
     headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -63,6 +65,7 @@ export async function streamChat(
   return full;
 }
 
-export function draftEdits(repoId: string | undefined, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
-  return api<DraftResult>(`/api/repos/${encodeURIComponent(repoId!)}/copilot/draft`, { method: 'POST', body: JSON.stringify(body) });
+export function draftEdits(repoId: string, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
+  if (!repoId) return Promise.reject(new Error('copilot draft needs an active project'));
+  return api<DraftResult>(`/api/repos/${encodeURIComponent(repoId)}/copilot/draft`, { method: 'POST', body: JSON.stringify(body) });
 }
