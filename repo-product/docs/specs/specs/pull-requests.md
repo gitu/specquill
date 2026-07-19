@@ -1,9 +1,9 @@
 ---
 type: Specification
 title: Pull requests — reviewed merges
-status: approved
-satisfies: [requirements/REQ-008.md]
-updated: 2026-07-09
+status: in_review
+satisfies: [requirements/REQ-008.md, requirements/REQ-021.md]
+updated: 2026-07-19
 ---
 
 # Pull requests — reviewed merges
@@ -22,6 +22,15 @@ Reviewers approve; the PR merges only when it is approved and conflict-free.
 An approval records the branch's head commit at approval time. A new commit
 moves the head, so prior approvals no longer match and the PR needs
 re-approval — an approval always refers to the exact tree that was reviewed.
+
+## Who may do what
+
+Roles follow the per-repo ladder ([REQ-021](../requirements/REQ-021.md)):
+a `viewer` reads PRs and comments; an `editor` opens, approves and closes
+them; **merging into a protected branch requires `maintainer`** — approval
+and merge remain distinct capabilities, so a team can review broadly while
+keeping the protected branch behind a smaller group. A PR targeting an
+unprotected branch merges at `editor`.
 
 ## Merge safety
 

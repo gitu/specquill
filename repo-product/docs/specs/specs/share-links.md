@@ -2,8 +2,8 @@
 type: Specification
 title: Share links — unauthenticated OKF-bundle downloads
 status: in_review
-satisfies: [requirements/REQ-016.md]
-updated: 2026-07-14
+satisfies: [requirements/REQ-016.md, requirements/REQ-021.md]
+updated: 2026-07-19
 ---
 
 # Share links — unauthenticated OKF-bundle downloads
@@ -21,10 +21,16 @@ token on every request.
 
 | route | auth | effect |
 |---|---|---|
-| `GET /api/repos/<project>/share` | session | current link state (`url` or null) |
-| `POST /api/repos/<project>/share` | session, member role | mint or rotate the token |
-| `DELETE /api/repos/<project>/share` | session, member role | revoke |
+| `GET /api/t/<tenant>/repos/<project>/share` | session | current link state (`url` or null) |
+| `POST /api/t/<tenant>/repos/<project>/share` | session, maintainer role | mint or rotate the token |
+| `DELETE /api/t/<tenant>/repos/<project>/share` | session, maintainer role | revoke |
 | `GET /share/<token>/<name>.zip` | **none** — the token is the credential | stream the bundle |
+
+Minting an unauthenticated export of protected-branch content is a
+protected-content decision, so it sits at `maintainer` on the ladder
+([REQ-021](../requirements/REQ-021.md)) — the same rung that merges into
+the protected branch. The download route stays global (tenant-free): the
+token is the whole credential.
 
 The `<name>` segment is a cosmetic filename (`<project>-okf.zip`) and is not
 validated. Downloads answer with `Content-Type: application/zip`,
