@@ -36,10 +36,9 @@ type RepoConfig struct {
 	Mirror bool `yaml:"-"`
 }
 
-// SourceConfig is a stage-1 catalog entry: a named external source that
-// projects may reference (repo-product/docs/specs/specs/multi-tenancy.md + the projects plan).
-// Sources are read-only downstream, always. Credentials come from the
-// environment via token_env — never from the DB or in-repo config.
+// SourceConfig is a catalog entry: a named external source that projects may
+// reference. Sources are read-only downstream, always. Credentials come from
+// the environment via token_env — never from the DB or in-repo config.
 type SourceConfig struct {
 	Name          string        `yaml:"name"`
 	Kind          string        `yaml:"kind"`   // git | url | openapi | confluence
@@ -105,16 +104,16 @@ type DevUser struct {
 type AuthConfig struct {
 	OIDC  OIDCConfig      `yaml:"oidc"`
 	Local LocalAuthConfig `yaml:"local"`
-	// AdminEmails bootstrap tenant administration: users whose email matches
-	// (case-insensitive, any provider) get the admin role in the default
-	// tenant on login. Without it a fresh deployment has members only and
-	// the management API is unreachable.
+	// AdminEmails bootstrap administration: users whose email matches
+	// (case-insensitive, any provider) get the admin deployment role on
+	// login. Without it a fresh deployment has members only and the
+	// management API is unreachable.
 	AdminEmails []string `yaml:"admin_emails"`
 	DevUser     *DevUser `yaml:"dev_user"`
-	// DefaultRole is the role every authenticated user is auto-enrolled with
-	// in the default (config) tenant: member (default, self-host semantics),
-	// viewer, or none — with none, users reach only repos explicitly granted
-	// to them (REQ-020, restricted on-prem deployments).
+	// DefaultRole is the deployment role every authenticated user is
+	// auto-enrolled with: member (default, self-host semantics), viewer, or
+	// none — with none, users reach only repos explicitly granted to them
+	// (REQ-020, restricted deployments).
 	DefaultRole string `yaml:"default_role"`
 }
 
@@ -169,10 +168,7 @@ type Config struct {
 	Database DatabaseConfig  `yaml:"database"`
 	Projects []ProjectConfig `yaml:"projects"`
 	Sources  []SourceConfig  `yaml:"sources"`
-	// Grants: source names granted to the default tenant (stage 2).
-	// Omitted/empty = all sources granted (self-host convenience).
-	Grants  []string      `yaml:"grants"`
-	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Repos    []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
 	Git     GitConfig     `yaml:"git"`
 	Auth    AuthConfig    `yaml:"auth"`
 	Session SessionConfig `yaml:"session"`
@@ -365,17 +361,6 @@ func (c *Config) validate() error {
 		}
 		if src.Kind == "confluence" && src.Space == "" {
 			return fmt.Errorf("source %s: confluence sources require a space", src.Name)
-		}
-	}
-	for _, g := range c.Grants {
-		found := false
-		for _, src := range c.Sources {
-			if src.Name == g {
-				found = true
-			}
-		}
-		if !found {
-			return fmt.Errorf("grants: unknown source %q", g)
 		}
 	}
 	if c.Auth.OIDC.Enabled {

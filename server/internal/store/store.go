@@ -31,6 +31,7 @@ type User struct {
 	Subject  string `json:"-"`
 	Name     string `json:"name"`
 	Email    string `json:"email"`
+	Role     string `json:"role"` // deployment role: admin | member | viewer | '' (not enrolled)
 }
 
 // Open connects to Postgres (any pgx-parseable DSN/URL, e.g. a Neon URL)
@@ -98,8 +99,8 @@ func (s *Store) UserByID(id int64) (*User, error) {
 
 func (s *Store) userBy(where string, args ...any) (*User, error) {
 	u := &User{}
-	err := s.queryRow("SELECT id, provider, subject, name, email FROM users WHERE "+where, args...).
-		Scan(&u.ID, &u.Provider, &u.Subject, &u.Name, &u.Email)
+	err := s.queryRow("SELECT id, provider, subject, name, email, role FROM users WHERE "+where, args...).
+		Scan(&u.ID, &u.Provider, &u.Subject, &u.Name, &u.Email, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

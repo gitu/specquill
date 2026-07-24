@@ -44,7 +44,7 @@ test('monorepo project serves project-relative API paths only', async ({ request
 });
 
 test('management api: role-gated project lifecycle', async ({ request }) => {
-  // the dev user is tenant admin; a bogus remote must fail cleanly
+  // the dev user is admin; a bogus remote must fail cleanly
   const bad = await request.post('/api/projects', {
     headers: H,
     data: { id: 'nope', remote: '/does/not/exist.git' },

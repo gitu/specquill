@@ -48,9 +48,6 @@ sources:
   #   space: REG
   #   token_env: SPECQUILL_CONFLUENCE_TOKEN
 
-# grants attach sources to the default (self-host) tenant; omit to grant all
-grants: [regulations]
-
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by
   committer_email: specquill@example.com   # trailer; the user is author AND committer

@@ -10,7 +10,7 @@ import (
 // on the DEFAULT branch only (D5: a feature branch cannot change reference
 // selection until merged). This file is writable by anyone with push access —
 // it is stage-3 SELECTION only and can never mint access: references name
-// sources that must already be granted to the tenant (stages 1+2).
+// sources that must already be in the deployment's catalog (stage 1).
 
 // Reference selects a granted source for the project.
 type Reference struct {
@@ -45,7 +45,7 @@ type EffectiveReference struct {
 }
 
 // EffectiveReferences is THE stage-3 resolver (plan D5): the intersection of
-// the in-repo selection and the tenant's grants. It is a pure function — a
+// the in-repo selection and the deployment's catalog. It is a pure function — a
 // selection of an ungranted or unknown source becomes a warning, never
 // access. kinds maps granted source names to their kind.
 func EffectiveReferences(cfg *Config, kinds map[string]string) (refs []EffectiveReference, warnings []string) {
@@ -60,7 +60,7 @@ func EffectiveReferences(cfg *Config, kinds map[string]string) (refs []Effective
 		seen[r.Source] = true
 		kind, granted := kinds[r.Source]
 		if !granted {
-			warnings = append(warnings, "reference "+r.Source+" is not granted to this tenant")
+			warnings = append(warnings, "reference "+r.Source+" is not in the source catalog")
 			continue
 		}
 		refs = append(refs, EffectiveReference{

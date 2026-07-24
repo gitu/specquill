@@ -11,7 +11,7 @@ interface ProjectRow {
   managedBy: 'config' | 'api';
 }
 
-// Tenant administration: projects (add/remove at runtime; config-managed
+// Administration: projects (add/remove at runtime; config-managed
 // rows come from specquill.yml and are read-only here). Requires the admin
 // role — the API enforces it; this view just surfaces the errors.
 export function AdminView() {
@@ -100,9 +100,9 @@ export function AdminView() {
   );
 }
 
-// AccessPanel — tenant members plus per-repo grants (REQ-020): grant a user
+// AccessPanel — deployment members plus per-repo grants (REQ-020): grant a user
 // (by email) viewer/member access to a single repository, beyond or without
-// their tenant-wide role. Unknown addresses become pending invites claimed on
+// their deployment role. Unknown addresses become pending invites claimed on
 // first login. Renders nothing for non-admins (the members request 403s).
 function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
   const qc = useQueryClient();
@@ -202,7 +202,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
         ))}
         {grants.data && grants.data.grants.length === 0 && grants.data.invites.length === 0 && (
           <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)')}>
-            No explicit grants — access to {active || 'this repo'} follows tenant roles.
+            No explicit grants — access to {active || 'this repo'} follows deployment roles.
           </div>
         )}
         <form onSubmit={(e) => { e.preventDefault(); if (form.user.trim()) add.mutate(); }}

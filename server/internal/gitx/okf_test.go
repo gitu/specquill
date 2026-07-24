@@ -9,7 +9,7 @@ import (
 // the SAME commit; a workspace without the okf_version marker is untouched.
 func TestCommitRegeneratesOKF(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 
 	// not opted in: commit must not invent reserved files
 	_, sha, _ := repo.File("main", "specs/a.md")

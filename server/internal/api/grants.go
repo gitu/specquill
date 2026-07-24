@@ -1,8 +1,8 @@
 package api
 
-// Per-repo grant management (REQ-020) — tenant-admin gated. A grant targets
-// an existing user by email; unknown addresses become pending invites,
-// claimed on the invitee's first login.
+// Per-repo grant management (REQ-020) — admin gated. A grant targets an
+// existing user by email; unknown addresses become pending invites, claimed
+// on the invitee's first login.
 
 import (
 	"encoding/json"
@@ -15,25 +15,21 @@ import (
 	"specquill/server/internal/store"
 )
 
-// grantRepoID resolves the {repo} URL segment to the tenant_repos repo id
-// (grants are per repository — a monorepo's projects share one grant).
-func (s *Server) grantRepoID(t *store.Tenant, id string) (string, error) {
-	if tp, err := s.store.TenantProject(t.ID, id); err == nil {
+// grantRepoID resolves the {repo} URL segment to the repos row id (grants
+// are per repository — a monorepo's projects share one grant).
+func (s *Server) grantRepoID(id string) (string, error) {
+	if tp, err := s.store.Project(id); err == nil {
 		return tp.RepoID, nil
 	}
-	if _, err := s.store.TenantRepo(t.ID, id); err == nil {
+	if _, err := s.store.RepoRow(id); err == nil {
 		return id, nil
 	}
 	return "", store.ErrNotFound
 }
 
-// GET /api/members — the tenant's members (derived or enrolled roles).
+// GET /api/members — the deployment's enrolled users.
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
-	ms, err := s.store.TenantMemberList(t.ID)
+	ms, err := s.store.MemberList()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -43,21 +39,17 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/repos/{repo}/grants — explicit grants + pending invites.
 func (s *Server) listGrants(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
-	repoID, err := s.grantRepoID(t, r.PathValue("repo"))
+	repoID, err := s.grantRepoID(r.PathValue("repo"))
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "unknown repo")
 		return
 	}
-	grants, err := s.store.RepoGrants(t.ID, repoID)
+	grants, err := s.store.RepoGrants(repoID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	invites, err := s.store.RepoGrantInvites(t.ID, repoID)
+	invites, err := s.store.RepoGrantInvites(repoID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -69,11 +61,7 @@ func (s *Server) listGrants(w http.ResponseWriter, r *http.Request) {
 // leave an invite for an identity that has not logged in yet. `user` is an
 // email address.
 func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
-	repoID, err := s.grantRepoID(t, r.PathValue("repo"))
+	repoID, err := s.grantRepoID(r.PathValue("repo"))
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "unknown repo")
 		return
@@ -87,7 +75,7 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Role != "viewer" && body.Role != "member" {
-		// per-repo admin is meaningless — repo/project management is tenant-scoped
+		// per-repo admin is meaningless — repo/project management is deployment-scoped
 		jsonError(w, http.StatusBadRequest, "role must be viewer or member")
 		return
 	}
@@ -100,13 +88,13 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.UserByEmail(target)
 	switch {
 	case err == nil:
-		if err := s.store.UpsertRepoGrant(t.ID, repoID, u.ID, body.Role, caller.ID); err != nil {
+		if err := s.store.UpsertRepoGrant(repoID, u.ID, body.Role, caller.ID); err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		jsonOK(w, map[string]any{"status": "granted", "userId": u.ID, "role": body.Role})
 	case errors.Is(err, store.ErrNotFound):
-		if err := s.store.AddGrantInvite(t.ID, repoID, target, body.Role, caller.ID); err != nil {
+		if err := s.store.AddGrantInvite(repoID, target, body.Role, caller.ID); err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -118,11 +106,7 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/grants/{userId} — revoke an explicit grant.
 func (s *Server) deleteGrant(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
-	repoID, err := s.grantRepoID(t, r.PathValue("repo"))
+	repoID, err := s.grantRepoID(r.PathValue("repo"))
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "unknown repo")
 		return
@@ -132,7 +116,7 @@ func (s *Server) deleteGrant(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
-	if err := s.store.DeleteRepoGrant(t.ID, repoID, userID); err != nil {
+	if err := s.store.DeleteRepoGrant(repoID, userID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -141,16 +125,12 @@ func (s *Server) deleteGrant(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/grants/invites/{id} — withdraw a pending invite.
 func (s *Server) deleteGrantInvite(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid invite id")
 		return
 	}
-	if err := s.store.DeleteGrantInvite(t.ID, id); err != nil {
+	if err := s.store.DeleteGrantInvite(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -27,9 +27,9 @@ from the code.
   (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
   `specquill.dev.yml`). Go tests need it too (they skip without it; isolation is
   a throwaway schema per test via `store.OpenTest`). Neon in production.
-- Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
-  (tenancy foundation, repo-product/docs/specs/specs/multi-tenancy.md); the canonical repo key in DB
-  rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
+- Repo clones/worktrees live under `data/runtime/repos/<repo>/`; the
+  canonical repo key in DB rows and room keys is the plain repo id, e.g.
+  `trading-specs` (single-tenant since July 2026).
 - `make dev-samples` adds two EXTRA sample projects (`sample-payments`,
   `sample-onboarding`) with real multi-commit/multi-author history — for
   testing history-aware features; auto-registers via the management API when
@@ -60,11 +60,12 @@ from the code.
   read-only catalog entry projects reference. `internal/project` is the ONLY
   place project-relative ↔ full repo paths are mapped (MapIn/MapOut); store rows
   and git ops use full paths, the wire format is project-relative.
-- **4-stage authorization**: (1) catalog sources+credentials in app YAML/admin,
-  (2) grants attach a source to a tenant, (3) in-repo `.specquill/config.yml`
-  `references:` SELECT granted sources (read from the DEFAULT branch only), (4)
-  roles viewer<member<admin. In-repo config can only select already-granted
-  sources — it can NEVER mint access. `EffectiveReferences` = selection ∩ grants.
+- **3-stage authorization** (single-tenant): (1) catalog sources+credentials in
+  app YAML/admin, (2) in-repo `.specquill/config.yml` `references:` SELECT
+  cataloged sources (read from the DEFAULT branch only), (3) deployment roles
+  viewer<member<admin (`users.role`) plus per-repo grants. In-repo config can
+  only select cataloged sources — it can NEVER mint access.
+  `EffectiveReferences` = selection ∩ catalog.
 - **Copilot grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.

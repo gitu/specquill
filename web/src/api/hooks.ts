@@ -9,8 +9,7 @@ export interface StatusResp {
   behindDefault: number;
 }
 
-export interface Membership { tenant: { slug: string; provider: string; displayName: string }; role: string }
-export interface Me { id: number; name: string; email: string; provider: string; initials: string; tenants?: Membership[] }
+export interface Me { id: number; name: string; email: string; provider: string; initials: string; role: string }
 
 export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/api/me'), staleTime: 60_000 });

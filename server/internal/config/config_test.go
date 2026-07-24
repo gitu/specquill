@@ -79,7 +79,6 @@ projects:
 sources:
   - { name: reg, kind: git, remote: "https://x/reg.git" }
   - { name: api, kind: openapi, remote: "https://x/openapi.yaml", sync_interval: 6h }
-grants: [reg]
 `+commonTail)
 	if cfg.Projects[0].ContentRoot != "docs/specs" {
 		t.Fatalf("content_root not cleaned: %q", cfg.Projects[0].ContentRoot)
@@ -92,9 +91,6 @@ grants: [reg]
 	if api := cfg.Repos[2]; api.ID != "api" || !api.Mirror || api.Remote != "" || api.Mode != ReadOnly {
 		t.Fatalf("openapi source should materialize as a remote-less mirror: %+v", api)
 	}
-	if len(cfg.Grants) != 1 || cfg.Grants[0] != "reg" {
-		t.Fatalf("grants: %v", cfg.Grants)
-	}
 }
 
 func TestValidationErrors(t *testing.T) {
@@ -106,8 +102,6 @@ sources: [{name: a, kind: git, remote: r}]` + commonTail, "duplicate"},
 		{`projects: [{id: a, remote: r, content_root: "../up"}]` + commonTail, "traverse"},
 		{`projects: [{id: a, remote: r}]
 sources: [{name: s, kind: ftp, remote: r}]` + commonTail, "kind"},
-		{`projects: [{id: a, remote: r}]
-grants: [nope]` + commonTail, "unknown source"},
 	}
 	for i, c := range cases {
 		p := filepath.Join(t.TempDir(), "c.yml")

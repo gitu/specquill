@@ -60,11 +60,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
 			s.devUser = u
-			// the dev user administers the default tenant (management API)
-			if def, err := opts.Store.TenantBySlug(gitx.DefaultTenant); err == nil {
-				_ = opts.Store.EnsureMember(def.ID, u.ID, "admin")
-				_ = opts.Store.SetMemberRole(def.ID, u.ID, "admin")
-			}
+			// the dev user administers the deployment (management API)
+			_ = opts.Store.SetUserRole(u.ID, "admin")
+			u.Role = "admin"
 			log.Printf("dev mode: auto-authenticating as %s <%s>", u.Name, u.Email)
 		}
 	}
@@ -119,7 +117,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
 	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
-	// legacy aliases: resolve the tenant's sole project
+	// legacy aliases: resolve the deployment's sole project
 	apiMux.HandleFunc("POST /api/copilot/chat", s.copilotChatAlias)
 	apiMux.HandleFunc("POST /api/copilot/draft", s.copilotDraftAlias)
 
@@ -137,17 +135,17 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	return logMiddleware(csrfGuard(mux))
 }
 
-// repoH resolves the {repo} path segment within the request's tenant and
-// gates on the effective per-repo role (REQ-020): reading needs viewer. The
-// resolved role rides the request context for writableH and handlers.
+// repoH resolves the {repo} path segment and gates on the effective per-repo
+// role (REQ-020): reading needs viewer. The resolved role rides the request
+// context for writableH and handlers.
 func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		repo, t, ok := s.tenantProject(w, r)
+		repo, ok := s.resolveProject(w, r)
 		if !ok {
 			return
 		}
 		u := auth.UserFrom(r.Context())
-		role := s.effectiveRepoRole(u, t, repo.Repo.Cfg.ID)
+		role := s.effectiveRepoRole(u, repo.Repo.Cfg.ID)
 		if roleRank[role] < roleRank["viewer"] {
 			jsonError2(w, http.StatusForbidden, "no access to repo "+repo.ID, "repo_forbidden")
 			return

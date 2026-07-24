@@ -91,7 +91,7 @@ func TestEffectiveReferences(t *testing.T) {
 		t.Fatalf("warnings: %v", warnings)
 	}
 	for _, w := range warnings {
-		if !strings.Contains(w, "not granted") {
+		if !strings.Contains(w, "not in the source catalog") {
 			t.Fatalf("warning wording: %q", w)
 		}
 	}

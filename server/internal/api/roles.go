@@ -1,8 +1,8 @@
 package api
 
 // Per-repo authorization (REQ-020): the effective role on a repo is the MAX
-// of the membership role and an explicit repo grant. Grants are how a user
-// below the tenant-wide role — or outside auto-enrollment — gets scoped
+// of the deployment role and an explicit repo grant. Grants are how a user
+// below the deployment-wide role — or outside auto-enrollment — gets scoped
 // access: the server owns the git credentials, so the app layer is the only
 // gate that matters.
 
@@ -26,27 +26,27 @@ func repoRoleFrom(ctx context.Context) string {
 	return role
 }
 
-// effectiveRepoRole resolves the caller's role on one repo of the tenant:
-// max(member role, explicit grant), where
-//   - tenant admin → admin everywhere (admins manage the repo set),
-//   - otherwise the tenant member role (the auto-enroll default_role floor).
+// effectiveRepoRole resolves the caller's role on one repo:
+// max(deployment role, explicit grant), where
+//   - admin → admin everywhere (admins manage the repo set),
+//   - otherwise the deployment role (the auto-enroll default_role floor).
 //
-// "" means no access. Grant-only users have no tenant_members row, so their
-// member role is "" and the grant alone decides.
-func (s *Server) effectiveRepoRole(u *store.User, t *store.Tenant, repoID string) string {
-	memberRole, err := s.store.MemberRole(t.ID, u.ID)
+// "" means no access. Grant-only users are not enrolled, so their deployment
+// role is "" and the grant alone decides.
+func (s *Server) effectiveRepoRole(u *store.User, repoID string) string {
+	deploy, err := s.deployRole(u)
 	if err != nil {
-		memberRole = ""
+		deploy = ""
 	}
-	if memberRole == "admin" {
+	if deploy == "admin" {
 		return "admin"
 	}
-	grant, err := s.store.RepoGrantRole(t.ID, repoID, u.ID)
+	grant, err := s.store.RepoGrantRole(repoID, u.ID)
 	if err != nil {
 		grant = ""
 	}
-	if roleRank[grant] > roleRank[memberRole] {
+	if roleRank[grant] > roleRank[deploy] {
 		return grant
 	}
-	return memberRole
+	return deploy
 }

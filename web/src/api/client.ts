@@ -9,25 +9,11 @@ export class ApiError extends Error {
   }
 }
 
-/** The pinned tenant (multi-tenant setups); '' lets the server infer the
- * user's only membership. Every API call carries it as X-SpecQuill-Tenant. */
-export function activeTenant(): string {
-  return localStorage.getItem('specquill-tenant') || '';
-}
-
-/** Pin a tenant and reload — all cached state is tenant-scoped. */
-export function switchTenant(slug: string) {
-  if (slug) localStorage.setItem('specquill-tenant', slug);
-  else localStorage.removeItem('specquill-tenant');
-  window.location.href = '/';
-}
-
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: {
       'X-SpecQuill': '1',
-      ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}),
       // FormData bodies set their own multipart boundary
       ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
@@ -45,18 +31,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** URL serving a repo file's raw bytes (images embedded in documents).
- * Carries the tenant as a query param — <img> tags can't send headers. */
+/** URL serving a repo file's raw bytes (images embedded in documents). */
 export function rawUrl(repo: string, ref: string, path: string): string {
-  const tenant = activeTenant() ? `&tenant=${encodeURIComponent(activeTenant())}` : '';
-  return `/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}${tenant}`;
+  return `/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}`;
 }
 
 /** binary-safe file save (excalidraw PNGs); same baseSha contract as PUT files */
 export async function putRaw(repo: string, branch: string, path: string, body: Blob, baseSha: string): Promise<{ sha: string }> {
   const res = await fetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
     method: 'PUT',
-    headers: { 'X-SpecQuill': '1', ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}) },
+    headers: { 'X-SpecQuill': '1' },
     body,
   });
   if (!res.ok) {

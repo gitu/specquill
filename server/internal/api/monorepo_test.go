@@ -59,11 +59,7 @@ func TestMonorepoContentRoot(t *testing.T) {
 	}
 	cfg.Normalize()
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", "Workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
+	if err := st.SyncProjects([]store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")

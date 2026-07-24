@@ -11,22 +11,16 @@ import (
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
-// wRepoRow registers the fixture repo `w` in the default tenant's registry
-// (repo_grants FK needs the row; the boot sync does this in production).
-func wRepoRow(t *testing.T, st *store.Store) *store.Tenant {
+// wRepoRow registers the fixture repo `w` in the registry (repo_grants FK
+// needs the row; the boot sync does this in production).
+func wRepoRow(t *testing.T, st *store.Store) {
 	t.Helper()
-	def, err := st.TenantBySlug(gitx.DefaultTenant)
-	if err != nil {
+	if err := st.UpsertRepoRow(store.RepoRow{RepoID: "w", Mode: "writable", Remote: "x", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertTenantRepo(def.ID, store.TenantRepo{RepoID: "w", Mode: "writable", Remote: "x", DefaultBranch: "main"}); err != nil {
-		t.Fatal(err)
-	}
-	return def
 }
 
 func userID(t *testing.T, st *store.Store, identifier string) int64 {
@@ -43,11 +37,11 @@ func userID(t *testing.T, st *store.Store, identifier string) int64 {
 func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	h, st, _ := testServerFull(t, false)
 	cookie := login(t, h)
-	def := wRepoRow(t, st)
-	// enroll as viewer BEFORE the first API request — otherwise the tenancy
+	wRepoRow(t, st)
+	// enroll as viewer BEFORE the first API request — otherwise the access
 	// layer auto-enrolls flo as member and the write gate has nothing to do
 	flo := userID(t, st, "flo@test.local")
-	if err := st.EnsureMember(def.ID, flo, "viewer"); err != nil {
+	if err := st.SetUserRole(flo, "viewer"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,8 +66,8 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 		t.Fatalf("me: %d %v", code, out)
 	}
 
-	// explicit member grant on the repo wins over the derived viewer role
-	if err := st.UpsertRepoGrant(def.ID, "w", flo, "member", 0); err != nil {
+	// explicit member grant on the repo wins over the deployment viewer role
+	if err := st.UpsertRepoGrant("w", flo, "member", 0); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/specs/a.md", map[string]string{"content": "x"}); code != http.StatusOK {
@@ -81,7 +75,7 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	}
 }
 
-// default_role: none — a fresh user has no tenant at all until granted; the
+// default_role: none — a fresh user has no access at all until granted; the
 // grant yields exactly the granted repo, read-only for a viewer grant; the
 // configured admin still bootstraps.
 func TestDefaultRoleNone(t *testing.T) {
@@ -95,17 +89,24 @@ func TestDefaultRoleNone(t *testing.T) {
 	}
 	cookie := login(t, h) // flo
 
-	// no membership: tenant resolution refuses
-	code, out := doJSON(t, h, cookie, "GET", "/api/repos", nil)
-	if code != http.StatusForbidden || out["code"] != "tenant_forbidden" {
-		t.Fatalf("ungranted user: want 403 tenant_forbidden, got %d %v", code, out)
+	// not enrolled: no repos are visible, reads on the repo refuse
+	code, repos := doJSONList2(t, h, cookie, "GET", "/api/repos", "id")
+	if code != http.StatusOK || len(repos) != 0 {
+		t.Fatalf("ungranted user: want empty repo list, got %d %v", code, repos)
+	}
+	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/tree", nil)
+	if code != http.StatusForbidden || out["code"] != "repo_forbidden" {
+		t.Fatalf("ungranted read: want 403 repo_forbidden, got %d %v", code, out)
 	}
 
-	// a viewer grant surfaces the tenant and exactly the granted repo
-	def := wRepoRow(t, st)
+	// a viewer grant surfaces exactly the granted repo
+	wRepoRow(t, st)
 	flo := userID(t, st, "flo@test.local")
-	if err := st.UpsertRepoGrant(def.ID, "w", flo, "viewer", 0); err != nil {
+	if err := st.UpsertRepoGrant("w", flo, "viewer", 0); err != nil {
 		t.Fatal(err)
+	}
+	if code, repos := doJSONList2(t, h, cookie, "GET", "/api/repos", "id"); code != http.StatusOK || len(repos) != 1 || repos[0] != "w" {
+		t.Fatalf("granted repo list: want [w], got %d %v", code, repos)
 	}
 	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/tree", nil); code != http.StatusOK {
 		t.Fatalf("granted read: want 200, got %d", code)

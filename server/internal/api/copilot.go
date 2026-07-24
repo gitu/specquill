@@ -14,7 +14,7 @@ import (
 )
 
 // GET /api/copilot/info?repo= — capability probe. When a project is resolvable
-// (explicit ?repo=, else the tenant's sole project) it also reports the grounded
+// (explicit ?repo=, else the deployment's sole project) it also reports the grounded
 // reference sources feeding that project's copilot context.
 func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 	info := map[string]any{"enabled": s.ai != nil}
@@ -32,14 +32,10 @@ func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // copilotProject resolves the project the info probe reports on: the ?repo=
-// project when given, otherwise the tenant's first project. Best-effort (nil on
-// any miss) — the info endpoint degrades to enabled/model only.
+// project when given, otherwise the deployment's first project. Best-effort
+// (nil on any miss) — the info endpoint degrades to enabled/model only.
 func (s *Server) copilotProject(r *http.Request) *project.Project {
-	t := s.tenantQuiet(r)
-	if t == nil {
-		return nil
-	}
-	ps, err := s.store.TenantProjects(t.ID)
+	ps, err := s.store.Projects()
 	if err != nil || len(ps) == 0 {
 		return nil
 	}
@@ -56,7 +52,7 @@ func (s *Server) copilotProject(r *http.Request) *project.Project {
 			return nil
 		}
 	}
-	repo, ok := s.git.Repo(t.Slug + "/" + target.RepoID)
+	repo, ok := s.git.Repo(target.RepoID)
 	if !ok {
 		return nil
 	}
@@ -64,7 +60,7 @@ func (s *Server) copilotProject(r *http.Request) *project.Project {
 }
 
 // POST /api/repos/{repo}/copilot/chat {messages, focusPath?, branch?} → SSE
-// stream. /api/copilot/chat is the legacy alias (tenant's sole project).
+// stream. /api/copilot/chat is the legacy alias (the sole project).
 func (s *Server) copilotChatAlias(w http.ResponseWriter, r *http.Request) {
 	if repo, ok := s.soleProject(w, r); ok {
 		s.copilotChat(w, r, repo)
@@ -257,22 +253,18 @@ func normalizePath(p string, allowed map[string]string) string {
 }
 
 // groundingSources resolves the copilot's grounded reference sources for a
-// project: its EFFECTIVE references (default-branch selection ∩ tenant grants)
-// with `grounding: true`, each read as a read-only snapshot of the granted
-// source's default branch (filtered to the reference's paths). This is the D5
-// trust boundary — selection is read from the default branch only and can never
-// reach an ungranted source. Best-effort: any failure yields no grounding.
+// project: its EFFECTIVE references (default-branch selection ∩ catalog)
+// with `grounding: true`, each read as a read-only snapshot of the source's
+// default branch (filtered to the reference's paths). This is the D5 trust
+// boundary — selection is read from the default branch only and can never
+// reach an uncataloged source. Best-effort: any failure yields no grounding.
 func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.GroundingSource {
-	t := s.tenantQuiet(r)
-	if t == nil {
-		return nil
-	}
-	granted, err := s.store.TenantGrantedSources(t.ID)
-	if err != nil || len(granted) == 0 {
+	catalog, err := s.store.Sources()
+	if err != nil || len(catalog) == 0 {
 		return nil
 	}
 	kinds := map[string]string{}
-	for _, src := range granted {
+	for _, src := range catalog {
 		kinds[src.Name] = src.Kind
 	}
 	// default branch only (D5): a feature branch cannot change the selection
@@ -290,11 +282,11 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 		if !ref.Grounding {
 			continue
 		}
-		repo, ok := s.git.Repo(t.Slug + "/" + ref.Source)
+		repo, ok := s.git.Repo(ref.Source)
 		if !ok {
 			continue
 		}
-		snap := s.sourceSnapshot(t.Slug+"/"+ref.Source, repo)
+		snap := s.sourceSnapshot(ref.Source, repo)
 		if snap == nil {
 			continue
 		}
@@ -384,25 +376,22 @@ func filterByPaths(files map[string]string, prefixes []string) map[string]string
 	return out
 }
 
-// soleProject resolves the tenant's first project — the legacy /api/copilot/*
-// alias routes use it; per-project routes carry {repo} and resolve normally.
+// soleProject resolves the deployment's first project — the legacy
+// /api/copilot/* alias routes use it; per-project routes carry {repo} and
+// resolve normally.
 func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return nil, false
-	}
-	ps, err := s.store.TenantProjects(t.ID)
+	ps, err := s.store.Projects()
 	if err != nil || len(ps) == 0 {
 		jsonError(w, http.StatusInternalServerError, "no project configured")
 		return nil, false
 	}
 	// same gate as the writableH copilot routes: copilot drafts write
 	u := auth.UserFrom(r.Context())
-	if roleRank[s.effectiveRepoRole(u, t, ps[0].RepoID)] < roleRank["member"] {
+	if roleRank[s.effectiveRepoRole(u, ps[0].RepoID)] < roleRank["member"] {
 		jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
 		return nil, false
 	}
-	repo, ok := s.git.Repo(t.Slug + "/" + ps[0].RepoID)
+	repo, ok := s.git.Repo(ps[0].RepoID)
 	if !ok {
 		jsonError(w, http.StatusInternalServerError, "project repo not initialized")
 		return nil, false

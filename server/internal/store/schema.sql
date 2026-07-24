@@ -1,5 +1,7 @@
 -- specquill review/auth metadata (Postgres). Content lives in git; this DB
 -- holds only users, sessions, PR review state, and the collab update log.
+-- Single-tenant: one deployment serves one workspace; the canonical repo key
+-- in all other tables is the plain repo id.
 
 CREATE TABLE IF NOT EXISTS users (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -7,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   subject    TEXT NOT NULL,             -- OIDC sub / local username
   name       TEXT NOT NULL,
   email      TEXT NOT NULL,
+  role       TEXT NOT NULL DEFAULT '',  -- admin | member | viewer | '' (not enrolled)
   UNIQUE(provider, subject)
 );
 
@@ -24,33 +27,15 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 
--- tenancy: the built-in 'default' tenant mirrors the YAML repos list.
--- The canonical repo key in all other tables is '<tenant_slug>/<repo_id>'.
-CREATE TABLE IF NOT EXISTS tenants (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  slug            TEXT UNIQUE NOT NULL,
-  provider        TEXT NOT NULL,          -- 'config'
-  display_name    TEXT NOT NULL DEFAULT '',
-  created_at      BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS tenant_repos (
-  tenant_id      BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id        TEXT NOT NULL,           -- short id, unique within the tenant
+-- the deployment's repo registry, mirroring the YAML list at boot
+-- (managed_by='config'); rows added through the API persist across boots.
+CREATE TABLE IF NOT EXISTS repos (
+  repo_id        TEXT PRIMARY KEY,
   mode           TEXT NOT NULL,           -- writable | readonly
   remote         TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
   managed_by     TEXT NOT NULL DEFAULT 'config',  -- config rows reconcile at boot
-  created_at     BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id)
-);
-
-CREATE TABLE IF NOT EXISTS tenant_members (
-  tenant_id BIGINT NOT NULL REFERENCES tenants(id),
-  user_id   BIGINT NOT NULL REFERENCES users(id),
-  role      TEXT NOT NULL DEFAULT 'member',   -- admin | member | viewer
-  synced_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, user_id)
+  created_at     BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS prs (
@@ -130,20 +115,17 @@ CREATE TABLE IF NOT EXISTS pr_approvals (
 -- projects & sources (config-split plan): a project is a writable workspace
 -- (repo + content_root); a source is a catalog entry projects may reference.
 -- managed_by: 'config' rows reconcile to the YAML at boot, 'api' rows persist.
-CREATE TABLE IF NOT EXISTS tenant_projects (
-  tenant_id    BIGINT NOT NULL REFERENCES tenants(id),
-  project_id   TEXT NOT NULL,
-  repo_id      TEXT NOT NULL,           -- tenant_repos.repo_id (same tenant)
+CREATE TABLE IF NOT EXISTS projects (
+  project_id   TEXT PRIMARY KEY,
+  repo_id      TEXT NOT NULL,           -- repos.repo_id
   content_root TEXT NOT NULL DEFAULT '',
   managed_by   TEXT NOT NULL DEFAULT 'config',   -- config | api
-  created_at   BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at   BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sources (
   id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id      BIGINT REFERENCES tenants(id),  -- NULL = global (app YAML / platform)
-  name           TEXT NOT NULL,
+  name           TEXT NOT NULL UNIQUE,
   kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
   remote         TEXT NOT NULL,
   token_env      TEXT NOT NULL DEFAULT '',       -- env var NAME; never a secret value
@@ -151,55 +133,39 @@ CREATE TABLE IF NOT EXISTS sources (
   default_branch TEXT NOT NULL DEFAULT 'main',
   sync_interval  BIGINT NOT NULL DEFAULT 300,    -- seconds
   managed_by     TEXT NOT NULL DEFAULT 'config',
-  created_at     BIGINT NOT NULL,
-  UNIQUE (tenant_id, name)
+  created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS source_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  source_id  BIGINT NOT NULL REFERENCES sources(id),
-  granted_by BIGINT REFERENCES users(id),        -- NULL = boot sync
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, source_id)
-);
-
--- last-import status per non-git (importer) source, keyed by tenant + source
--- name. Populated by importer.Runner; surfaced in the sources list + sync API.
+-- last-import status per non-git (importer) source, keyed by source name.
+-- Populated by importer.Runner; surfaced in the sources list + sync API.
 CREATE TABLE IF NOT EXISTS source_syncs (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  name       TEXT NOT NULL,
+  name       TEXT PRIMARY KEY,
   status     TEXT NOT NULL,                       -- ok | error
   error      TEXT NOT NULL DEFAULT '',
   file_count INT NOT NULL DEFAULT 0,
   head_sha   TEXT NOT NULL DEFAULT '',
-  synced_at  BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, name)
+  synced_at  BIGINT NOT NULL
 );
 
 -- unauthenticated OKF-bundle share links: the URL token is the only
 -- credential (LLM copy-paste use case). One active link per project;
 -- minting again rotates the token, deleting revokes access.
 CREATE TABLE IF NOT EXISTS share_links (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  project_id TEXT NOT NULL,
+  project_id TEXT PRIMARY KEY,
   token      TEXT NOT NULL UNIQUE,
   created_by BIGINT NOT NULL REFERENCES users(id),
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at BIGINT NOT NULL
 );
 
--- per-repo user grants (REQ-020): explicit access layered on derived roles;
--- effective role = max(derived, granted). Role sync never touches these —
--- that is the point: a GitHub revocation must not drop an explicit grant.
+-- per-repo user grants (REQ-020): explicit access layered on the deployment
+-- role; effective role = max(deployment role, granted).
 CREATE TABLE IF NOT EXISTS repo_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
   user_id    BIGINT NOT NULL REFERENCES users(id),
-  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is tenant-scoped)
+  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is admin-scoped)
   granted_by BIGINT REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id, user_id),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  PRIMARY KEY (repo_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
 
@@ -208,12 +174,10 @@ CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
 -- the invitee's first login.
 CREATE TABLE IF NOT EXISTS repo_grant_invites (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
   matcher    TEXT   NOT NULL,                    -- lowercased email
   role       TEXT   NOT NULL DEFAULT 'viewer',
   granted_by BIGINT NOT NULL REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  UNIQUE (tenant_id, repo_id, matcher),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  UNIQUE (repo_id, matcher)
 );

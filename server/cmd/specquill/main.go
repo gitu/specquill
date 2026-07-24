@@ -96,27 +96,22 @@ func serve(configPath string, dev bool) error {
 	}
 	defer release()
 
-	// mirror the YAML repos into the built-in default tenant's registry
-	def, err := st.EnsureTenant(gitx.DefaultTenant, "config", "Workspace")
-	if err != nil {
-		return err
-	}
-	decls := make([]store.TenantRepo, 0, len(cfg.Repos))
+	// mirror the YAML repos, projects and source catalog into the registry
+	// (config-managed rows reconcile to the YAML; api-managed rows persist)
+	decls := make([]store.RepoRow, 0, len(cfg.Repos))
 	for _, rc := range cfg.Repos {
-		decls = append(decls, store.TenantRepo{
+		decls = append(decls, store.RepoRow{
 			RepoID: rc.ID, Mode: string(rc.Mode), Remote: rc.Remote, DefaultBranch: rc.DefaultBranch,
 		})
 	}
-	if err := st.SyncTenantRepos(def.ID, decls); err != nil {
+	if err := st.SyncRepos(decls); err != nil {
 		return err
 	}
-	// projects + the global source catalog + default-tenant grants
-	// (config-managed rows reconcile to the YAML; api-managed rows persist)
 	projDecls := make([]store.Project, 0, len(cfg.Projects))
 	for _, pc := range cfg.Projects {
 		projDecls = append(projDecls, store.Project{ProjectID: pc.ID, RepoID: pc.ID, ContentRoot: pc.ContentRoot})
 	}
-	if err := st.SyncTenantProjects(def.ID, projDecls); err != nil {
+	if err := st.SyncProjects(projDecls); err != nil {
 		return err
 	}
 	srcDecls := make([]store.Source, 0, len(cfg.Sources))
@@ -126,24 +121,7 @@ func serve(configPath string, dev bool) error {
 			DefaultBranch: sc.DefaultBranch, SyncInterval: int64(sc.SyncInterval.Seconds()),
 		})
 	}
-	if err := st.SyncGlobalSources(srcDecls); err != nil {
-		return err
-	}
-	granted := cfg.Grants
-	if len(granted) == 0 { // omitted = all sources (self-host convenience)
-		for _, sc := range cfg.Sources {
-			granted = append(granted, sc.Name)
-		}
-	}
-	grantIDs := make([]int64, 0, len(granted))
-	for _, name := range granted {
-		src, err := st.SourceByName(def.ID, name)
-		if err != nil {
-			return fmt.Errorf("grants: source %s: %w", name, err)
-		}
-		grantIDs = append(grantIDs, src.ID)
-	}
-	if err := st.SyncGrants(def.ID, grantIDs); err != nil {
+	if err := st.SyncSources(srcDecls); err != nil {
 		return err
 	}
 
@@ -154,7 +132,7 @@ func serve(configPath string, dev bool) error {
 
 	// api-managed repos (added in-app) survive reconciliation — re-register
 	// them with the manager so their projects resolve after a restart
-	if repos, err := st.TenantRepos(def.ID); err == nil {
+	if repos, err := st.RepoRows(); err == nil {
 		for _, tr := range repos {
 			if tr.ManagedBy != "api" {
 				continue
@@ -163,7 +141,7 @@ func serve(configPath string, dev bool) error {
 			if tr.Mode == string(config.Writable) {
 				mode = config.Writable
 			}
-			if _, err := git.AddRepo(def.Slug, config.RepoConfig{
+			if _, err := git.AddRepo(config.RepoConfig{
 				ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
 				SyncInterval:      2 * time.Minute,
 				ProtectedBranches: []string{tr.DefaultBranch},
@@ -188,7 +166,7 @@ func serve(configPath string, dev bool) error {
 	imp := importer.NewRunner(git, st)
 	for _, sc := range cfg.Sources {
 		if !sc.IsGit() {
-			imp.Register(def.Slug, def.ID, sc)
+			imp.Register(sc)
 			log.Printf("importer registered: %s (%s)", sc.Name, sc.Kind)
 		}
 	}

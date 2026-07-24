@@ -7,13 +7,12 @@ import (
 	"testing"
 
 	"specquill/server/internal/config"
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
-// Stage-4 role gating + runtime project management: members cannot manage
-// projects; admins can create/switch-to/delete them, and config-managed
-// projects refuse deletion.
+// Role gating + runtime project management: members cannot manage projects;
+// admins can create/switch-to/delete them, and config-managed projects
+// refuse deletion.
 func TestProjectManagementAndRoles(t *testing.T) {
 	h, st, git := testServerFull(t, false)
 	cookie := login(t, h)
@@ -29,11 +28,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SetMemberRole(ten.ID, u.ID, "admin"); err != nil {
+	if err := st.SetUserRole(u.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,7 +47,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("admin create: %d %v", code, out)
 	}
-	if _, ok := git.Repo("default/p2"); !ok {
+	if _, ok := git.Repo("p2"); !ok {
 		t.Fatal("runtime AddRepo did not register the clone")
 	}
 	// project is immediately usable through the normal routes
@@ -62,7 +57,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	}
 
 	// config-managed projects refuse deletion
-	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
+	if err := st.SyncProjects([]store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
 		t.Fatal(err)
 	}
 	code, out = doJSON(t, h, cookie, "DELETE", "/api/projects/w", nil)
@@ -75,7 +70,7 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("delete api project: %d", code)
 	}
-	if _, ok := git.Repo("default/p2"); ok {
+	if _, ok := git.Repo("p2"); ok {
 		t.Fatal("RemoveRepo did not unregister")
 	}
 	code, _ = doJSON(t, h, cookie, "GET", "/api/repos/p2/branches", nil)
@@ -84,16 +79,13 @@ func TestProjectManagementAndRoles(t *testing.T) {
 	}
 }
 
-// Stage-2 gate: browsing a source requires a grant; revoking hides it.
-func TestSourceBrowsingRequiresGrant(t *testing.T) {
+// Catalog gate: browsing a source requires a catalog entry; removing it
+// hides the source again.
+func TestSourceBrowsingRequiresCatalogEntry(t *testing.T) {
 	h, st, git := testServerFull(t, false)
 	cookie := login(t, h)
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	// a readonly source repo, registered but NOT granted
+	// a readonly source repo, registered but NOT in the catalog
 	src := filepath.Join(t.TempDir(), "reg-src")
 	for _, args := range [][]string{
 		{"init", "-b", "main", src},
@@ -103,30 +95,23 @@ func TestSourceBrowsingRequiresGrant(t *testing.T) {
 			t.Fatalf("git %v: %v: %s", args, err, o)
 		}
 	}
-	if _, err := git.AddRepo("default", config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: src, DefaultBranch: "main"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncGlobalSources([]store.Source{{Name: "reg", Kind: "git", Remote: src, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: src, DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
 
-	// ungranted: browse 403, hidden from /api/repos
+	// uncataloged: browse 403, hidden from /api/repos
 	code, out := doJSON(t, h, cookie, "GET", "/api/repos/reg/tree", nil)
 	if code != http.StatusForbidden || out["code"] != "source_forbidden" {
-		t.Fatalf("ungranted browse: want 403 source_forbidden, got %d %v", code, out)
+		t.Fatalf("uncataloged browse: want 403 source_forbidden, got %d %v", code, out)
 	}
 
-	// grant → browse works
-	srcRow, err := st.SourceByName(ten.ID, "reg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.GrantSource(ten.ID, srcRow.ID, 0); err != nil {
+	// catalog it → browse works
+	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: src, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
 		t.Fatal(err)
 	}
 	code, _ = doJSON(t, h, cookie, "GET", "/api/repos/reg/tree", nil)
 	if code != http.StatusOK {
-		t.Fatalf("granted browse: %d", code)
+		t.Fatalf("cataloged browse: %d", code)
 	}
 	// writes on a source are always refused
 	code, _ = doJSON(t, h, cookie, "PUT", "/api/repos/reg/files/x.md?branch=main", map[string]string{"content": "x", "baseSha": ""})
@@ -134,12 +119,12 @@ func TestSourceBrowsingRequiresGrant(t *testing.T) {
 		t.Fatalf("source write: want 403, got %d", code)
 	}
 
-	// revoke → gone again
-	if err := st.RevokeGrant(ten.ID, srcRow.ID); err != nil {
+	// remove from the catalog → gone again
+	if err := st.SyncSources(nil); err != nil {
 		t.Fatal(err)
 	}
 	code, _ = doJSON(t, h, cookie, "GET", "/api/repos/reg/tree", nil)
 	if code != http.StatusForbidden {
-		t.Fatalf("revoked browse: want 403, got %d", code)
+		t.Fatalf("removed browse: want 403, got %d", code)
 	}
 }
