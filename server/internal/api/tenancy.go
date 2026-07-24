@@ -88,10 +88,6 @@ func (s *Server) tenantQuiet(r *http.Request) *store.Tenant {
 // auth.admin_emails are promoted to admin there — the bootstrap for a fresh
 // deployment, where otherwise nobody could reach the management API.
 func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
-	// github tenants first: roles derive from repo permissions (TTL-cached;
-	// a no-op unless the GitHub App is configured and the user is a github
-	// identity)
-	s.syncGitHubMemberships(u)
 	ms, err := s.store.Memberships(u.ID)
 	if err != nil {
 		return ms, err
@@ -106,7 +102,7 @@ func (s *Server) memberships(u *store.User) ([]store.Membership, error) {
 	if !real {
 		def, err := s.store.TenantBySlug(gitx.DefaultTenant)
 		if err != nil || def.Provider != "config" {
-			return ms, nil // no self-host tenant → membership comes from GitHub sync (or grants)
+			return ms, nil // no self-host tenant → access comes from grants only
 		}
 		role := s.cfg.Auth.DefaultRole
 		if role == "" {

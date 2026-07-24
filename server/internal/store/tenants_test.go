@@ -6,11 +6,11 @@ func TestTenantRegistry(t *testing.T) {
 	st := OpenTest(t)
 
 	// upsert by slug is idempotent and updates metadata
-	a, err := st.EnsureTenant("acme", "github", 42, "Acme")
+	a, err := st.EnsureTenant("acme", "config", "Acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.EnsureTenant("acme", "github", 42, "Acme Corp")
+	b, err := st.EnsureTenant("acme", "config", "Acme Corp")
 	if err != nil || b.ID != a.ID || b.DisplayName != "Acme Corp" {
 		t.Fatalf("EnsureTenant not idempotent: %v %+v vs %+v", err, a, b)
 	}

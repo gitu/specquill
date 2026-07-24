@@ -18,7 +18,6 @@ type RepoGrant struct {
 	Role      string `json:"role"` // viewer | member
 	Name      string `json:"name"`
 	Email     string `json:"email"`
-	Login     string `json:"login,omitempty"`
 	Provider  string `json:"provider"`
 	CreatedAt int64  `json:"createdAt"`
 }
@@ -26,8 +25,7 @@ type RepoGrant struct {
 type GrantInvite struct {
 	ID        int64  `json:"id"`
 	RepoID    string `json:"repo"`
-	Kind      string `json:"kind"`    // email | github
-	Matcher   string `json:"matcher"` // lowercased email or login
+	Matcher   string `json:"matcher"` // lowercased email
 	Role      string `json:"role"`
 	CreatedAt int64  `json:"createdAt"`
 }
@@ -37,7 +35,6 @@ type MemberInfo struct {
 	Role     string `json:"role"`
 	Name     string `json:"name"`
 	Email    string `json:"email"`
-	Login    string `json:"login,omitempty"`
 	Provider string `json:"provider"`
 }
 
@@ -70,7 +67,7 @@ func (s *Store) RepoGrantRole(tenantID int64, repoID string, userID int64) (stri
 
 // RepoGrants lists a repo's explicit grants with grantee identity (admin view).
 func (s *Store) RepoGrants(tenantID int64, repoID string) ([]RepoGrant, error) {
-	rows, err := s.query(`SELECT g.repo_id, g.user_id, g.role, u.name, u.email, u.login, u.provider, g.created_at
+	rows, err := s.query(`SELECT g.repo_id, g.user_id, g.role, u.name, u.email, u.provider, g.created_at
 		FROM repo_grants g JOIN users u ON u.id = g.user_id
 		WHERE g.tenant_id = ? AND g.repo_id = ? ORDER BY g.created_at, u.name`, tenantID, repoID)
 	if err != nil {
@@ -80,7 +77,7 @@ func (s *Store) RepoGrants(tenantID int64, repoID string) ([]RepoGrant, error) {
 	out := []RepoGrant{}
 	for rows.Next() {
 		var g RepoGrant
-		if err := rows.Scan(&g.RepoID, &g.UserID, &g.Role, &g.Name, &g.Email, &g.Login, &g.Provider, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.RepoID, &g.UserID, &g.Role, &g.Name, &g.Email, &g.Provider, &g.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -110,13 +107,13 @@ func (s *Store) UserRepoGrants(tenantID, userID int64) (map[string]string, error
 
 // ---------------------------------------------------------------- invites
 
-// AddGrantInvite records a pending grant for a not-yet-seen user; kind is
-// 'email' or 'github', the matcher is stored lowercased.
-func (s *Store) AddGrantInvite(tenantID int64, repoID, kind, matcher, role string, grantedBy int64) error {
-	_, err := s.exec(`INSERT INTO repo_grant_invites (tenant_id, repo_id, kind, matcher, role, granted_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant_id, repo_id, kind, matcher) DO UPDATE SET role = excluded.role`,
-		tenantID, repoID, kind, strings.ToLower(matcher), role, grantedBy, time.Now().Unix())
+// AddGrantInvite records a pending grant for a not-yet-seen user; the
+// matcher is an email address, stored lowercased.
+func (s *Store) AddGrantInvite(tenantID int64, repoID, matcher, role string, grantedBy int64) error {
+	_, err := s.exec(`INSERT INTO repo_grant_invites (tenant_id, repo_id, matcher, role, granted_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, repo_id, matcher) DO UPDATE SET role = excluded.role`,
+		tenantID, repoID, strings.ToLower(matcher), role, grantedBy, time.Now().Unix())
 	return err
 }
 
@@ -127,7 +124,7 @@ func (s *Store) DeleteGrantInvite(tenantID, id int64) error {
 
 // RepoGrantInvites lists a repo's pending invites (admin view).
 func (s *Store) RepoGrantInvites(tenantID int64, repoID string) ([]GrantInvite, error) {
-	rows, err := s.query(`SELECT id, repo_id, kind, matcher, role, created_at
+	rows, err := s.query(`SELECT id, repo_id, matcher, role, created_at
 		FROM repo_grant_invites WHERE tenant_id = ? AND repo_id = ? ORDER BY created_at, id`, tenantID, repoID)
 	if err != nil {
 		return nil, err
@@ -136,7 +133,7 @@ func (s *Store) RepoGrantInvites(tenantID int64, repoID string) ([]GrantInvite, 
 	out := []GrantInvite{}
 	for rows.Next() {
 		var v GrantInvite
-		if err := rows.Scan(&v.ID, &v.RepoID, &v.Kind, &v.Matcher, &v.Role, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.RepoID, &v.Matcher, &v.Role, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -144,20 +141,19 @@ func (s *Store) RepoGrantInvites(tenantID int64, repoID string) ([]GrantInvite, 
 	return out, rows.Err()
 }
 
-// ClaimGrantInvites converts every invite matching the user's email or
-// GitHub login into a grant and deletes the invites — called on each
-// successful login, idempotent. An existing grant is kept (not downgraded).
-func (s *Store) ClaimGrantInvites(userID int64, email, login string) error {
+// ClaimGrantInvites converts every invite matching the user's email into a
+// grant and deletes the invites — called on each successful login,
+// idempotent. An existing grant is kept (not downgraded).
+func (s *Store) ClaimGrantInvites(userID int64, email string) error {
 	email = strings.ToLower(email)
-	login = strings.ToLower(login)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	rows, err := tx.Query(rebind(`SELECT id, tenant_id, repo_id, role, granted_by FROM repo_grant_invites
-		WHERE (kind = 'email' AND matcher = ?) OR (kind = 'github' AND matcher = ? AND ? <> '')`),
-		email, login, login)
+		WHERE matcher = ?`),
+		email)
 	if err != nil {
 		return err
 	}
@@ -201,7 +197,7 @@ func (s *Store) ClaimGrantInvites(userID int64, email, login string) error {
 
 // TenantMemberList lists a tenant's members with identity (admin view).
 func (s *Store) TenantMemberList(tenantID int64) ([]MemberInfo, error) {
-	rows, err := s.query(`SELECT m.user_id, m.role, u.name, u.email, u.login, u.provider
+	rows, err := s.query(`SELECT m.user_id, m.role, u.name, u.email, u.provider
 		FROM tenant_members m JOIN users u ON u.id = m.user_id
 		WHERE m.tenant_id = ? ORDER BY u.name, u.id`, tenantID)
 	if err != nil {
@@ -211,7 +207,7 @@ func (s *Store) TenantMemberList(tenantID int64) ([]MemberInfo, error) {
 	out := []MemberInfo{}
 	for rows.Next() {
 		var m MemberInfo
-		if err := rows.Scan(&m.UserID, &m.Role, &m.Name, &m.Email, &m.Login, &m.Provider); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Role, &m.Name, &m.Email, &m.Provider); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -219,13 +215,8 @@ func (s *Store) TenantMemberList(tenantID int64) ([]MemberInfo, error) {
 	return out, rows.Err()
 }
 
-// UserByEmailOrLogin resolves a grant target: an email address (any
-// provider, case-insensitive) or a GitHub login. Ambiguous emails resolve to
-// the oldest account.
-func (s *Store) UserByEmailOrLogin(identifier string) (*User, error) {
-	id := strings.ToLower(strings.TrimPrefix(identifier, "@"))
-	if strings.Contains(id, "@") {
-		return s.userBy("LOWER(email) = ? ORDER BY id LIMIT 1", id)
-	}
-	return s.userBy("LOWER(login) = ? ORDER BY id LIMIT 1", id)
+// UserByEmail resolves a grant target: an email address (any provider,
+// case-insensitive). Ambiguous emails resolve to the oldest account.
+func (s *Store) UserByEmail(identifier string) (*User, error) {
+	return s.userBy("LOWER(email) = ? ORDER BY id LIMIT 1", strings.ToLower(identifier))
 }

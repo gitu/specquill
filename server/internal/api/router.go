@@ -16,7 +16,6 @@ import (
 	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
-	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/store"
@@ -28,9 +27,6 @@ type Server struct {
 	store    *store.Store
 	sessions *auth.Sessions
 	oidc     *auth.OIDC
-	github   *auth.GitHub
-	ghApp    *githubapp.App // nil unless github_app: is configured
-	ghRoles  *roleCache     // TTL cache of github permission→role lookups
 	ai       *ai.Client  // nil when disabled
 	bus      *events.Bus // nil-safe
 	hub      *collab.Hub
@@ -42,9 +38,7 @@ type Server struct {
 type Options struct {
 	Store    *store.Store
 	Sessions *auth.Sessions
-	OIDC      *auth.OIDC     // nil when disabled
-	GitHub    *auth.GitHub   // nil when disabled
-	GitHubApp *githubapp.App // nil unless github_app: is configured
+	OIDC     *auth.OIDC  // nil when disabled
 	AI       *ai.Client  // nil when disabled
 	Bus      *events.Bus // nil-safe
 	Hub      *collab.Hub
@@ -58,7 +52,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ghApp: opts.GitHubApp, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), ghRoles: newRoleCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -87,9 +81,6 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH("admin", s.createGrant))
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH("admin", s.deleteGrant))
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH("admin", s.deleteGrantInvite))
-	apiMux.HandleFunc("GET /api/github/repos", s.roleH("admin", s.listGitHubRepos))
-	apiMux.HandleFunc("POST /api/github/repos", s.roleH("admin", s.addGitHubRepo))
-	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH("admin", s.removeGitHubRepo))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
@@ -137,13 +128,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	// public OKF-bundle download — the share token in the URL is the only
 	// credential; {name} is the cosmetic filename and is not checked
 	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
-	// GitHub push webhooks — HMAC-authenticated, sessionless
-	mux.HandleFunc("POST /hooks/github", s.githubWebhook)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
 	mux.HandleFunc("GET /auth/callback", s.authCallback)
 	mux.HandleFunc("GET /auth/providers", s.authProviders)
-	mux.HandleFunc("GET /auth/github/login", s.authGitHubLogin)
-	mux.HandleFunc("GET /auth/github/callback", s.authGitHubCallback)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)
 	mux.HandleFunc("POST /auth/logout", s.authLogout)
 	mux.Handle("/", spaHandler(opts.Dist, opts.Dev))

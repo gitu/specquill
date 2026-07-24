@@ -23,10 +23,6 @@ type Manager struct {
 	order     []string
 	// Notify, when set, receives coarse change hints (kind, repoKey, branch).
 	Notify func(kind, repo, branch string)
-	// TokenFor, when set, supplies push/fetch credentials for a repo (e.g.
-	// GitHub App installation tokens) and takes precedence over token_env.
-	// Tokens still reach git via child-process env only.
-	TokenFor func(r *Repo) (username, token string, ok bool)
 }
 
 func (m *Manager) notify(kind, repo, branch string) {
@@ -38,7 +34,7 @@ func (m *Manager) notify(kind, repo, branch string) {
 type Repo struct {
 	Cfg       config.RepoConfig
 	key       string   // canonical "<tenant_slug>/<repo_id>" — store rows, room keys
-	mgr       *Manager // back-pointer: Notify + TokenFor hooks
+	mgr       *Manager // back-pointer: Notify hook
 	gitDir    string   // bare clone
 	wtRoot    string   // worktrees live here, one dir per branch
 	committer config.GitConfig
@@ -53,8 +49,7 @@ type Repo struct {
 	done chan struct{} // closed by Manager.RemoveRepo; stops the sync loop
 }
 
-// DefaultTenant is the built-in tenant that mirrors the YAML repos list
-// (self-hosting); GitHub App installations become further tenants.
+// DefaultTenant is the built-in tenant that mirrors the YAML repos list.
 const DefaultTenant = "default"
 
 func NewManager(cfg *config.Config) (*Manager, error) {

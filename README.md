@@ -167,10 +167,6 @@ prod on `v*` tags).
 
 ## Notes & future work
 
-- **GitHub App integration is planned** (next round; needs an app registration): GitHub
-  login beside OIDC, installation repos as workspace/reference repos, installation
-  tokens through the existing `credentialArgsEnv` seam. Co-author trailers already give
-  correct multi-avatar attribution on GitHub.
 - Collab protocol notes: never mutate a Y.Doc before its socket is open (pre-sync local
   items never transmit and every later edit references clock ranges peers never
   received); the seeder initializes shared metadata after the seed grant and pushes

@@ -64,7 +64,7 @@ func testServerCfg(t *testing.T, protectMain bool, mut func(*config.Config)) (ht
 	st := store.OpenTest(t)
 	// serve() mirrors the YAML repos into the default tenant at boot; the
 	// tenancy layer auto-enrolls users into it on first request
-	if _, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace"); err != nil {
+	if _, err := st.EnsureTenant(gitx.DefaultTenant, "config", "Workspace"); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")

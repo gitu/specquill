@@ -9,16 +9,11 @@ import (
 
 // credentialEnvArgs configures git to take credentials from the child-process
 // environment only — the token never appears on argv or in any config file.
-// The Manager.TokenFor hook (e.g. GitHub App installation tokens, per
-// tenant) takes precedence over the repo's token_env.
+// This is the single credentials seam: the repo's token_env names the env var
+// holding the token for its remote.
 func (r *Repo) credentialArgsEnv() (args []string, env []string) {
-	user, token := "", ""
-	if r.mgr != nil && r.mgr.TokenFor != nil {
-		if u, t, ok := r.mgr.TokenFor(r); ok {
-			user, token = u, t
-		}
-	}
-	if token == "" && r.Cfg.TokenEnv != "" {
+	token := ""
+	if r.Cfg.TokenEnv != "" {
 		token = os.Getenv(r.Cfg.TokenEnv)
 	}
 	if token == "" {
@@ -26,9 +21,6 @@ func (r *Repo) credentialArgsEnv() (args []string, env []string) {
 	}
 	helper := `!f(){ echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; };f`
 	env = []string{"SPECQUILL_GIT_TOKEN=" + token}
-	if user != "" {
-		env = append(env, "SPECQUILL_GIT_USER="+user)
-	}
 	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, env
 }
 

@@ -114,7 +114,7 @@ func testGroundingServer(t *testing.T) (http.Handler, *store.Store, *gitx.Manage
 		Repos:   []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"}},
 	}
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

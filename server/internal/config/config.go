@@ -95,18 +95,6 @@ type LocalAuthConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
-// GitHubAuthConfig signs users in with their GitHub account (OAuth app flow —
-// GitHub is not an OIDC issuer for user login). allowed_users gates who may
-// log in at all; an empty list admits any GitHub account.
-type GitHubAuthConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	ClientID        string   `yaml:"client_id"`
-	ClientSecretEnv string   `yaml:"client_secret_env"`
-	AllowedUsers    []string `yaml:"allowed_users"` // GitHub logins admitted (empty = everyone)
-	WebBase         string   `yaml:"web_base"`      // override for GHE/tests (default https://github.com)
-	APIBase         string   `yaml:"api_base"`      // override for GHE/tests (default https://api.github.com)
-}
-
 // DevUser auto-authenticates every request as this identity — honored only
 // when the server runs with the -dev flag.
 type DevUser struct {
@@ -115,9 +103,8 @@ type DevUser struct {
 }
 
 type AuthConfig struct {
-	OIDC   OIDCConfig       `yaml:"oidc"`
-	GitHub GitHubAuthConfig `yaml:"github"`
-	Local  LocalAuthConfig  `yaml:"local"`
+	OIDC  OIDCConfig      `yaml:"oidc"`
+	Local LocalAuthConfig `yaml:"local"`
 	// AdminEmails bootstrap tenant administration: users whose email matches
 	// (case-insensitive, any provider) get the admin role in the default
 	// tenant on login. Without it a fresh deployment has members only and
@@ -135,33 +122,6 @@ type SessionConfig struct {
 	TTL          time.Duration `yaml:"ttl"`
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
-
-// GitHubWebhookConfig accepts push webhooks from GitHub repositories at
-// POST /hooks/github: pushes to a registered repo's remote trigger an
-// immediate fetch (+ fast-forward of the default branch) instead of waiting
-// for the next sync interval. The HMAC secret is the only authentication.
-type GitHubWebhookConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	SecretEnv string `yaml:"secret_env"` // env var holding the webhook HMAC secret
-}
-
-type WebhooksConfig struct {
-	GitHub GitHubWebhookConfig `yaml:"github"`
-}
-
-// GitHubAppConfig turns on GitHub-App tenant management
-// (repo-product/docs/specs/specs/multi-tenancy.md): each installation becomes a tenant, installation
-// tokens authenticate git, repo permissions map to roles, and the
-// installation webhooks keep it all in sync. Enabled when app_id is set.
-type GitHubAppConfig struct {
-	AppID            int64  `yaml:"app_id"`
-	PrivateKeyEnv    string `yaml:"private_key_env"`  // PEM in an env var…
-	PrivateKeyPath   string `yaml:"private_key_path"` // …or a mounted file
-	WebhookSecretEnv string `yaml:"webhook_secret_env"`
-	APIBase          string `yaml:"api_base"` // override for tests / GHE (default https://api.github.com)
-}
-
-func (g GitHubAppConfig) Enabled() bool { return g.AppID != 0 }
 
 // DatabaseConfig locates the Postgres store (users, sessions, PR review
 // state, collab logs). Production configs must use url_env so the DSN —
@@ -214,11 +174,9 @@ type Config struct {
 	Grants  []string      `yaml:"grants"`
 	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
 	Git     GitConfig     `yaml:"git"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Session   SessionConfig   `yaml:"session"`
-	Webhooks  WebhooksConfig  `yaml:"webhooks"`
-	GitHubApp GitHubAppConfig `yaml:"github_app"`
-	AI        AIConfig        `yaml:"ai"`
+	Auth    AuthConfig    `yaml:"auth"`
+	Session SessionConfig `yaml:"session"`
+	AI      AIConfig      `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -356,8 +314,8 @@ func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir is required")
 	}
-	if !c.Auth.OIDC.Enabled && !c.Auth.GitHub.Enabled && !c.Auth.Local.Enabled {
-		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
+	if !c.Auth.OIDC.Enabled && !c.Auth.Local.Enabled {
+		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
 	}
 	switch c.Auth.DefaultRole {
 	case "", "member", "viewer", "none":
@@ -424,26 +382,6 @@ func (c *Config) validate() error {
 		o := c.Auth.OIDC
 		if o.Issuer == "" || o.ClientID == "" {
 			return fmt.Errorf("auth.oidc: issuer and client_id are required when enabled")
-		}
-	}
-	if c.Auth.GitHub.Enabled {
-		g := c.Auth.GitHub
-		if g.ClientID == "" || g.ClientSecretEnv == "" {
-			return fmt.Errorf("auth.github: client_id and client_secret_env are required when enabled")
-		}
-		if c.BaseURL == "" {
-			return fmt.Errorf("auth.github: base_url is required (OAuth callback URL)")
-		}
-	}
-	if c.Webhooks.GitHub.Enabled && c.Webhooks.GitHub.SecretEnv == "" {
-		return fmt.Errorf("webhooks.github: secret_env is required when enabled")
-	}
-	if c.GitHubApp.Enabled() {
-		if c.GitHubApp.PrivateKeyEnv == "" && c.GitHubApp.PrivateKeyPath == "" {
-			return fmt.Errorf("github_app: private_key_env or private_key_path is required")
-		}
-		if c.GitHubApp.WebhookSecretEnv == "" {
-			return fmt.Errorf("github_app: webhook_secret_env is required")
 		}
 	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {

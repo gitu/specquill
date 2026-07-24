@@ -7,7 +7,7 @@ import (
 
 func grantFixture(t *testing.T) (*Store, *Tenant, *User) {
 	st := OpenTest(t)
-	ten, err := st.EnsureTenant("acme", "github", 42, "Acme")
+	ten, err := st.EnsureTenant("acme", "config", "Acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,80 +83,60 @@ func TestRepoGrants(t *testing.T) {
 func TestGrantInvites(t *testing.T) {
 	st, ten, admin := grantFixture(t)
 
-	if err := st.AddGrantInvite(ten.ID, "specs", "email", "New.Person@Partner.Test", "member", admin.ID); err != nil {
+	if err := st.AddGrantInvite(ten.ID, "specs", "New.Person@Partner.Test", "member", admin.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddGrantInvite(ten.ID, "regs", "github", "OctoCat", "viewer", admin.ID); err != nil {
+	if err := st.AddGrantInvite(ten.ID, "regs", "octo@cat.test", "viewer", admin.ID); err != nil {
 		t.Fatal(err)
 	}
 	if vs, err := st.RepoGrantInvites(ten.ID, "specs"); err != nil || len(vs) != 1 || vs[0].Matcher != "new.person@partner.test" {
 		t.Fatalf("invites: %v %+v", err, vs)
 	}
 
-	// email match claims the specs invite (case-insensitive), not the github one
+	// email match claims the specs invite (case-insensitive), not the other one
 	u, err := st.UpsertUser("local", "np", "New Person", "new.person@partner.test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ClaimGrantInvites(u.ID, "New.Person@Partner.Test", ""); err != nil {
+	if err := st.ClaimGrantInvites(u.ID, "New.Person@Partner.Test"); err != nil {
 		t.Fatal(err)
 	}
 	if role, err := st.RepoGrantRole(ten.ID, "specs", u.ID); err != nil || role != "member" {
 		t.Fatalf("claimed grant: %v %q", err, role)
 	}
+	if _, err := st.RepoGrantRole(ten.ID, "regs", u.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("foreign invite must not match")
+	}
 	if vs, _ := st.RepoGrantInvites(ten.ID, "specs"); len(vs) != 0 {
 		t.Fatalf("claimed invite not deleted: %+v", vs)
 	}
 	// idempotent: claiming again is a no-op
-	if err := st.ClaimGrantInvites(u.ID, "new.person@partner.test", ""); err != nil {
+	if err := st.ClaimGrantInvites(u.ID, "new.person@partner.test"); err != nil {
 		t.Fatal(err)
-	}
-
-	// login match claims the github invite; an empty login never matches
-	gh, err := st.UpsertUser("github", "github:7", "Octo Cat", "octo@cat.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.ClaimGrantInvites(gh.ID, "octo@cat.test", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.RepoGrantRole(ten.ID, "regs", gh.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatal("github invite must not match on empty login")
-	}
-	if err := st.ClaimGrantInvites(gh.ID, "octo@cat.test", "octocat"); err != nil {
-		t.Fatal(err)
-	}
-	if role, err := st.RepoGrantRole(ten.ID, "regs", gh.ID); err != nil || role != "viewer" {
-		t.Fatalf("login-claimed grant: %v %q", err, role)
 	}
 
 	// an existing grant is not downgraded by a claim
-	if err := st.AddGrantInvite(ten.ID, "regs", "github", "octocat", "viewer", admin.ID); err != nil {
+	oc, err := st.UpsertUser("oidc", "oc-1", "Octo Cat", "octo@cat.test")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRepoGrant(ten.ID, "regs", gh.ID, "member", admin.ID); err != nil {
+	if err := st.UpsertRepoGrant(ten.ID, "regs", oc.ID, "member", admin.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ClaimGrantInvites(gh.ID, "octo@cat.test", "octocat"); err != nil {
+	if err := st.ClaimGrantInvites(oc.ID, "octo@cat.test"); err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := st.RepoGrantRole(ten.ID, "regs", gh.ID); role != "member" {
+	if role, _ := st.RepoGrantRole(ten.ID, "regs", oc.ID); role != "member" {
 		t.Fatalf("claim downgraded an existing grant to %q", role)
 	}
 }
 
-func TestUserByEmailOrLogin(t *testing.T) {
+func TestUserByEmail(t *testing.T) {
 	st, _, u := grantFixture(t)
-	if err := st.SetUserLogin(u.ID, "EveDev"); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := st.UserByEmailOrLogin("eve@partner.test"); err != nil || got.ID != u.ID {
+	if got, err := st.UserByEmail("eve@partner.test"); err != nil || got.ID != u.ID {
 		t.Fatalf("by email: %v %+v", err, got)
 	}
-	if got, err := st.UserByEmailOrLogin("@evedev"); err != nil || got.ID != u.ID {
-		t.Fatalf("by @login: %v %+v", err, got)
-	}
-	if _, err := st.UserByEmailOrLogin("nobody@nowhere.test"); !errors.Is(err, ErrNotFound) {
+	if _, err := st.UserByEmail("nobody@nowhere.test"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

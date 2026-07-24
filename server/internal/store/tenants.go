@@ -6,17 +6,15 @@ import (
 	"time"
 )
 
-// Tenancy model (repo-product/docs/specs/specs/multi-tenancy.md): a tenant is a GitHub App
-// installation — or the built-in `default` tenant (provider `config`) that
-// mirrors the YAML repos list for self-hosting. The canonical repo key
-// everywhere else in this store is "<tenant_slug>/<repo_id>".
+// Tenancy model: the built-in `default` tenant (provider `config`) mirrors
+// the YAML repos list. The canonical repo key everywhere else in this store
+// is "<tenant_slug>/<repo_id>".
 
 type Tenant struct {
-	ID           int64  `json:"-"`
-	Slug         string `json:"slug"`
-	Provider     string `json:"provider"` // 'config' | 'github'
-	Installation int64  `json:"-"`        // GitHub App installation id (0 = none)
-	DisplayName  string `json:"displayName"`
+	ID          int64  `json:"-"`
+	Slug        string `json:"slug"`
+	Provider    string `json:"provider"` // 'config'
+	DisplayName string `json:"displayName"`
 }
 
 type TenantRepo struct {
@@ -25,7 +23,6 @@ type TenantRepo struct {
 	Mode          string // writable | readonly
 	Remote        string
 	DefaultBranch string
-	GhFullName    string // 'owner/name' when provider=github
 	ManagedBy     string // config (boot-reconciled) | api (persists)
 }
 
@@ -38,13 +35,12 @@ type Membership struct {
 }
 
 // EnsureTenant upserts a tenant by slug and returns it.
-func (s *Store) EnsureTenant(slug, provider string, installation int64, displayName string) (*Tenant, error) {
-	_, err := s.exec(`INSERT INTO tenants (slug, provider, installation_id, display_name, created_at)
-		VALUES (?, ?, NULLIF(?, 0), ?, ?)
+func (s *Store) EnsureTenant(slug, provider, displayName string) (*Tenant, error) {
+	_, err := s.exec(`INSERT INTO tenants (slug, provider, display_name, created_at)
+		VALUES (?, ?, ?, ?)
 		ON CONFLICT(slug) DO UPDATE SET
-		  provider = excluded.provider, installation_id = excluded.installation_id,
-		  display_name = excluded.display_name`,
-		slug, provider, installation, displayName, time.Now().Unix())
+		  provider = excluded.provider, display_name = excluded.display_name`,
+		slug, provider, displayName, time.Now().Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -53,25 +49,21 @@ func (s *Store) EnsureTenant(slug, provider string, installation int64, displayN
 
 func (s *Store) TenantByID(id int64) (*Tenant, error) {
 	t := &Tenant{}
-	var inst sql.NullInt64
-	err := s.queryRow(`SELECT id, slug, provider, installation_id, display_name FROM tenants WHERE id = ?`, id).
-		Scan(&t.ID, &t.Slug, &t.Provider, &inst, &t.DisplayName)
+	err := s.queryRow(`SELECT id, slug, provider, display_name FROM tenants WHERE id = ?`, id).
+		Scan(&t.ID, &t.Slug, &t.Provider, &t.DisplayName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	t.Installation = inst.Int64
 	return t, err
 }
 
 func (s *Store) TenantBySlug(slug string) (*Tenant, error) {
 	t := &Tenant{}
-	var inst sql.NullInt64
-	err := s.queryRow(`SELECT id, slug, provider, installation_id, display_name FROM tenants WHERE slug = ?`, slug).
-		Scan(&t.ID, &t.Slug, &t.Provider, &inst, &t.DisplayName)
+	err := s.queryRow(`SELECT id, slug, provider, display_name FROM tenants WHERE slug = ?`, slug).
+		Scan(&t.ID, &t.Slug, &t.Provider, &t.DisplayName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	t.Installation = inst.Int64
 	return t, err
 }
 
@@ -92,6 +84,11 @@ func (s *Store) SetMemberRole(tenantID, userID int64, role string) error {
 	return err
 }
 
+func (s *Store) DeleteMember(tenantID, userID int64) error {
+	_, err := s.exec(`DELETE FROM tenant_members WHERE tenant_id = ? AND user_id = ?`, tenantID, userID)
+	return err
+}
+
 func (s *Store) MemberRole(tenantID, userID int64) (string, error) {
 	var role string
 	err := s.queryRow(`SELECT role FROM tenant_members WHERE tenant_id = ? AND user_id = ?`, tenantID, userID).Scan(&role)
@@ -106,7 +103,7 @@ func (s *Store) MemberRole(tenantID, userID int64) (string, error) {
 // synthetic 'viewer' tenant role: no member row is materialized, so a role
 // sync can never revoke grant-only visibility.
 func (s *Store) Memberships(userID int64) ([]Membership, error) {
-	rows, err := s.query(`SELECT t.id, t.slug, t.provider, COALESCE(t.installation_id, 0), t.display_name,
+	rows, err := s.query(`SELECT t.id, t.slug, t.provider, t.display_name,
 			COALESCE(m.role, 'viewer'), m.role IS NULL
 		FROM tenants t
 		LEFT JOIN tenant_members m ON m.tenant_id = t.id AND m.user_id = ?
@@ -120,7 +117,7 @@ func (s *Store) Memberships(userID int64) ([]Membership, error) {
 	out := []Membership{}
 	for rows.Next() {
 		var m Membership
-		if err := rows.Scan(&m.Tenant.ID, &m.Tenant.Slug, &m.Tenant.Provider, &m.Tenant.Installation,
+		if err := rows.Scan(&m.Tenant.ID, &m.Tenant.Slug, &m.Tenant.Provider,
 			&m.Tenant.DisplayName, &m.Role, &m.GrantOnly); err != nil {
 			return nil, err
 		}
@@ -133,7 +130,7 @@ func (s *Store) Memberships(userID int64) ([]Membership, error) {
 
 // SyncTenantRepos makes the tenant's repo registry exactly match `repos`
 // (upsert present, delete missing) — used at boot to mirror the YAML list
-// into the default tenant, and by installation syncs later.
+// into the default tenant.
 func (s *Store) SyncTenantRepos(tenantID int64, repos []TenantRepo) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -144,12 +141,12 @@ func (s *Store) SyncTenantRepos(tenantID int64, repos []TenantRepo) error {
 	keep := make([]any, 0, len(repos)+1)
 	keep = append(keep, tenantID)
 	for _, r := range repos {
-		if _, err := tx.Exec(rebind(`INSERT INTO tenant_repos (tenant_id, repo_id, mode, remote, default_branch, gh_full_name, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+		if _, err := tx.Exec(rebind(`INSERT INTO tenant_repos (tenant_id, repo_id, mode, remote, default_branch, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT(tenant_id, repo_id) DO UPDATE SET
 			  mode = excluded.mode, remote = excluded.remote,
-			  default_branch = excluded.default_branch, gh_full_name = excluded.gh_full_name`),
-			tenantID, r.RepoID, r.Mode, r.Remote, r.DefaultBranch, r.GhFullName, now); err != nil {
+			  default_branch = excluded.default_branch`),
+			tenantID, r.RepoID, r.Mode, r.Remote, r.DefaultBranch, now); err != nil {
 			return err
 		}
 		keep = append(keep, r.RepoID)
@@ -165,7 +162,7 @@ func (s *Store) SyncTenantRepos(tenantID int64, repos []TenantRepo) error {
 }
 
 func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
-	rows, err := s.query(`SELECT tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by
+	rows, err := s.query(`SELECT tenant_id, repo_id, mode, remote, default_branch, managed_by
 		FROM tenant_repos WHERE tenant_id = ? ORDER BY created_at, repo_id`, tenantID)
 	if err != nil {
 		return nil, err
@@ -174,7 +171,7 @@ func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
 	out := []TenantRepo{}
 	for rows.Next() {
 		var r TenantRepo
-		if err := rows.Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.GhFullName, &r.ManagedBy); err != nil {
+		if err := rows.Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.ManagedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -182,25 +179,31 @@ func (s *Store) TenantRepos(tenantID int64) ([]TenantRepo, error) {
 	return out, rows.Err()
 }
 
-// TenantRepo reads one repo row (per-repo role derivation needs gh_full_name).
+// TenantRepo reads one repo row.
 func (s *Store) TenantRepo(tenantID int64, repoID string) (*TenantRepo, error) {
 	r := &TenantRepo{}
-	err := s.queryRow(`SELECT tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by
+	err := s.queryRow(`SELECT tenant_id, repo_id, mode, remote, default_branch, managed_by
 		FROM tenant_repos WHERE tenant_id = ? AND repo_id = ?`, tenantID, repoID).
-		Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.GhFullName, &r.ManagedBy)
+		Scan(&r.TenantID, &r.RepoID, &r.Mode, &r.Remote, &r.DefaultBranch, &r.ManagedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return r, err
 }
 
+// DeleteTenantRepo removes a repo row; grants and invites cascade with it.
+func (s *Store) DeleteTenantRepo(tenantID int64, repoID string) error {
+	_, err := s.exec(`DELETE FROM tenant_repos WHERE tenant_id = ? AND repo_id = ?`, tenantID, repoID)
+	return err
+}
+
 // UpsertTenantRepo registers/updates a single repo row (runtime AddRepo path;
 // boot reconciliation uses SyncTenantRepos).
 func (s *Store) UpsertTenantRepo(tenantID int64, r TenantRepo) error {
-	_, err := s.exec(`INSERT INTO tenant_repos (tenant_id, repo_id, mode, remote, default_branch, gh_full_name, managed_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'api', ?)
+	_, err := s.exec(`INSERT INTO tenant_repos (tenant_id, repo_id, mode, remote, default_branch, managed_by, created_at)
+		VALUES (?, ?, ?, ?, ?, 'api', ?)
 		ON CONFLICT(tenant_id, repo_id) DO UPDATE SET
 		  mode = excluded.mode, remote = excluded.remote, default_branch = excluded.default_branch`,
-		tenantID, r.RepoID, r.Mode, r.Remote, r.DefaultBranch, r.GhFullName, time.Now().Unix())
+		tenantID, r.RepoID, r.Mode, r.Remote, r.DefaultBranch, time.Now().Unix())
 	return err
 }

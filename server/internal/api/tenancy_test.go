@@ -18,7 +18,7 @@ func TestTenantIsolation(t *testing.T) {
 	cookie := login(t, h)
 
 	// second tenant with its own repo, registered at runtime
-	acme, err := st.EnsureTenant("acme", "github", 42, "Acme Corp")
+	acme, err := st.EnsureTenant("acme", "config", "Acme Corp")
 	if err != nil {
 		t.Fatal(err)
 	}

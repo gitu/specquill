@@ -1,8 +1,8 @@
 package api
 
 // Per-repo grant management (REQ-020) — tenant-admin gated. A grant targets
-// an existing user by email or GitHub login; unknown identities become
-// pending invites, claimed on the invitee's first login.
+// an existing user by email; unknown addresses become pending invites,
+// claimed on the invitee's first login.
 
 import (
 	"encoding/json"
@@ -67,7 +67,7 @@ func (s *Server) listGrants(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/repos/{repo}/grants {user, role} — grant an existing user, or
 // leave an invite for an identity that has not logged in yet. `user` is an
-// email address or a GitHub login (optionally @-prefixed).
+// email address.
 func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.tenant(w, r)
 	if !ok {
@@ -83,7 +83,7 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.User) == "" {
-		jsonError(w, http.StatusBadRequest, "user (email or github login) is required")
+		jsonError(w, http.StatusBadRequest, "user (email) is required")
 		return
 	}
 	if body.Role != "viewer" && body.Role != "member" {
@@ -93,7 +93,11 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	caller := auth.UserFrom(r.Context())
 	target := strings.TrimSpace(body.User)
-	u, err := s.store.UserByEmailOrLogin(target)
+	if !strings.Contains(target, "@") {
+		jsonError(w, http.StatusBadRequest, "user must be an email address")
+		return
+	}
+	u, err := s.store.UserByEmail(target)
 	switch {
 	case err == nil:
 		if err := s.store.UpsertRepoGrant(t.ID, repoID, u.ID, body.Role, caller.ID); err != nil {
@@ -102,15 +106,11 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, map[string]any{"status": "granted", "userId": u.ID, "role": body.Role})
 	case errors.Is(err, store.ErrNotFound):
-		kind, matcher := "github", strings.TrimPrefix(target, "@")
-		if strings.Contains(matcher, "@") {
-			kind = "email"
-		}
-		if err := s.store.AddGrantInvite(t.ID, repoID, kind, matcher, body.Role, caller.ID); err != nil {
+		if err := s.store.AddGrantInvite(t.ID, repoID, target, body.Role, caller.ID); err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		jsonOK(w, map[string]any{"status": "invited", "kind": kind, "matcher": strings.ToLower(matcher), "role": body.Role})
+		jsonOK(w, map[string]any{"status": "invited", "matcher": strings.ToLower(target), "role": body.Role})
 	default:
 		jsonError(w, http.StatusInternalServerError, err.Error())
 	}

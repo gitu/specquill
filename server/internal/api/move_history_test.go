@@ -52,7 +52,7 @@ func TestMoveAndHistory(t *testing.T) {
 	}
 	cfg.Normalize()
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
+	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

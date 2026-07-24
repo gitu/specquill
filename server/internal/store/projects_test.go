@@ -4,7 +4,7 @@ import "testing"
 
 func TestProjectAndSourceReconciliation(t *testing.T) {
 	st := OpenTest(t)
-	ten, err := st.EnsureTenant("default", "config", 0, "Workspace")
+	ten, err := st.EnsureTenant("default", "config", "Workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

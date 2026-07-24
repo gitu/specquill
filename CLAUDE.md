@@ -127,8 +127,11 @@ from the code.
 - `sx()` converts inline-style strings to React style objects; components
   carry design styles as strings on purpose — keep that idiom.
 
-## Deferred / planned
+## Deployment model
 
-- GitHub App integration (login + installation repos as workspaces) — planned,
-  blocked on an app registration (contents:rw, pull_requests:rw, metadata:r).
-  `gitx.credentialArgsEnv` is the single credentials seam to extend.
+- Two supported deployments (July 2026 decision): **v1** — one deployment per
+  tenant for BAs/non-technicals, a single writable repository, any-OIDC login;
+  **v2** — a developer's local machine, `auth.local`/`-dev`, no OIDC. The
+  GitHub integration (OAuth login, GitHub App tenants, webhooks) was removed
+  with this decision; GitHub-hosted repos are plain git remotes via
+  `token_env` — `gitx.credentialArgsEnv` is the single credentials seam.
