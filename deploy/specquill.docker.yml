@@ -1,12 +1,14 @@
-# Hosted runtime config — baked into the image by the Dockerfile
-# (→ /etc/specquill/specquill.yml). NO SECRETS IN THIS FILE: every credential is
-# referenced by env-var NAME only and injected at deploy time from the
-# platform's secret store. Edit + commit to change; the next push to main
-# rolls it out to staging.
+# Default runtime config baked into the container image by the Dockerfile
+# (→ /etc/specquill/specquill.yml). It is a starting point: mount your own
+# over it (`-v $PWD/specquill.yml:/etc/specquill/specquill.yml:ro`) — see
+# deploy/local.md.
 #
-# REQUIRES A PERSISTENT VOLUME at data_dir — it holds both the git clones
+# NO SECRETS IN THIS FILE: every credential is referenced by env-var NAME
+# only and injected at run time.
+#
+# MOUNT A PERSISTENT VOLUME at data_dir — it holds both the git clones
 # (rebuildable) and specquill.db (NOT rebuildable: users, sessions, PRs,
-# approvals, collab logs). See cloud.md.
+# approvals, collab logs).
 
 listen: ":8080"
 data_dir: /var/lib/specquill        # persistent volume — clones + specquill.db

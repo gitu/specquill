@@ -159,10 +159,10 @@ docker compose -f docker-compose.dev.yml up -d   # dex IdP for exercising real O
 
 ## Deploy
 
-`Dockerfile` builds the whole thing into one alpine+git image;
-[`DEPLOY.md`](DEPLOY.md) documents the Cloud Run pipeline (GitHub Actions →
-ghcr.io → deploy-only Cloud Build trigger → Cloud Run, staging on `main`,
-prod on `v*` tags).
+`Dockerfile` builds the whole thing into one alpine+git image (pushed to
+ghcr.io on every push to `main` and every tag); [`DEPLOY.md`](DEPLOY.md)
+documents self-hosting it — one binary or container, one YAML file, a
+persistent directory, a reverse proxy.
 
 ## Notes & future work
 

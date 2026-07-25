@@ -1,9 +1,9 @@
 # Deploying SpecQuill locally (self-host)
 
 One binary and one YAML file — the store is an embedded SQLite database and
-the SPA is compiled in, so there is no service to run beside it. For the
-hosted pipeline see [cloud.md](cloud.md); for the hot-reload *dev* loop see
-the repo README (`make dev`).
+the SPA is compiled in, so there is no service to run beside it. This is the
+only supported deployment shape; for the hot-reload *dev* loop see the repo
+README (`make dev`).
 
 ## 1. Get the binary
 
@@ -41,9 +41,9 @@ migration step.
 
 ## 3. Config
 
-`specquill.yml` — the local sibling of the hosted config
-([specquill.cloud.yml](specquill.cloud.yml)). Secrets are referenced by env-var
-*name*, never as values:
+`specquill.yml` — the same shape as the config baked into the container image
+([specquill.docker.yml](specquill.docker.yml)). Secrets are referenced by
+env-var *name*, never as values:
 
 ```yaml
 listen: ":8643"
