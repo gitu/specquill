@@ -131,6 +131,7 @@ export function TopBar() {
       )}
       <button
         onClick={() => setMergeDialog(true)}
+        aria-label="Merge branch"
         title={'merge ' + app.branch + ' into the default branch'}
         style={sx('flex:none;display:flex;align-items:center;gap:6px;height:30px;padding:0 ' + (narrow ? '9px' : '12px') + ';border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}
       >

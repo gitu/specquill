@@ -29,8 +29,8 @@ server/           Go single binary (specquill)
   internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
                     opaque session cookies in the store
   internal/store    embedded SQLite (modernc, cgo-free) at <data_dir>/specquill.db:
-                    users, sessions, PRs, comments, approvals, workspace
-                    claims, collab room logs — content never leaves git
+                    users, sessions, per-repo grants, workspace claims,
+                    collab room logs — content never leaves git
   internal/collab   real-time co-editing relay: the server is a dumb Yjs
                     update log (no server-side CRDT) — rooms per
                     (branch, path), seed handshake, replay to joiners,

@@ -33,7 +33,7 @@ export function ForgeReview({ repo, branch }: { repo: string | undefined; branch
         <span style={sx('flex:1')} />
         <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--prod-bg);color:var(--prod)')}>{req.state}</span>
       </div>
-      <a href={req.url} target="_blank" rel="noreferrer"
+      <a href={req.url} target="_blank" rel="noopener noreferrer"
         style={sx('display:flex;align-items:baseline;gap:8px;padding:11px 14px;text-decoration:none;color:var(--text);border-bottom:1px solid var(--border)')}>
         <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-3)")}>!{req.number}</span>
         <span style={sx('font-size:13px;font-weight:600;flex:1')}>{req.title}</span>

@@ -76,6 +76,14 @@ func TestDirectMerge(t *testing.T) {
 		t.Fatalf("workspace should be level with main after merge: %v", files)
 	}
 
+	// an unrecognised strategy is refused rather than silently merging
+	for _, bad := range []string{"sqaush", "rebase", "SQUASH"} {
+		if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/merge",
+			map[string]string{"source": "ws/flo", "strategy": bad}); code != http.StatusBadRequest {
+			t.Fatalf("strategy %q: want 400, got %d %v", bad, code, out)
+		}
+	}
+
 	// bad requests
 	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": "main"}); code != http.StatusBadRequest {
 		t.Fatalf("merging main into itself: want 400, got %d", code)

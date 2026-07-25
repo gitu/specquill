@@ -97,6 +97,12 @@ func (s *Server) postMerge(w http.ResponseWriter, r *http.Request, repo *project
 	if body.Strategy == "" {
 		body.Strategy = "merge"
 	}
+	// gitx only special-cases "squash", so an unrecognised value would
+	// silently land a merge commit instead — refuse it rather than guess
+	if body.Strategy != "merge" && body.Strategy != "squash" {
+		jsonError(w, http.StatusBadRequest, `strategy must be "merge" or "squash"`)
+		return
+	}
 	need := authz.Editor
 	if repo.Repo.Cfg.IsProtected(target) {
 		need = authz.Maintainer

@@ -1,5 +1,6 @@
-// Package store wraps the SQLite database holding users, sessions and PR
-// review metadata. Workspace content never lands here — it stays in git.
+// Package store wraps the SQLite database holding users, sessions, workspace
+// claims and the collab update log. Workspace content never lands here — it
+// stays in git.
 package store
 
 import (
@@ -31,7 +32,7 @@ type User struct {
 	Subject  string `json:"-"`
 	Name     string `json:"name"`
 	Email    string `json:"email"`
-	Role     string `json:"role"` // deployment role: admin | member | viewer | '' (not enrolled)
+	Role     string `json:"role"` // deployment role on the authz ladder; '' = not enrolled
 }
 
 // Open opens (creating it and its parent directory if needed) the SQLite
@@ -49,8 +50,8 @@ func Open(path string) (*Store, error) {
 		}
 	}
 	// _txlock=immediate: transactions take the write lock up front, so a
-	// read-then-write transaction (e.g. CreatePR's MAX(number)+1) can never
-	// be overtaken between its read and its insert.
+	// read-then-write transaction can never be overtaken between its read
+	// and its write.
 	db, err := sql.Open("sqlite", path+
 		"?_pragma=journal_mode(WAL)"+
 		"&_pragma=foreign_keys(1)"+
