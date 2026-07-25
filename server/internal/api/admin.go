@@ -12,20 +12,21 @@ import (
 	"time"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/config"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
-// roleH gates a handler on a minimum deployment role (viewer < member < admin).
-func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
-	rank := map[string]int{"viewer": 0, "member": 1, "admin": 2}
+// roleH gates a handler on a minimum DEPLOYMENT role (the authz ladder
+// applied to users.role — management, not per-repo access).
+func (s *Server) roleH(minRole authz.Role, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := auth.UserFrom(r.Context())
 		role, err := s.deployRole(u)
-		if err != nil || role == "" || rank[role] < rank[minRole] {
-			jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+		if err != nil || role < minRole {
+			jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
 			return
 		}
 		h(w, r)

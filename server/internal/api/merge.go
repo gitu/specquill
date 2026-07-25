@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 )
@@ -78,7 +79,11 @@ func (s *Server) getMergePreview(w http.ResponseWriter, r *http.Request, repo *p
 }
 
 // POST /api/repos/{repo}/merge {source, target?, strategy?, message?}
-// — land a workspace branch on the default branch. Member role (writableH).
+// — land a workspace branch on the default branch.
+//
+// Landing on a PROTECTED branch takes maintainer (REQ-021.2): an editor
+// writes and commits on their own branch, but publishing to the branch
+// everyone reads is the higher rung. Unprotected targets merge at editor.
 func (s *Server) postMerge(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var body struct{ Source, Target, Strategy, Message string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -91,6 +96,14 @@ func (s *Server) postMerge(w http.ResponseWriter, r *http.Request, repo *project
 	}
 	if body.Strategy == "" {
 		body.Strategy = "merge"
+	}
+	need := authz.Editor
+	if repo.Repo.Cfg.IsProtected(target) {
+		need = authz.Maintainer
+	}
+	if repoRoleFrom(r.Context()) < need {
+		jsonError2(w, http.StatusForbidden, "requires "+need.String()+" role", "role_forbidden")
+		return
 	}
 
 	// dirty source worktree → the client prompts to commit first (same

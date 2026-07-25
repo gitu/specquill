@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/store"
 )
 
@@ -74,9 +75,10 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "user (email) is required")
 		return
 	}
-	if body.Role != "viewer" && body.Role != "member" {
-		// per-repo admin is meaningless — repo/project management is deployment-scoped
-		jsonError(w, http.StatusBadRequest, "role must be viewer or member")
+	// admin is deployment-scoped here (single-tenant: management is not
+	// per-repo), so it is not a grantable rung — the rest of the ladder is
+	if role := authz.Parse(body.Role); role == authz.None || role == authz.Admin {
+		jsonError(w, http.StatusBadRequest, "role must be viewer, editor or maintainer")
 		return
 	}
 	caller := auth.UserFrom(r.Context())

@@ -14,8 +14,8 @@ func TestAutoEnrollment(t *testing.T) {
 	h, _, _ := testServerFull(t, false)
 	cookie := login(t, h)
 	code, out := doJSON(t, h, cookie, "GET", "/api/me", nil)
-	if code != http.StatusOK || out["role"] != "member" {
-		t.Fatalf("default enrollment: want member, got %d %v", code, out)
+	if code != http.StatusOK || out["role"] != "editor" {
+		t.Fatalf("default enrollment: want editor, got %d %v", code, out)
 	}
 }
 
@@ -30,7 +30,7 @@ func TestEnrollmentDefaultRoleViewer(t *testing.T) {
 	}
 	// enrolled role is sticky: EnsureUserRole must not overwrite it
 	flo := userID(t, st, "flo@test.local")
-	if err := st.EnsureUserRole(flo, "member"); err != nil {
+	if err := st.EnsureUserRole(flo, "editor"); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := doJSON(t, h, cookie, "GET", "/api/me", nil); code != http.StatusOK || out["role"] != "viewer" {

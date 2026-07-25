@@ -13,6 +13,7 @@ import (
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
@@ -72,14 +73,14 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/me", s.me)
 	apiMux.HandleFunc("GET /api/repos", s.listRepos)
 	apiMux.HandleFunc("GET /api/projects", s.listProjects)
-	apiMux.HandleFunc("POST /api/projects", s.roleH("admin", s.createProject))
-	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH("admin", s.deleteProject))
-	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH("member", s.syncSource))
-	apiMux.HandleFunc("GET /api/members", s.roleH("admin", s.listMembers))
-	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.roleH("admin", s.listGrants))
-	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH("admin", s.createGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH("admin", s.deleteGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH("admin", s.deleteGrantInvite))
+	apiMux.HandleFunc("POST /api/projects", s.roleH(authz.Admin, s.createProject))
+	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH(authz.Admin, s.deleteProject))
+	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH(authz.Editor, s.syncSource))
+	apiMux.HandleFunc("GET /api/members", s.roleH(authz.Admin, s.listMembers))
+	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.roleH(authz.Admin, s.listGrants))
+	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH(authz.Admin, s.createGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH(authz.Admin, s.deleteGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH(authz.Admin, s.deleteGrantInvite))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
@@ -141,7 +142,7 @@ func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Proje
 		}
 		u := auth.UserFrom(r.Context())
 		role := s.effectiveRepoRole(u, repo.Repo.Cfg.ID)
-		if roleRank[role] < roleRank["viewer"] {
+		if role < authz.Viewer {
 			jsonError2(w, http.StatusForbidden, "no access to repo "+repo.ID, "repo_forbidden")
 			return
 		}

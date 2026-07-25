@@ -39,7 +39,7 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	cookie := login(t, h)
 	wRepoRow(t, st)
 	// enroll as viewer BEFORE the first API request — otherwise the access
-	// layer auto-enrolls flo as member and the write gate has nothing to do
+	// layer auto-enrolls flo as editor and the write gate has nothing to do
 	flo := userID(t, st, "flo@test.local")
 	if err := st.SetUserRole(flo, "viewer"); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	}
 
 	// explicit member grant on the repo wins over the deployment viewer role
-	if err := st.UpsertRepoGrant("w", flo, "member", 0); err != nil {
+	if err := st.UpsertRepoGrant("w", flo, "editor", 0); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/specs/a.md", map[string]string{"content": "x"}); code != http.StatusOK {
@@ -145,7 +145,7 @@ func TestGrantsAPI(t *testing.T) {
 	}
 
 	// unknown identity → invite
-	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "Eve@Test.Local", "role": "member"})
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/grants", map[string]string{"user": "Eve@Test.Local", "role": "editor"})
 	if code != http.StatusOK || out["status"] != "invited" || out["matcher"] != "eve@test.local" {
 		t.Fatalf("invite: want invited, got %d %v", code, out)
 	}

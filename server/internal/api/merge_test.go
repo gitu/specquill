@@ -13,6 +13,7 @@ func TestDirectMerge(t *testing.T) {
 	h, st, git := testServerFull(t, true) // main protected
 	cookie := login(t, h)
 	wRepoRow(t, st)
+	promoteRole(t, st, "flo@test.local", "maintainer") // landing on main
 
 	repo, ok := git.Repo("w")
 	if !ok {
@@ -107,10 +108,7 @@ func TestMergeIsMemberGated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	flo := userID(t, st, "flo@test.local")
-	if err := st.SetUserRole(flo, "viewer"); err != nil {
-		t.Fatal(err)
-	}
+	promoteRole(t, st, "flo@test.local", "viewer")
 	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/merge?source=ws/flo", nil); code != http.StatusOK {
 		t.Fatalf("viewer preview: want 200, got %d", code)
 	}

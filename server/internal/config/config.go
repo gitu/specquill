@@ -119,9 +119,9 @@ type AuthConfig struct {
 	AdminEmails []string `yaml:"admin_emails"`
 	DevUser     *DevUser `yaml:"dev_user"`
 	// DefaultRole is the deployment role every authenticated user is
-	// auto-enrolled with: member (default, self-host semantics), viewer, or
-	// none — with none, users reach only repos explicitly granted to them
-	// (REQ-020, restricted deployments).
+	// auto-enrolled with on the authz ladder: editor (default, self-host
+	// semantics), viewer, maintainer, admin, or none — with none, users reach
+	// only repos explicitly granted to them (REQ-020, restricted deployments).
 	DefaultRole string `yaml:"default_role"`
 }
 
@@ -162,10 +162,10 @@ type Config struct {
 	Projects []ProjectConfig `yaml:"projects"`
 	Sources  []SourceConfig  `yaml:"sources"`
 	Repos    []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
-	Git     GitConfig     `yaml:"git"`
-	Auth    AuthConfig    `yaml:"auth"`
-	Session SessionConfig `yaml:"session"`
-	AI      AIConfig      `yaml:"ai"`
+	Git      GitConfig       `yaml:"git"`
+	Auth     AuthConfig      `yaml:"auth"`
+	Session  SessionConfig   `yaml:"session"`
+	AI       AIConfig        `yaml:"ai"`
 }
 
 func Load(path string) (*Config, error) {
@@ -317,9 +317,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
 	}
 	switch c.Auth.DefaultRole {
-	case "", "member", "viewer", "none":
+	case "", "viewer", "editor", "maintainer", "admin", "none":
 	default:
-		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
+		return fmt.Errorf("auth.default_role must be viewer, editor, maintainer, admin or none (got %q)", c.Auth.DefaultRole)
 	}
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")

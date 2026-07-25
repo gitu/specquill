@@ -8,19 +8,20 @@ import (
 	"strings"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 )
 
 // writableH gates every mutation: the repo must be writable AND the caller
-// at least a member on it (viewers read and comment, they never write).
+// at least an editor on it (viewers read and comment, they never write).
 func (s *Server) writableH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return s.repoH(func(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 		if !repo.Writable() {
 			jsonError(w, http.StatusForbidden, "repo "+repo.ID+" is read-only")
 			return
 		}
-		if roleRank[repoRoleFrom(r.Context())] < roleRank["member"] {
-			jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
+		if repoRoleFrom(r.Context()) < authz.Editor {
+			jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
 			return
 		}
 		h(w, r, repo)

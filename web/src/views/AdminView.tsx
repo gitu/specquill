@@ -100,10 +100,11 @@ export function AdminView() {
   );
 }
 
-// AccessPanel — deployment members plus per-repo grants (REQ-020): grant a user
-// (by email) viewer/member access to a single repository, beyond or without
-// their deployment role. Unknown addresses become pending invites claimed on
-// first login. Renders nothing for non-admins (the members request 403s).
+// AccessPanel — deployment members plus per-repo grants (REQ-020/REQ-021):
+// grant a user (by email) viewer/editor/maintainer access to a single
+// repository, beyond or without their deployment role. Unknown addresses
+// become pending invites claimed on first login. Renders nothing for
+// non-admins (the members request 403s).
 function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
   const qc = useQueryClient();
   interface Member { userId: number; role: string; name: string; email: string; provider: string }
@@ -119,7 +120,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
   const grants = useQuery({
     queryKey: ['grants', active],
     queryFn: () => api<{ grants: Grant[]; invites: Invite[] }>(`/api/repos/${active}/grants`),
-    enabled: !!active && !!members.data,
+    enabled: !!active,
     retry: false,
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['grants', active] });
@@ -150,29 +151,34 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
       </div>
     );
   }
-  if (!members.data) return null; // 403 (not an admin) or still loading
+  // tenant admins see both sections; repo admins see Repository access for
+  // their repos; everyone else sees nothing
+  if (!members.data && repos.length === 0) return null;
   const roleChip = (role: string) =>
     'font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
-    (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'member' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
+    (role === 'admin' ? 'background:var(--ai-bg);color:var(--ai)' : role === 'maintainer' ? 'background:var(--prod-bg);color:var(--prod)' : role === 'editor' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)');
   const input = 'height:30px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px';
   const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
   return (
     <>
-      <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
-        <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Members</div>
-        {members.data.map((m) => (
-          <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
-            <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
-            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.email}</span>
-            <span style={sx('flex:1')} />
-            <span style={sx(roleChip(m.role))}>{m.role}</span>
-          </div>
-        ))}
-        {members.data.length === 0 && (
-          <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>No members yet.</div>
-        )}
-      </div>
+      {members.data && (
+        <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
+          <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Members</div>
+          {members.data.map((m) => (
+            <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
+              <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.email}</span>
+              <span style={sx('flex:1')} />
+              <span style={sx(roleChip(m.role))}>{m.role}</span>
+            </div>
+          ))}
+          {members.data.length === 0 && (
+            <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>No members yet.</div>
+          )}
+        </div>
+      )}
 
+      {repos.length > 0 && (
       <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
         <div style={sx("display:flex;align-items:center;gap:10px;padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)")}>
           <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Repository access</span>
@@ -211,7 +217,8 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
             onChange={(e) => setForm({ ...form, user: e.target.value })} style={sx(input + ';flex:1;min-width:200px')} />
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={sx(input + ';width:110px')}>
             <option value="viewer">viewer</option>
-            <option value="member">member</option>
+            <option value="editor">editor</option>
+            <option value="maintainer">maintainer</option>
           </select>
           <button type="submit" disabled={add.isPending || !active}
             style={sx('height:30px;padding:0 14px;border:none;border-radius:7px;background:var(--brand);color:var(--brand-fg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
@@ -220,6 +227,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
           {notice && <div style={sx('flex-basis:100%;font-size:11.5px;color:var(--text-2)')}>{notice}</div>}
         </form>
       </div>
+      )}
     </>
   );
 }

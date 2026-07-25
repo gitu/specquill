@@ -102,7 +102,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, map[string]any{
 		"id": u.ID, "name": u.Name, "email": u.Email, "provider": u.Provider,
-		"initials": initialsOf(u.Name), "role": role,
+		"initials": initialsOf(u.Name), "role": role.String(),
 	})
 }
 

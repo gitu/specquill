@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
@@ -43,7 +44,7 @@ func shareResp(l *store.ShareLink) map[string]any {
 // shareAccess resolves the project of {repo} and gates on the effective
 // per-repo role (share links are repo-scoped, so deployment-level roleH
 // would wrongly deny grant-only members).
-func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole string) bool {
+func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) bool {
 	id := r.PathValue("repo")
 	p, ok := s.projectByID(id)
 	if !ok {
@@ -51,8 +52,8 @@ func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole str
 		return false
 	}
 	u := auth.UserFrom(r.Context())
-	if roleRank[s.effectiveRepoRole(u, p.Repo.Cfg.ID)] < roleRank[minRole] {
-		jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+	if s.effectiveRepoRole(u, p.Repo.Cfg.ID) < minRole {
+		jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
 		return false
 	}
 	return true
@@ -60,7 +61,7 @@ func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole str
 
 // GET /api/repos/{repo}/share — the project's current share link, if any.
 func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
-	if !s.shareAccess(w, r, "viewer") {
+	if !s.shareAccess(w, r, authz.Viewer) {
 		return
 	}
 	l, err := s.store.ShareLink(r.PathValue("repo"))
@@ -73,7 +74,7 @@ func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/repos/{repo}/share — mint (or rotate) the share token.
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
-	if !s.shareAccess(w, r, "member") {
+	if !s.shareAccess(w, r, authz.Maintainer) {
 		return
 	}
 	id := r.PathValue("repo")
@@ -98,7 +99,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/share — revoke the link.
 func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
-	if !s.shareAccess(w, r, "member") {
+	if !s.shareAccess(w, r, authz.Maintainer) {
 		return
 	}
 	if err := s.store.DeleteShareLink(r.PathValue("repo")); err != nil {
