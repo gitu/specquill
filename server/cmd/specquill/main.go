@@ -69,11 +69,7 @@ func openStore(cfg *config.Config) (*store.Store, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
 	}
-	dsn, err := cfg.Database.DSN()
-	if err != nil {
-		return nil, err
-	}
-	return store.Open(dsn)
+	return store.Open(cfg.Database.Path)
 }
 
 func serve(configPath string, dev bool) error {

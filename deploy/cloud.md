@@ -1,5 +1,22 @@
 # Deploying SpecQuill to Cloud Run
 
+> **⚠️ This recipe needs a hosting decision before it works again.**
+> The store is now an embedded SQLite file inside `data_dir`
+> (2026-07-25), and **Cloud Run's filesystem is ephemeral** — every revision
+> rollout would discard users, sessions, PRs, approvals and collab logs.
+> Cloud Run offers no persistent block storage, and SQLite is not safe on
+> its GCS-FUSE or NFS volume mounts (neither gives SQLite the file locking
+> it needs). So pick one:
+>
+> - **host with a real disk** — a small GCE VM, Fly.io volume, Railway/Hetzner
+>   container with a persistent volume — and follow [local.md](local.md),
+>   which is the supported shape; or
+> - **keep Cloud Run** and reintroduce a networked database (a Postgres/Neon
+>   store is what this recipe used until 2026-07-25 — see git history).
+>
+> Everything below still describes the image-build and rollout machinery
+> accurately; only the storage layer is unresolved.
+
 Same pipeline as pert.li — **the image is built once, by GitHub, not by
 Google Cloud.** The [`Docker` workflow](../.github/workflows/docker.yml) builds
 the multi-stage `Dockerfile` (SPA → embedded Go binary → alpine+git) and
@@ -40,23 +57,20 @@ deploy cleanly.
   `api_key_env`) and mounted from Secret Manager by the deploy step. To change
   config: edit, commit, push (staging updates on the next main build).
   **Before the first deploy** fill in the real `base_url`, the writable repo
-  `remote`, the GitHub OAuth `client_id` + `allowed_users`, and
-  `admin_emails`.
-- **The store is Postgres — use Neon in production.** Users, sessions, PRs,
+  `remote`, the OIDC issuer + `client_id`, and `admin_emails`.
+- **The store is SQLite at `<data_dir>/specquill.db`.** Users, sessions, PRs,
   review comments, approvals, workspace-branch claims and the collab update
-  logs all live in the database referenced by the `SPECQUILL_DATABASE_URL`
-  secret (a Neon connection string, `sslmode=require`). All of that survives
-  instance replacement.
+  logs all live in that one file. It is **not** rebuildable, so it must sit on
+  storage that survives instance replacement — see the banner above.
 - **`--max-instances=1` is still a hard requirement**, already set in
   `cloudbuild.yaml`: the collab hub (Yjs relay rooms + websockets) is
   in-process and the git worktrees are on local disk. Do not raise it.
-- **`data_dir` is ephemeral on Cloud Run — and that's now OK.** It holds only
-  the bare clones and worktrees, re-cloned from the real remote on boot.
-  Committed content is on the remote; roomed (co-editing) drafts replay from
-  the collab log in Postgres. The only thing an instance replacement can drop
-  is a plain uncommitted worktree draft (last autosave since the previous
-  commit) on a branch with no live room. `_MIN_INSTANCES=1` (the prod default
-  here) keeps the instance warm so that only happens on revision rollouts.
+- **`data_dir` must now be persistent.** It holds the bare clones and
+  worktrees (rebuildable — re-cloned from the remote on boot) *and*
+  `specquill.db` (not rebuildable). Committed content is always safe on the
+  remote; what an ephemeral disk would additionally lose is every account,
+  session and review artifact. `_MIN_INSTANCES=1` (the prod default here)
+  keeps the instance warm, but that is a latency setting, not durability.
 - **ghcr package visibility**: with a public package the AR remote proxy
   needs no upstream credentials (skip step 2b). If the package is private,
   step 2b is mandatory.
@@ -102,53 +116,36 @@ deploy cleanly.
      --remote-password-secret-version=projects/${PROJECT_ID}/secrets/ghcr-pull-token/versions/latest
    ```
 
-3. **Register the GitHub OAuth app** (app sign-in — users log in with their
-   GitHub account). Under *GitHub → Settings → Developer settings → OAuth
-   Apps → New OAuth App* (register it on the org if the workspace belongs to
-   one):
+3. **Register the deployment with your IdP** (users sign in through the
+   tenant's own OIDC provider):
 
-   - Homepage URL: your `base_url` (the Cloud Run URL until a domain is mapped)
-   - **Authorization callback URL: `<base_url>/auth/github/callback`**
-   - Generate a client secret; the client id goes into
-     `deploy/specquill.cloud.yml` (`auth.github.client_id`), the secret into
-     Secret Manager below.
+   - **Redirect/callback URL: `<base_url>/auth/callback`**
+   - The issuer and client id go into `deploy/specquill.cloud.yml`
+     (`auth.oidc.issuer` / `client_id`), the client secret into Secret
+     Manager below.
 
-   Staging needs its own OAuth app (GitHub allows one callback URL per app) —
-   or add the staging URL to a second app and point the staging trigger's
-   `_GH_SECRET_NAME` at its secret.
+   Staging registers its own client (its `base_url` differs) and points the
+   staging trigger's `_OIDC_SECRET_NAME` at that secret.
 
    Then **create the runtime secrets** (mounted as env vars on the service;
    the names must match the `_*_SECRET` substitutions / the env names in
    `deploy/specquill.cloud.yml`):
 
    ```bash
-   # git push/fetch PAT — OPTIONAL once the GitHub App is registered ("Multi-
-   # tenant hosting" below): repos the app is installed on authenticate with
-   # installation tokens; the PAT only covers repos outside the installation
-   # or on non-GitHub hosts
-   echo -n 'ghp_…git-push-fetch-token…'   | gcloud secrets create SPECQUILL_TOKEN --data-file=-
-   echo -n '…github-oauth-client-secret…' | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
-   echo -n 'AIza…copilot-api-key…'        | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
-   # push-webhook HMAC secret (used again when registering the webhook below)
-   WEBHOOK_SECRET=$(openssl rand -hex 32)
-   echo -n "$WEBHOOK_SECRET" | gcloud secrets create SPECQUILL_GH_WEBHOOK_SECRET --data-file=-
-   # Neon: project → connection string (pooled is fine; keep sslmode=require)
-   echo -n 'postgres://…@…neon.tech/specquill?sslmode=require' | \
-     gcloud secrets create SPECQUILL_DATABASE_URL --data-file=-
+   # git push/fetch token for https remotes (ssh remotes use the agent instead)
+   echo -n 'ghp_…git-push-fetch-token…' | gcloud secrets create SPECQUILL_TOKEN --data-file=-
+   echo -n '…oidc-client-secret…'       | gcloud secrets create SPECQUILL_OIDC_SECRET --data-file=-
+   echo -n 'AIza…copilot-api-key…'      | gcloud secrets create SPECQUILL_AI_KEY --data-file=-
    ```
 
-   **Staging gets its own set** — at minimum a distinct database so staging
-   never touches prod data (a [Neon branch](https://neon.com/docs/introduction/branching)
-   of the prod database is the cheap way to get one):
+   **Staging gets its own set** — at minimum its own storage and its own specs
+   repo, so it never touches prod data. Point the staging trigger's
+   `_TOKEN_SECRET`/… at the staging entries; omitted overrides fall back to
+   the prod defaults in `cloudbuild.yaml`.
 
-   ```bash
-   echo -n 'postgres://…staging-branch…?sslmode=require' | \
-     gcloud secrets create SPECQUILL_DATABASE_URL_STAGING --data-file=-
-   ```
-
-   Point the staging trigger's `_DATABASE_URL_SECRET` (and `_TOKEN_SECRET`/…
-   if staging writes a different specs repo) at the staging entries — omitted
-   overrides fall back to the prod defaults in `cloudbuild.yaml`.
+   > The store secret that used to live here (`SPECQUILL_DATABASE_URL`, a Neon
+   > DSN) is gone with the Postgres removal — storage is now a file on the
+   > volume, which is exactly the open question in the banner at the top.
 
 4. **Create the deploy service account** (Cloud Build triggers here must run
    as an explicit SA):
@@ -212,7 +209,7 @@ deploy cleanly.
      --name=specquill-deploy-staging --region=europe-west1 \
      --repository="$REPO" --branch=main --build-config=cloudbuild.yaml \
      --service-account="$DEPLOYER_RES" \
-     --substitutions=_SERVICE=specquill-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/specquill,_DATABASE_URL_SECRET=SPECQUILL_DATABASE_URL_STAGING
+     --substitutions=_SERVICE=specquill-staging,_VERSION_GATE=off,_MIN_INSTANCES=0,_GHCR_IMAGE=gitu/specquill,_TOKEN_SECRET=SPECQUILL_TOKEN_STAGING
 
    # prod — run by GitHub on a v* tag (cloudbuild.yaml defaults are prod)
    gcloud builds triggers create manual \
@@ -236,108 +233,25 @@ deploy cleanly.
    Run domain mappings and set `base_url` in `deploy/specquill.cloud.yml`
    accordingly (OIDC redirect URLs + cookies depend on it).
 
-## Push webhooks (instant sync)
-
-Without a webhook the server polls: the writable project repo is fetched
-every 2 minutes (`sync_interval`, per project), read-only sources on their
-own interval — external pushes show up within that window. With
-`webhooks.github` enabled (the cloud config default), a **repository
-webhook on the specs repo** makes them land immediately:
-
-```bash
-gh api repos/OWNER/SPECS-REPO/hooks -f name=web -F active=true \
-  -f 'events[]=push' \
-  -f config.url="<base_url>/hooks/github" \
-  -f config.content_type=json \
-  -f config.secret="$WEBHOOK_SECRET"     # the SPECQUILL_GH_WEBHOOK_SECRET value
-```
-
-Register after the first deploy (the URL must exist). The endpoint is
-sessionless — the HMAC-SHA256 signature is the authentication; a push to a
-registered repo's remote triggers a targeted fetch and, for the default
-branch, a fast-forward of the served state. Add the same webhook to any
-read-only git source repos you want instant too. GitHub's *Recent
-Deliveries* tab on the webhook shows the responses
-(`{"ok":true,"matched":1}` on success); the polling interval remains the
-backstop if a delivery is ever missed.
-
 ## Authentication & tenant configuration
 
-**Who can log in.** `auth.github.allowed_users` is the gate: only the listed
-GitHub handles may sign in (case-insensitive). An empty list admits **any
-GitHub account** — never ship that on a public URL. Denied users land on the
-login page with an explanatory error.
+**Who can log in.** Whoever the configured OIDC issuer lets in — one
+deployment serves one tenant, so the tenant's own IdP is the gate. Set
+`auth.default_role: none` to admit users but grant repository access
+explicitly (per-repo grants, REQ-020).
 
-**Who administers.** Everyone who logs in is auto-enrolled into the built-in
-`default` tenant as a **member** (edit, commit, PRs). `auth.admin_emails`
-promotes matching users (any provider, matched on email) to **admin** on
-login — admins manage projects, sources and grants via the Admin view /
-management API. Set at least your own email before the first deploy, or the
-instance has no administrator.
+**Who administers.** Everyone who logs in is auto-enrolled with
+`auth.default_role` (**member** by default: edit, commit, PRs).
+`auth.admin_emails` promotes matching users (any provider, matched on email)
+to **admin** on login — admins manage projects, sources and grants via the
+Admin view / management API. Set at least your own email before the first
+deploy, or the instance has no administrator.
 
-**The tenant itself** is implicit in self-host mode: the YAML `projects:` /
-`sources:` / `grants:` lists sync into the single `default` tenant at boot
-(config-managed rows), and admins can add more at runtime through the
-management API (api-managed rows persist across boots). Roles are per-tenant:
-`viewer < member < admin`; change them with
-`store.SetMemberRole` semantics via the admin API. True multi-tenancy (one
-tenant per GitHub App installation, roles derived from GitHub repo
-permissions) is designed in [the multi-tenancy design](../repo-product/docs/specs/specs/multi-tenancy.md)
-and blocked only on a GitHub App registration — the OAuth login shipped here
-is forward-compatible with it (`users.provider='github'`, subject = GitHub
-user id).
-
-## Multi-tenant hosting (GitHub App)
-
-Beyond the single config tenant, SpecQuill can host one tenant per **GitHub
-App installation** (see [the multi-tenancy design](../repo-product/docs/specs/specs/multi-tenancy.md)).
-
-**Register the app** with the manifest flow — one browser click, `gh` does
-the rest:
-
-```bash
-gh auth status                       # any authenticated gh will do
-deploy/gh-app-setup.sh --url https://specquill.example.com   # --org my-org for an org-owned app
-```
-
-The script serves a pre-filled manifest (permissions **Contents: rw, Pull
-requests: rw, Metadata: r**; webhook `<base_url>/hooks/github`; event
-`push` — `installation`/`installation_repositories` are delivered to apps
-automatically), you press *Create GitHub App* on github.com, and the
-returned one-hour code is converted via
-`gh api --method POST /app-manifests/<code>/conversions` into the full
-credential set. It writes the private-key PEM to disk and prints
-ready-to-paste output: the `auth.github` + `github_app:` YAML block, env
-exports for self-hosting, and the Secret Manager commands:
-
-```bash
-gcloud secrets create SPECQUILL_GH_APP_KEY --data-file=specquill-gh-app.<id>.private-key.pem
-printf %s '…webhook-secret…' | gcloud secrets create SPECQUILL_GH_APP_WEBHOOK_SECRET --data-file=-
-printf %s '…client-secret…'  | gcloud secrets create SPECQUILL_GH_CLIENT_SECRET --data-file=-
-```
-
-Uncomment `github_app:` in `deploy/specquill.cloud.yml` (app id from the
-script output), add the secrets to `--set-secrets` via trigger
-substitutions, and redeploy. Then **install the app**
-(`https://github.com/apps/<slug>/installations/new`) on the org or account
-whose repos it should host — the installation webhook creates the tenant.
-From then on:
-
-- **Installing the app** on an org/account creates its tenant automatically
-  (webhook); uninstalling revokes all its memberships immediately.
-- **Roles are derived, never assigned**: repo `admin` → tenant admin,
-  `write` → member, `read` → viewer, synced on login with a 5-minute cache.
-  On a fresh installation the org admin bootstraps as tenant admin from the
-  installation's repos and uses the Admin view's **GitHub repositories**
-  panel to adopt repos as workspaces or reference sources.
-- **Git authenticates with installation tokens** (1h, cached, per tenant) —
-  no PATs for github tenants. The **config tenant's github.com repos ride
-  the app too**: install the app on them and the server resolves the
-  covering installation per repo (`GET /repos/{owner}/{repo}/installation`,
-  cached) and mints its token. `SPECQUILL_TOKEN` remains only as the
-  fallback for repos the app is not installed on and non-GitHub remotes.
-- Users with multiple memberships get a **tenant switcher** in the top bar;
-  the SPA pins `X-SpecQuill-Tenant` on every call.
+**The workspace itself** comes from the YAML `projects:` / `sources:` lists,
+which sync into the registry at boot (config-managed rows); admins can add
+more at runtime through the management API (api-managed rows persist across
+boots). Roles are deployment-wide — `viewer < member < admin` on the user
+row — with per-repo grants layered on top.
 
 ## Local smoke test of the production image
 
@@ -347,7 +261,7 @@ docker run --rm -p 8080:8080 \
   -e SPECQUILL_TOKEN='ghp_…' \
   -e SPECQUILL_OIDC_SECRET='…' \
   -e SPECQUILL_AI_KEY='…' \
-  -e SPECQUILL_DATABASE_URL='postgres://…?sslmode=require' \
+  -v specquill-data:/var/lib/specquill \
   specquill:local
 ```
 

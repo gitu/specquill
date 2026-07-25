@@ -1,24 +1,25 @@
-# Cloud Run runtime config — baked into the image by the Dockerfile
+# Hosted runtime config — baked into the image by the Dockerfile
 # (→ /etc/specquill/specquill.yml). NO SECRETS IN THIS FILE: every credential is
-# referenced by env-var NAME only and injected at deploy time from Secret
-# Manager (cloudbuild.yaml --set-secrets). Edit + commit to change; the next
-# push to main rolls it out to staging.
+# referenced by env-var NAME only and injected at deploy time from the
+# platform's secret store. Edit + commit to change; the next push to main
+# rolls it out to staging.
+#
+# REQUIRES A PERSISTENT VOLUME at data_dir — it holds both the git clones
+# (rebuildable) and specquill.db (NOT rebuildable: users, sessions, PRs,
+# approvals, collab logs). See cloud.md.
 
-listen: ":8080"                    # Cloud Run's default $PORT
-data_dir: /var/lib/specquill         # git clones/worktrees; ephemeral — see DEPLOY.md
-base_url: https://specquill.example.com   # the Cloud Run URL / mapped domain
+listen: ":8080"
+data_dir: /var/lib/specquill        # persistent volume — clones + specquill.db
+base_url: https://specquill.example.com
 
-# durable store (Neon): users, sessions, PRs, review state, collab logs
-database:
-  url_env: SPECQUILL_DATABASE_URL
+# store: <data_dir>/specquill.db by default — no `database:` block needed.
 
-repos:
+projects:
   # exactly one writable repo is the editing workspace
   - id: workspace
-    mode: writable
     remote: https://github.com/OWNER/SPECS-REPO.git
     default_branch: main
-    token_env: SPECQUILL_TOKEN       # push/fetch token, from Secret Manager
+    token_env: SPECQUILL_TOKEN       # push/fetch token, from the secret store
 
 git:
   # service identity — recorded as a Co-authored-by trailer; the logged-in
@@ -27,47 +28,23 @@ git:
   committer_email: specquill@example.com
 
 auth:
-  # sign in with GitHub (OAuth app; register at github.com/settings/developers
-  # with callback <base_url>/auth/github/callback — see DEPLOY.md)
-  github:
+  # one deployment per tenant: authenticate against the tenant's own IdP
+  oidc:
     enabled: true
-    client_id: Iv23li_CHANGE_ME
-    client_secret_env: SPECQUILL_GH_CLIENT_SECRET
-    # only these GitHub accounts may log in — an empty list admits ANY
-    # GitHub user, which on a public URL means the whole internet
-    allowed_users: [OWNER]
-  # generic OIDC stays available as an alternative/side-by-side IdP:
-  # oidc:
-  #   enabled: true
-  #   issuer: https://login.example.com
-  #   client_id: specquill
-  #   client_secret_env: SPECQUILL_OIDC_SECRET
-  #   scopes: [openid, profile, email]
+    issuer: https://login.example.com
+    client_id: specquill
+    client_secret_env: SPECQUILL_OIDC_SECRET
+    scopes: [openid, profile, email]
   local:
-    enabled: false                 # no local fallback logins in the cloud
-  # bootstrap tenant administration: these users get the admin role in the
-  # default tenant on login (projects/sources/grants management API + UI)
+    enabled: false                   # no password logins in a hosted deployment
+  # bootstrap administration: these users get the admin role on login
+  # (projects/sources/grants management API + UI)
   admin_emails: [you@example.com]
+  # default_role: member             # or viewer / none (grants-only access)
 
 session:
   ttl: 10m
   cookie_secure: true
-
-# push webhooks: a repo webhook on the specs repo pointed at
-# <base_url>/hooks/github makes external pushes visible immediately
-# (the 2-minute sync interval remains the backstop) — see DEPLOY.md
-webhooks:
-  github:
-    enabled: true
-    secret_env: SPECQUILL_GH_WEBHOOK_SECRET
-
-# GitHub-App tenant management (multi-tenant hosting): each installation
-# becomes a tenant, roles derive from GitHub repo permissions, installation
-# tokens authenticate git. Uncomment after registering the app — DEPLOY.md.
-# github_app:
-#   app_id: 12345
-#   private_key_env: SPECQUILL_GH_APP_KEY
-#   webhook_secret_env: SPECQUILL_GH_APP_WEBHOOK_SECRET
 
 ai:
   enabled: true

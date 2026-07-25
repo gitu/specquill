@@ -44,10 +44,10 @@ func (s *Store) SyncProjects(projects []Project) error {
 	now := time.Now().Unix()
 	keep := []any{}
 	for _, p := range projects {
-		if _, err := tx.Exec(rebind(`INSERT INTO projects (project_id, repo_id, content_root, managed_by, created_at)
+		if _, err := tx.Exec(`INSERT INTO projects (project_id, repo_id, content_root, managed_by, created_at)
 			VALUES (?, ?, ?, 'config', ?)
 			ON CONFLICT(project_id) DO UPDATE SET
-			  repo_id = excluded.repo_id, content_root = excluded.content_root, managed_by = 'config'`),
+			  repo_id = excluded.repo_id, content_root = excluded.content_root, managed_by = 'config'`,
 			p.ProjectID, p.RepoID, p.ContentRoot, now); err != nil {
 			return err
 		}
@@ -57,7 +57,7 @@ func (s *Store) SyncProjects(projects []Project) error {
 	if len(projects) > 0 {
 		q += " AND project_id NOT IN (?" + repeat(",?", len(projects)-1) + ")"
 	}
-	if _, err := tx.Exec(rebind(q), keep...); err != nil {
+	if _, err := tx.Exec(q, keep...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -118,12 +118,12 @@ func (s *Store) SyncSources(sources []Source) error {
 	now := time.Now().Unix()
 	keep := []any{}
 	for _, src := range sources {
-		if _, err := tx.Exec(rebind(`INSERT INTO sources (name, kind, remote, token_env, default_branch, sync_interval, managed_by, created_at)
+		if _, err := tx.Exec(`INSERT INTO sources (name, kind, remote, token_env, default_branch, sync_interval, managed_by, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, 'config', ?)
 			ON CONFLICT(name) DO UPDATE SET
 			  kind = excluded.kind, remote = excluded.remote, token_env = excluded.token_env,
 			  default_branch = excluded.default_branch, sync_interval = excluded.sync_interval,
-			  managed_by = 'config'`),
+			  managed_by = 'config'`,
 			src.Name, src.Kind, src.Remote, src.TokenEnv, src.DefaultBranch, src.SyncInterval, now); err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (s *Store) SyncSources(sources []Source) error {
 	if len(sources) > 0 {
 		q += " AND name NOT IN (?" + repeat(",?", len(sources)-1) + ")"
 	}
-	if _, err := tx.Exec(rebind(q), keep...); err != nil {
+	if _, err := tx.Exec(q, keep...); err != nil {
 		return err
 	}
 	return tx.Commit()

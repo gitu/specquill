@@ -149,8 +149,8 @@ func (s *Store) ClaimGrantInvites(userID int64, email string) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(rebind(`SELECT id, repo_id, role, granted_by FROM repo_grant_invites
-		WHERE matcher = ?`),
+	rows, err := tx.Query(`SELECT id, repo_id, role, granted_by FROM repo_grant_invites
+		WHERE matcher = ?`,
 		email)
 	if err != nil {
 		return err
@@ -179,12 +179,12 @@ func (s *Store) ClaimGrantInvites(userID int64, email string) error {
 	}
 	now := time.Now().Unix()
 	for _, c := range claims {
-		if _, err := tx.Exec(rebind(`INSERT INTO repo_grants (repo_id, user_id, role, granted_by, created_at)
-			VALUES (?, ?, ?, NULLIF(?, 0), ?) ON CONFLICT(repo_id, user_id) DO NOTHING`),
+		if _, err := tx.Exec(`INSERT INTO repo_grants (repo_id, user_id, role, granted_by, created_at)
+			VALUES (?, ?, ?, NULLIF(?, 0), ?) ON CONFLICT(repo_id, user_id) DO NOTHING`,
 			c.repoID, userID, c.role, c.grantedBy, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(rebind("DELETE FROM repo_grant_invites WHERE id = ?"), c.id); err != nil {
+		if _, err := tx.Exec("DELETE FROM repo_grant_invites WHERE id = ?", c.id); err != nil {
 			return err
 		}
 	}

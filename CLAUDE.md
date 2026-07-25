@@ -12,7 +12,7 @@ from the code.
 - Start: `./server/specquill -config specquill.dev.yml -dev` — the `-dev` flag
   auto-authenticates every request as `auth.dev_user` ("Flo Dev", workspace
   branch `ws/dev`) and bypasses session TTLs.
-- **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts postgres, `air`
+- **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts `air`
   (rebuilds/restarts the Go server on save; a bare `touch` does NOT trigger it,
   air ignores chmod-only events), and vite HMR on :5173 (proxies /api+/auth,
   ws included). In this mode browse the **vite port** — :8643 still serves
@@ -22,21 +22,24 @@ from the code.
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
 - `pkill specquill` matches the wrapper shell (exit 143) — use `pkill -x specquill`.
-- **The store is Postgres** (users, sessions, PRs, collab room logs), NOT in
-  `data/`: dev runs the compose container on **:5433**
-  (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
-  `specquill.dev.yml`). Go tests need it too (they skip without it; isolation is
-  a throwaway schema per test via `store.OpenTest`). Neon in production.
+- **The store is embedded SQLite** (users, sessions, PRs, collab room logs) at
+  `<data_dir>/specquill.db` = `data/runtime/specquill.db` in dev — no service
+  to start, nothing in docker compose. Go tests get a throwaway DB per test
+  via `store.OpenTest` and never skip. WAL mode, so `specquill.db-wal` /
+  `-shm` sidecars sit next to it; `PRAGMA foreign_keys=ON` and
+  `_txlock=immediate` are set in `store.Open` and the grant cascades depend
+  on the former.
 - Repo clones/worktrees live under `data/runtime/repos/<repo>/`; the
   canonical repo key in DB rows and room keys is the plain repo id, e.g.
   `trading-specs` (single-tenant since July 2026).
 - `make dev-samples` adds two EXTRA sample projects (`sample-payments`,
   `sample-onboarding`) with real multi-commit/multi-author history — for
   testing history-aware features; auto-registers via the management API when
-  the dev server is up. Survives until the next postgres schema reset.
+  the dev server is up. Survives until the next store reset.
 - Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
-  — the fixture script also drops+recreates the postgres schema; `rm -rf
-  data/runtime` alone does NOT clear sessions/PRs anymore.
+  — with the store inside `data/runtime`, removing that directory now clears
+  sessions/PRs/collab logs too (the fixture script also deletes the DB, so
+  fixtures and store can't drift apart).
 - Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
   (it self-skips unless the configured model is `mock-1`).
@@ -79,7 +82,7 @@ from the code.
   up — it goes green on the next interval or a manual `POST /api/sources/platform-api/sync`
   (or the Admin "Sync now" button).
 - **Protected main**: the default branch is never edited; the first edit
-  auto-creates/switches to the caller's `ws/<user>` branch (claimed in Postgres).
+  auto-creates/switches to the caller's `ws/<user>` branch (claimed in the store).
   Direct writes to protected branches 403 (`protected_branch`).
 - **Worktree = draft store**: saves are uncommitted changes on a per-branch
   worktree; explicit Commit turns them into history.
@@ -88,7 +91,7 @@ from the code.
   `Co-authored-by:` trailer, alongside trailers for collab contributors.
 - **CRDT co-editing**: markdown files in edit mode join a Yjs room per
   (branch, path). The server is a dumb relay (`internal/collab`) — opaque
-  update log in Postgres, replay to joiners, leader flushes serialized markdown
+  update log in the store, replay to joiners, leader flushes serialized markdown
   to the worktree. While a room is live it OWNS the file: direct PUTs 409
   (`room_active`), pulls/workspace-ffs on that branch are withheld.
 - **Byte fidelity**: untouched documents save byte-identical; only real user

@@ -28,11 +28,11 @@ func (s *Store) SyncRepos(repos []RepoRow) error {
 	now := time.Now().Unix()
 	keep := make([]any, 0, len(repos))
 	for _, r := range repos {
-		if _, err := tx.Exec(rebind(`INSERT INTO repos (repo_id, mode, remote, default_branch, created_at)
+		if _, err := tx.Exec(`INSERT INTO repos (repo_id, mode, remote, default_branch, created_at)
 			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT(repo_id) DO UPDATE SET
 			  mode = excluded.mode, remote = excluded.remote,
-			  default_branch = excluded.default_branch`),
+			  default_branch = excluded.default_branch`,
 			r.RepoID, r.Mode, r.Remote, r.DefaultBranch, now); err != nil {
 			return err
 		}
@@ -42,7 +42,7 @@ func (s *Store) SyncRepos(repos []RepoRow) error {
 	if len(repos) > 0 {
 		q += " AND repo_id NOT IN (?" + repeat(",?", len(repos)-1) + ")"
 	}
-	if _, err := tx.Exec(rebind(q), keep...); err != nil {
+	if _, err := tx.Exec(q, keep...); err != nil {
 		return err
 	}
 	return tx.Commit()

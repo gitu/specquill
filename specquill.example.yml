@@ -4,11 +4,12 @@ listen: ":8080"
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
 base_url: https://specquill.example.com
 
-# Postgres store: users, sessions, PR review state, collab logs. The DSN
-# carries credentials, so production must pass it via env (works great with
-# a serverless Postgres like Neon).
-database:
-  url_env: SPECQUILL_DATABASE_URL   # e.g. postgres://…neon.tech/specquill?sslmode=require
+# Store (users, sessions, PR review state, collab logs): an embedded SQLite
+# file. Defaults to <data_dir>/specquill.db, so this block is optional — set
+# it only to place the DB on another volume. Back it with persistent storage:
+# unlike data_dir's clones, it is not rebuildable.
+# database:
+#   path: /var/lib/specquill/specquill.db
 
 # projects are writable editing workspaces (a git repo, optionally rooted at a
 # content_root subfolder for monorepos)

@@ -1,4 +1,4 @@
-// Package store wraps the Postgres database holding users, sessions and PR
+// Package store wraps the SQLite database holding users, sessions and PR
 // review metadata. Workspace content never lands here — it stays in git.
 package store
 
@@ -9,11 +9,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
+	"os"
+	"path/filepath"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite" // cgo-free SQLite driver, registered as "sqlite"
 )
 
 //go:embed schema.sql
@@ -34,17 +34,38 @@ type User struct {
 	Role     string `json:"role"` // deployment role: admin | member | viewer | '' (not enrolled)
 }
 
-// Open connects to Postgres (any pgx-parseable DSN/URL, e.g. a Neon URL)
-// and applies the idempotent schema.
-func Open(dsn string) (*Store, error) {
-	db, err := sql.Open("pgx", dsn)
+// Open opens (creating it and its parent directory if needed) the SQLite
+// database at path and applies the idempotent schema.
+//
+// Pragmas: WAL so a reader never blocks the writer, foreign_keys because the
+// grant cascades rely on them (SQLite defaults them OFF), busy_timeout as a
+// belt-and-braces wait, and synchronous=NORMAL — the safe pairing with WAL
+// (a crash can cost the last commits, never the file; everything durable is
+// in git anyway).
+func Open(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	// _txlock=immediate: transactions take the write lock up front, so a
+	// read-then-write transaction (e.g. CreatePR's MAX(number)+1) can never
+	// be overtaken between its read and its insert.
+	db, err := sql.Open("sqlite", path+
+		"?_pragma=journal_mode(WAL)"+
+		"&_pragma=foreign_keys(1)"+
+		"&_pragma=busy_timeout(5000)"+
+		"&_pragma=synchronous(NORMAL)"+
+		"&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(4)
-	// serverless Postgres (Neon) closes idle conns; don't hold them forever
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	// One connection: SQLite takes a single writer anyway, and serializing
+	// here removes SQLITE_BUSY as a failure mode entirely. Safe because no
+	// query path holds open rows (or a transaction) across another query —
+	// every store method drains and closes before returning.
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(0)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -54,31 +75,9 @@ func Open(dsn string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// rebind rewrites `?` placeholders to Postgres $N so query text stays terse.
-// None of our SQL carries `?` inside literals.
-func rebind(q string) string {
-	if !strings.ContainsRune(q, '?') {
-		return q
-	}
-	var b strings.Builder
-	n := 0
-	for i := 0; i < len(q); i++ {
-		if q[i] == '?' {
-			n++
-			b.WriteByte('$')
-			b.WriteString(strconv.Itoa(n))
-		} else {
-			b.WriteByte(q[i])
-		}
-	}
-	return b.String()
-}
-
-func (s *Store) exec(q string, args ...any) (sql.Result, error) { return s.db.Exec(rebind(q), args...) }
-func (s *Store) query(q string, args ...any) (*sql.Rows, error) {
-	return s.db.Query(rebind(q), args...)
-}
-func (s *Store) queryRow(q string, args ...any) *sql.Row { return s.db.QueryRow(rebind(q), args...) }
+func (s *Store) exec(q string, args ...any) (sql.Result, error) { return s.db.Exec(q, args...) }
+func (s *Store) query(q string, args ...any) (*sql.Rows, error) { return s.db.Query(q, args...) }
+func (s *Store) queryRow(q string, args ...any) *sql.Row        { return s.db.QueryRow(q, args...) }
 
 // ---------------------------------------------------------------- users
 

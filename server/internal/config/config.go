@@ -122,28 +122,13 @@ type SessionConfig struct {
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
 
-// DatabaseConfig locates the Postgres store (users, sessions, PR review
-// state, collab logs). Production configs must use url_env so the DSN —
-// which carries credentials — never lives in a file.
+// DatabaseConfig locates the SQLite store (users, sessions, PR review state,
+// collab logs) — a single file, by default inside data_dir, so a deployment
+// has no service to operate beside the binary. Load() resolves Path to an
+// absolute location; back it with a persistent volume, since the same disk
+// already holds the worktree drafts.
 type DatabaseConfig struct {
-	URL    string `yaml:"url"`     // local dev only (compose postgres, no secrets)
-	URLEnv string `yaml:"url_env"` // env var holding the DSN (e.g. a Neon URL)
-}
-
-// DSN resolves the connection string; the env var wins when set.
-func (d DatabaseConfig) DSN() (string, error) {
-	if d.URLEnv != "" {
-		if v := os.Getenv(d.URLEnv); v != "" {
-			return v, nil
-		}
-		if d.URL == "" {
-			return "", fmt.Errorf("database.url_env: %s is not set", d.URLEnv)
-		}
-	}
-	if d.URL != "" {
-		return d.URL, nil
-	}
-	return "", fmt.Errorf("database.url or database.url_env is required")
+	Path string `yaml:"path"` // default: <data_dir>/specquill.db
 }
 
 // AIConfig points the copilot at any OpenAI-compatible chat-completions API
@@ -198,6 +183,11 @@ func Load(path string) (*Config, error) {
 	// resolve relative paths against the config file's directory
 	base := filepath.Dir(path)
 	cfg.DataDir = absAgainst(base, cfg.DataDir)
+	if cfg.Database.Path == "" {
+		cfg.Database.Path = filepath.Join(cfg.DataDir, "specquill.db")
+	} else {
+		cfg.Database.Path = absAgainst(base, cfg.Database.Path)
+	}
 	for i := range cfg.Projects {
 		if looksLikePath(cfg.Projects[i].Remote) {
 			cfg.Projects[i].Remote = absAgainst(base, cfg.Projects[i].Remote)
@@ -317,9 +307,6 @@ func (c *Config) validate() error {
 	case "", "member", "viewer", "none":
 	default:
 		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
-	}
-	if c.Database.URL == "" && c.Database.URLEnv == "" {
-		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")
 	}
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")

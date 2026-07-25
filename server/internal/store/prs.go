@@ -44,19 +44,18 @@ func (s *Store) CreatePR(repo, title, body, source, target string, authorID int6
 		return nil, err
 	}
 	defer tx.Rollback()
-	// serialize number assignment per repo — MAX()+1 under concurrency would
-	// otherwise race into the UNIQUE(repo, number) constraint
-	if _, err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext($1))", repo); err != nil {
-		return nil, err
-	}
+	// MAX()+1 must not race another writer into the UNIQUE(repo, number)
+	// constraint. Transactions are BEGIN IMMEDIATE (_txlock in the DSN), so
+	// this one already holds the write lock — the read below cannot be
+	// overtaken.
 	var next int
-	if err := tx.QueryRow(rebind("SELECT COALESCE(MAX(number), 0) + 1 FROM prs WHERE repo = ?"), repo).Scan(&next); err != nil {
+	if err := tx.QueryRow("SELECT COALESCE(MAX(number), 0) + 1 FROM prs WHERE repo = ?", repo).Scan(&next); err != nil {
 		return nil, err
 	}
 	now := time.Now().Unix()
 	var id int64
-	err = tx.QueryRow(rebind(`INSERT INTO prs (repo, number, title, body, source_branch, target_branch, author_id, state, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`), repo, next, title, body, source, target, authorID, now).Scan(&id)
+	err = tx.QueryRow(`INSERT INTO prs (repo, number, title, body, source_branch, target_branch, author_id, state, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`, repo, next, title, body, source, target, authorID, now).Scan(&id)
 	if err != nil {
 		return nil, err
 	}

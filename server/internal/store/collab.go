@@ -70,8 +70,8 @@ func (s *Store) AppendCollabUpdates(repo, branch, path string, firstSeq int64, p
 	}
 	defer tx.Rollback()
 	for i, p := range payloads {
-		if _, err := tx.Exec(rebind(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`),
+		if _, err := tx.Exec(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`,
 			repo, branch, path, firstSeq+int64(i), p); err != nil {
 			return err
 		}
@@ -105,12 +105,12 @@ func (s *Store) CompactCollabLog(repo, branch, path string, covered int64, snaps
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(rebind(`DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? AND seq <= ?`),
+	if _, err := tx.Exec(`DELETE FROM collab_updates WHERE repo = ? AND branch = ? AND path = ? AND seq <= ?`,
 		repo, branch, path, covered); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(rebind(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`),
+	if _, err := tx.Exec(`INSERT INTO collab_updates (repo, branch, path, seq, payload) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(repo, branch, path, seq) DO UPDATE SET payload = excluded.payload`,
 		repo, branch, path, covered, snapshot); err != nil {
 		return err
 	}

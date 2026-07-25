@@ -1,10 +1,13 @@
--- specquill review/auth metadata (Postgres). Content lives in git; this DB
--- holds only users, sessions, PR review state, and the collab update log.
--- Single-tenant: one deployment serves one workspace; the canonical repo key
--- in all other tables is the plain repo id.
+-- specquill review/auth metadata (SQLite, a file in the data dir). Content
+-- lives in git; this DB holds only users, sessions, PR review state, and the
+-- collab update log. Single-tenant: one deployment serves one workspace; the
+-- canonical repo key in all other tables is the plain repo id.
+--
+-- Foreign keys are enforced (PRAGMA foreign_keys=ON in store.Open) — the
+-- repo_grants / repo_grant_invites cascades depend on it.
 
 CREATE TABLE IF NOT EXISTS users (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   provider   TEXT NOT NULL,             -- 'oidc' | 'local'
   subject    TEXT NOT NULL,             -- OIDC sub / local username
   name       TEXT NOT NULL,
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS repos (
 );
 
 CREATE TABLE IF NOT EXISTS prs (
-  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
   repo          TEXT NOT NULL,
   number        INTEGER NOT NULL,
   title         TEXT NOT NULL,
@@ -55,7 +58,7 @@ CREATE TABLE IF NOT EXISTS prs (
 );
 
 CREATE TABLE IF NOT EXISTS pr_comments (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
   pr_id           BIGINT NOT NULL REFERENCES prs(id),
   author_id       BIGINT NOT NULL REFERENCES users(id),
   file_path       TEXT,                 -- NULL = general comment
@@ -92,7 +95,7 @@ CREATE TABLE IF NOT EXISTS collab_updates (
   branch  TEXT NOT NULL,
   path    TEXT NOT NULL,
   seq     BIGINT NOT NULL,
-  payload BYTEA NOT NULL,
+  payload BLOB   NOT NULL,
   PRIMARY KEY (repo, branch, path, seq)
 );
 CREATE TABLE IF NOT EXISTS collab_contributors (
@@ -124,7 +127,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE TABLE IF NOT EXISTS sources (
-  id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
   name           TEXT NOT NULL UNIQUE,
   kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
   remote         TEXT NOT NULL,
@@ -173,7 +176,7 @@ CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
 -- lowercased email, claimed (converted to repo_grants rows) and deleted on
 -- the invitee's first login.
 CREATE TABLE IF NOT EXISTS repo_grant_invites (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
   matcher    TEXT   NOT NULL,                    -- lowercased email
   role       TEXT   NOT NULL DEFAULT 'viewer',

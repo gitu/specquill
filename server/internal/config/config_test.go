@@ -24,7 +24,6 @@ func load(t *testing.T, yml string) *Config {
 const commonTail = `
 git: { committer_name: svc, committer_email: svc@t }
 auth: { local: { enabled: true } }
-database: { url: "postgres://x" }
 data_dir: ./data
 `
 
