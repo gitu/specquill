@@ -57,6 +57,8 @@ projects:
     remote: git@github.com:you/your-specs.git   # or https + token_env
     default_branch: main
     # token_env: SPECQUILL_TOKEN               # https remotes: push/fetch token
+    # forge:                                   # optional, read-only MR comments
+    #   kind: gitlab                           # gitlab | github
 
 git:
   committer_name: specquill          # service identity → Co-authored-by trailer
@@ -96,6 +98,11 @@ Notes:
   `token_env`.
 - `auth.local.enabled: true` + `specquill user add …` works fully offline —
   that is the developer-local shape, no IdP required.
+- **`projects[].forge`** is optional and read-only: with `kind: gitlab` (or
+  `github`) the app shows the open merge request for the current branch and
+  its comments, so review that happens on the forge is visible while editing.
+  It needs an API token (`forge.token_env`, defaulting to the repo's
+  `token_env`) with read access; nothing is ever written back.
 
 ## 4. Run it
 

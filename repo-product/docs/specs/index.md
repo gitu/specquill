@@ -46,6 +46,7 @@ okf_version: "0.1"
 - [Co-editing — collaborative rooms](specs/co-editing.md)
 - [Copilot grounding — context and limits](specs/copilot-grounding.md)
 - [Merging — landing workspace branches](specs/merging.md)
+- [Forge review — merge-request comments from the git host](specs/forge-review.md)
 - [Importers — mirroring non-git sources](specs/importers.md)
 - [Diagrams and sketches — portable formats](specs/diagrams.md)
 - [URLs — project-scoped deep links](specs/urls.md)

@@ -22,17 +22,18 @@ import (
 )
 
 type Server struct {
-	cfg      *config.Config
-	git      *gitx.Manager
-	store    *store.Store
-	sessions *auth.Sessions
-	oidc     *auth.OIDC
-	ai       *ai.Client  // nil when disabled
-	bus      *events.Bus // nil-safe
-	hub      *collab.Hub
-	devUser  *store.User
-	srcCache *srcCache        // grounding source snapshots, keyed by repo key + head SHA
-	importer *importer.Runner // nil when no non-git sources are configured
+	cfg        *config.Config
+	git        *gitx.Manager
+	store      *store.Store
+	sessions   *auth.Sessions
+	oidc       *auth.OIDC
+	ai         *ai.Client  // nil when disabled
+	bus        *events.Bus // nil-safe
+	hub        *collab.Hub
+	devUser    *store.User
+	srcCache   *srcCache        // grounding source snapshots, keyed by repo key + head SHA
+	forgeCache *forgeCache      // forge review threads, keyed by repo key + branch
+	importer   *importer.Runner // nil when no non-git sources are configured
 }
 
 type Options struct {
@@ -52,7 +53,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -103,6 +104,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/repos/{repo}/collab/{path...}", s.writableH(s.collabWS))
 	apiMux.HandleFunc("GET /api/repos/{repo}/presence", s.writableViewH(s.getPresence))
 	apiMux.HandleFunc("GET /api/repos/{repo}/merge", s.writableViewH(s.getMergePreview))
+	apiMux.HandleFunc("GET /api/repos/{repo}/forge/request", s.writableViewH(s.getForgeRequest))
 	apiMux.HandleFunc("POST /api/repos/{repo}/merge", s.writableH(s.postMerge))
 	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.createShare)

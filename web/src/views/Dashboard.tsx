@@ -5,6 +5,7 @@ import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
 import { buildDashboard, srcMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
+import { ForgeReview } from '../components/ForgeReview';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -145,6 +146,7 @@ export function Dashboard() {
               </div>
             </div>
             <LinkCheckCard />
+            <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>
       </div>

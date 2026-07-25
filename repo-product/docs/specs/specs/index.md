@@ -6,6 +6,7 @@
 - [Co-editing — collaborative rooms](co-editing.md)
 - [Copilot grounding — context and limits](copilot-grounding.md)
 - [Merging — landing workspace branches](merging.md)
+- [Forge review — merge-request comments from the git host](forge-review.md)
 - [Importers — mirroring non-git sources](importers.md)
 - [Diagrams and sketches — portable formats](diagrams.md)
 - [URLs — project-scoped deep links](urls.md)

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"specquill/server/internal/forge"
 )
 
 type RepoMode string
@@ -34,6 +36,9 @@ type RepoConfig struct {
 	// an importer (kind url|openapi|confluence), not cloned/fetched from a
 	// remote. ensure() inits it empty; the importer.Runner commits snapshots.
 	Mirror bool `yaml:"-"`
+	// Forge optionally reads merge-request review threads from the git host
+	// (read-only; see internal/forge). Copied from the owning project.
+	Forge forge.Config `yaml:"-"`
 }
 
 // SourceConfig is a catalog entry: a named external source that projects may
@@ -64,10 +69,13 @@ type ProjectConfig struct {
 	TokenEnv          string        `yaml:"token_env"`
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	ProtectedBranches []string      `yaml:"protected_branches"`
+	// Forge (optional) shows the branch's open merge request and its comments
+	// from the git host. Read-only and opt-in — set `kind` to enable.
+	Forge forge.Config `yaml:"forge"`
 }
 
 // IsProtected reports whether direct writes/commits to branch are forbidden
-// (such branches only move via PR merges).
+// (such branches only move via merges from a workspace branch).
 func (rc *RepoConfig) IsProtected(branch string) bool {
 	for _, b := range rc.ProtectedBranches {
 		if b == branch {
@@ -262,10 +270,15 @@ func (c *Config) Normalize() {
 	// canonical clone registry: every project + every git source
 	c.Repos = c.Repos[:0]
 	for _, p := range c.Projects {
+		f := p.Forge
+		if f.TokenEnv == "" {
+			f.TokenEnv = p.TokenEnv // the push/fetch token usually covers the API too
+		}
 		c.Repos = append(c.Repos, RepoConfig{
 			ID: p.ID, Mode: Writable, Remote: p.Remote, DefaultBranch: p.DefaultBranch,
 			TokenEnv: p.TokenEnv, SyncInterval: p.SyncInterval,
 			ProtectedBranches: p.ProtectedBranches, ContentRoot: p.ContentRoot,
+			Forge: f,
 		})
 	}
 	for _, src := range c.Sources {
@@ -327,6 +340,11 @@ func (c *Config) validate() error {
 		seen[p.ID] = true
 		if strings.Contains(p.ContentRoot, "..") {
 			return fmt.Errorf("project %s: content_root must not traverse (%q)", p.ID, p.ContentRoot)
+		}
+		switch p.Forge.Kind {
+		case "", forge.KindGitHub, forge.KindGitLab:
+		default:
+			return fmt.Errorf("project %s: forge.kind must be github or gitlab (got %q)", p.ID, p.Forge.Kind)
 		}
 	}
 	kinds := map[string]bool{"git": true, "url": true, "openapi": true, "confluence": true}

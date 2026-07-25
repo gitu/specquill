@@ -19,6 +19,14 @@ projects:
     default_branch: main
     token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
     # content_root: docs/specs           # monorepo: workspace lives in a subfolder
+    # Optional, read-only: show the branch's open merge request and its
+    # comments from the git host. SpecQuill merges directly and has no in-app
+    # review, so this is where forge review feedback shows up.
+    # forge:
+    #   kind: gitlab                     # gitlab | github (omit = feature off)
+    #   # base_url: https://gitlab.example.com/api/v4   # self-hosted
+    #   # project: acme/specs            # only if the remote does not name it (ssh alias)
+    #   # token_env: SPECQUILL_FORGE_TOKEN              # defaults to token_env above
 
 # sources are the read-only reference catalog projects may reference and the
 # copilot may ground on. Credentials always come from token_env — never inline.

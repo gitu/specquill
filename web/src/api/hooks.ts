@@ -126,6 +126,31 @@ export function useMerge(repo: string | undefined) {
 }
 
 
+// ---------------------------------------------------------------- forge
+
+export interface ForgeComment {
+  author: string; body: string; path?: string; line?: number; createdAt: string; url?: string;
+}
+export interface ForgeRequest {
+  number: number; title: string; state: string; author: string; url: string; comments: ForgeComment[];
+}
+export interface ForgeResp {
+  enabled: boolean;
+  request?: ForgeRequest | null;   // null = the branch has no open merge request
+  error?: string;                  // forge unreachable/misconfigured — panel degrades
+}
+
+/** The open merge request for a branch on the configured forge, read-only. */
+export function useForgeRequest(repo: string | undefined, branch: string | undefined) {
+  return useQuery({
+    queryKey: ['forge', repo, branch],
+    queryFn: () => api<ForgeResp>(`/api/repos/${repo}/forge/request?branch=${encodeURIComponent(branch!)}`),
+    enabled: !!repo && !!branch,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 // ---------------------------------------------------------------- mutations
 
 export function useWorktreeDiff(repo: string | undefined, branch: string, enabled: boolean) {

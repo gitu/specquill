@@ -120,3 +120,48 @@ func TestNormalizeIdempotent(t *testing.T) {
 		t.Fatalf("not idempotent: projects=%d repos=%d", len(cfg.Projects), len(cfg.Repos))
 	}
 }
+
+// The forge block is opt-in per project and must survive YAML → struct →
+// clone-registry normalization, inheriting the project's token by default.
+func TestForgeConfigParses(t *testing.T) {
+	cfg := load(t, `
+projects:
+  - id: specs
+    remote: "https://gitlab.example.com/acme/specs.git"
+    token_env: SPECQUILL_TOKEN
+    forge:
+      kind: gitlab
+      base_url: https://gitlab.example.com/api/v4
+      project: acme/specs
+`+commonTail)
+	f := cfg.Projects[0].Forge
+	if !f.Enabled() || f.Kind != "gitlab" || f.BaseURL != "https://gitlab.example.com/api/v4" || f.Project != "acme/specs" {
+		t.Fatalf("forge block not parsed: %+v", f)
+	}
+	// the clone registry carries it, defaulting the API token to the repo's
+	if rf := cfg.Repos[0].Forge; rf.Kind != "gitlab" || rf.TokenEnv != "SPECQUILL_TOKEN" {
+		t.Fatalf("forge not carried into the repo registry: %+v", rf)
+	}
+	// omitted entirely = feature off
+	off := load(t, `
+projects:
+  - { id: specs, remote: "https://x/specs.git" }
+`+commonTail)
+	if off.Projects[0].Forge.Enabled() || off.Repos[0].Forge.Enabled() {
+		t.Fatalf("forge should default to disabled: %+v", off.Projects[0].Forge)
+	}
+}
+
+func TestForgeKindValidated(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "specquill.yml")
+	yml := `
+projects:
+  - { id: specs, remote: "https://x/specs.git", forge: { kind: bitbucket } }
+` + commonTail
+	if err := os.WriteFile(p, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "forge.kind") {
+		t.Fatalf("unknown forge kind should be rejected, got %v", err)
+	}
+}

@@ -103,6 +103,14 @@ from the code.
 - **Sketches**: `*.excalidraw.png` — PNGs with the excalidraw scene embedded
   (export-embed-scene), natively viewable anywhere, editable in the modal via
   `loadFromBlob`/`exportToBlob`. Legacy `*.excalidraw` JSON still supported.
+- **Forge review (optional, read-only)**: `projects[].forge.kind: gitlab|github`
+  turns on `GET /api/repos/{repo}/forge/request?branch=` — the branch's open
+  MR/PR plus its comments, shown on the Overview. GitLab auth is the
+  `PRIVATE-TOKEN` header, GitHub a bearer token; GitLab project paths are
+  URL-encoded whole (nested groups), GitHub needs `owner:branch` in the
+  `head=` filter or it is ignored. `forge.project` overrides path derivation
+  when the remote is an ssh alias. Answers are cached 60s server-side; any
+  failure degrades to an `error` field, never a broken page.
 - **AI tiers**: `ai.model` (thinking-class: chat, draft edits) vs
   `ai.quick_model` (one-shot: commit messages). Both through any
   OpenAI-compatible endpoint. `.specquill/skills/*.md` in the workspace are
