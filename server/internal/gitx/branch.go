@@ -90,10 +90,11 @@ func (r *Repo) CreateBranch(name, from string) error {
 	if name == "" {
 		return fmt.Errorf("invalid ref %q", name)
 	}
-	if _, err := r.resolveRef(name); err != nil {
+	name, err := r.resolveRef(name)
+	if err != nil {
 		return err
 	}
-	from, err := r.resolveRef(from)
+	from, err = r.resolveRef(from)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,14 @@ type MergeCheck struct {
 
 // CheckMerge dry-runs the merge via merge-tree without touching any worktree.
 func (r *Repo) CheckMerge(target, source string) (*MergeCheck, error) {
+	target, err := r.resolveRef(target)
+	if err != nil {
+		return nil, err
+	}
+	source, err = r.resolveRef(source)
+	if err != nil {
+		return nil, err
+	}
 	_, conflicts, err := r.mergeTree(target, source)
 	if err != nil {
 		return nil, err
