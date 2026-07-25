@@ -1,5 +1,5 @@
 // End-to-end flow against a running dev server (-dev auto-auth):
-// navigate → edit → save → commit → branch → PR → approve → merge.
+// navigate → edit → save → commit → branch → merge.
 import { expect, test } from '@playwright/test';
 
 const stamp = Date.now().toString(36);
@@ -33,7 +33,7 @@ test('search palette finds a requirement', async ({ page }) => {
   await expect(page.getByText('Transaction Reporting').first()).toBeVisible();
 });
 
-test('branch → edit → save → commit → PR → approve → merge', async ({ page }) => {
+test('branch → edit → save → commit → merge', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/venue.md');
   await expect(page.getByText('Venue Identification', { exact: false }).first()).toBeVisible();
 
@@ -58,19 +58,11 @@ test('branch → edit → save → commit → PR → approve → merge', async (
   await page.locator('button', { hasText: 'Commit' }).last().click();
   await expect(page.getByText('clean').first()).toBeVisible();
 
-  // open a PR
-  await page.getByRole('button', { name: 'Open PR' }).click();
-  await page.locator('input').first().fill(`E2E venue update ${stamp}`);
-  await page.getByRole('button', { name: 'Create PR' }).click();
-  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/prs\/\d+/);
-  await expect(page.getByText(`E2E venue update ${stamp}`)).toBeVisible();
-  await expect(page.getByText(`E2E marker ${stamp}.`)).toBeVisible(); // diff line
-
-  // approve + merge
-  await page.getByRole('button', { name: /Approve/ }).click();
-  await expect(page.getByText(/approved by/)).toBeVisible();
-  await page.getByRole('button', { name: 'Merge', exact: true }).click();
-  await expect(page.getByText('merged', { exact: true })).toBeVisible();
+  // merge straight to main — the dialog previews exactly what will land
+  await page.getByRole('button', { name: 'Merge' }).click();
+  await expect(page.getByText('specs/venue.md')).toBeVisible();
+  await page.getByRole('button', { name: 'Merge', exact: true }).last().click();
+  await expect(page.getByText('Merge branch')).toBeHidden();
 
   // main now carries the change in the editor
   await page.goto('/p/trading-specs/editor/specs/venue.md');

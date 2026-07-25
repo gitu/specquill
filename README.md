@@ -5,7 +5,7 @@
 requirements, specs, regulations, data mappings and change records live as
 plain markdown in git; SpecQuill is the editing and review surface on top —
 traceability graph & matrix, change inbox, rich editors, and an in-app
-branch-based PR flow, every commit authored by the logged-in user.
+branch-based merge flow, every commit authored by the logged-in user.
 
 The artifact SpecQuill produces is deliberately **not proprietary**: a
 workspace is a conformant **Open Knowledge Format (v0.1) bundle** — typed
@@ -56,8 +56,8 @@ Key properties:
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected
   branches 403. Drafts autosave to the branch worktree (debounced), survive branch
   switches and navigation (localStorage recovery + unload keepalive), and an explicit
-  Commit turns them into history. Tree badges are real `git status`; opening a PR
-  prompts to commit pending changes.
+  Commit turns them into history. Tree badges are real `git status`; merging
+  prompts to commit pending changes first.
 - **Real-time co-editing (CRDT).** Editing a markdown file in WYSIWYG mode joins a Yjs
   room per (branch, file): live text sync, named cursors, presence dots in the tree,
   invite links ("Switch & join"). The room owns the file while live — direct PUTs 409,
@@ -65,10 +65,12 @@ Key properties:
   doc to the worktree. Commits run a flush barrier and append `Co-authored-by:`
   trailers for every room contributor. Unflushed sessions (crash) are surfaced as
   orphaned rooms and recovered on next open.
-- **PRs are branches.** Review (diff, inline comments, approvals pinned to the head sha)
-  lives in the app; merge uses `git merge-tree` (merge commit or squash) with conflicts
-  detected and blocked. No forge API involved; `push`/`fetch` sync the plain remote with
-  a token from the environment.
+- **Direct merges, no review ceremony.** A workspace branch lands on the protected
+  default branch through a previewed merge (diff + conflict check + dirty-worktree
+  refusal); `git merge-tree` does the work as a merge commit or squash, conflicts
+  detected and blocked. There is no in-app PR object — for reviewed merges, push the
+  branch and open a merge request on your forge. No forge API involved here;
+  `push`/`fetch` sync the plain remote with a token from the environment.
 - **Honest git identity.** The logged-in user is both **author and committer** on every
   commit and merge; the SpecQuill service identity is recorded as a `Co-authored-by:`
   trailer instead, alongside trailers for live co-editing contributors.
@@ -118,7 +120,7 @@ Key properties:
   "Draft edits & open as diff" asks the model for surgical search/replace edits,
   validates them (impacted files only, unique match), and applies them as
   **uncommitted saves on a `copilot/<change>` branch** — the human reviews via the
-  normal status → commit → PR flow. `scripts/mock-llm.py` is a keyless dev provider.
+  normal status → commit → merge flow. `scripts/mock-llm.py` is a keyless dev provider.
 
 ## Run (dev)
 
@@ -151,9 +153,8 @@ the git author on every commit and merge.
 
 ```sh
 make test               # Go: gitx/auth/API suites · web: model, frontmatter, Milkdown round-trip
-make e2e                # Playwright against a running dev server: edit → commit → PR → merge
+make e2e                # Playwright against a running dev server: edit → commit → merge
 python3 scripts/verify-write-path.py   # API-level write/commit/push/409 checks
-python3 scripts/verify-pr-flow.py      # API-level PR lifecycle incl. conflict blocking
 docker compose -f docker-compose.dev.yml up -d   # dex IdP for exercising real OIDC
 ```
 

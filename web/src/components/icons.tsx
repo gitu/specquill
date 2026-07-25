@@ -13,7 +13,7 @@ export const IconBranch = () => svg(13, 'var(--text-2)', 2, <>
 
 export const IconSearch = () => svg(14, 'currentColor', 2, <><circle cx="11" cy="11" r="7" /><P d="M20 20l-3.5-3.5" /></>);
 
-export const IconPR = () => svg(13, 'var(--prod)', 2, <>
+export const IconMerge = () => svg(13, 'var(--prod)', 2, <>
   <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="18" r="2.4" />
   <P d="M6 8.4v7.2M18 15.6c0-5-12-2-12-9.6" /></>);
 

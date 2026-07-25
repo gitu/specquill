@@ -22,7 +22,7 @@ from the code.
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
 - `pkill specquill` matches the wrapper shell (exit 143) — use `pkill -x specquill`.
-- **The store is embedded SQLite** (users, sessions, PRs, collab room logs) at
+- **The store is embedded SQLite** (users, sessions, workspace claims, collab room logs) at
   `<data_dir>/specquill.db` = `data/runtime/specquill.db` in dev — no service
   to start, nothing in docker compose. Go tests get a throwaway DB per test
   via `store.OpenTest` and never skip. WAL mode, so `specquill.db-wal` /
@@ -38,7 +38,7 @@ from the code.
   the dev server is up. Survives until the next store reset.
 - Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
   — with the store inside `data/runtime`, removing that directory now clears
-  sessions/PRs/collab logs too (the fixture script also deletes the DB, so
+  sessions/merge state/collab logs too (the fixture script also deletes the DB, so
   fixtures and store can't drift apart).
 - Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
@@ -83,7 +83,11 @@ from the code.
   (or the Admin "Sync now" button).
 - **Protected main**: the default branch is never edited; the first edit
   auto-creates/switches to the caller's `ws/<user>` branch (claimed in the store).
-  Direct writes to protected branches 403 (`protected_branch`).
+  Direct writes to protected branches 403 (`protected_branch`). A **merge** from
+  a workspace branch (`POST /api/repos/{repo}/merge`, member role) is the only
+  thing that moves it — there is no in-app PR/review flow, that lives on the
+  forge. Merges refuse a dirty source worktree (409 `dirty`) and conflicts
+  (409 `conflicts`), and reset the merged workspace onto the new head.
 - **Worktree = draft store**: saves are uncommitted changes on a per-branch
   worktree; explicit Commit turns them into history.
 - **Commit identity**: the logged-in user is **author AND committer**; the

@@ -10,7 +10,6 @@ import { GraphView } from './views/GraphView';
 import { MatrixView } from './views/MatrixView';
 import { ModelView } from './views/ModelView';
 import { DiffView } from './views/DiffView';
-import { PRListView, PRView } from './views/PRView';
 import { LoginView } from './views/LoginView';
 import { AdminView } from './views/AdminView';
 import { useApp } from './state/AppContext';
@@ -47,8 +46,6 @@ const projectViews = () => [
   { path: 'matrix', element: <MatrixView /> },
   { path: 'model', element: <ModelView /> },
   { path: 'diff', element: <DiffView /> },
-  { path: 'prs', element: <PRListView /> },
-  { path: 'prs/:n', element: <PRView /> },
 ];
 
 // History routing: the Go spaHandler (and Vite in dev) serve index.html for

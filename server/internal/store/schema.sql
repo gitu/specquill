@@ -1,5 +1,5 @@
--- specquill review/auth metadata (SQLite, a file in the data dir). Content
--- lives in git; this DB holds only users, sessions, PR review state, and the
+-- specquill auth/session metadata (SQLite, a file in the data dir). Content
+-- lives in git; this DB holds only users, sessions, workspace claims and the
 -- collab update log. Single-tenant: one deployment serves one workspace; the
 -- canonical repo key in all other tables is the plain repo id.
 --
@@ -41,33 +41,7 @@ CREATE TABLE IF NOT EXISTS repos (
   created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS prs (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  repo          TEXT NOT NULL,
-  number        INTEGER NOT NULL,
-  title         TEXT NOT NULL,
-  body          TEXT,
-  source_branch TEXT NOT NULL,
-  target_branch TEXT NOT NULL,
-  author_id     BIGINT NOT NULL REFERENCES users(id),
-  state         TEXT NOT NULL DEFAULT 'open',   -- open|merged|closed
-  merged_commit TEXT,
-  created_at    BIGINT NOT NULL,
-  merged_at     BIGINT,
-  UNIQUE(repo, number)
-);
 
-CREATE TABLE IF NOT EXISTS pr_comments (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  pr_id           BIGINT NOT NULL REFERENCES prs(id),
-  author_id       BIGINT NOT NULL REFERENCES users(id),
-  file_path       TEXT,                 -- NULL = general comment
-  line            INTEGER,
-  anchored_commit TEXT,
-  body            TEXT NOT NULL,
-  resolved        BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at      BIGINT NOT NULL
-);
 
 -- personal workspace branch ownership (ws/<slug> claimed per user)
 CREATE TABLE IF NOT EXISTS workspace_branches (
@@ -107,13 +81,6 @@ CREATE TABLE IF NOT EXISTS collab_contributors (
   PRIMARY KEY (repo, branch, path, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS pr_approvals (
-  pr_id      BIGINT NOT NULL REFERENCES prs(id),
-  user_id    BIGINT NOT NULL REFERENCES users(id),
-  commit_sha TEXT NOT NULL,             -- approval pinned to head commit
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (pr_id, user_id)
-);
 
 -- projects & sources (config-split plan): a project is a writable workspace
 -- (repo + content_root); a source is a catalog entry projects may reference.

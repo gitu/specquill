@@ -49,17 +49,17 @@ func TestViewerCannotWriteGrantElevates(t *testing.T) {
 	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/tree", nil); code != http.StatusOK {
 		t.Fatalf("viewer tree: want 200, got %d", code)
 	}
-	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/prs", nil); code != http.StatusOK {
-		t.Fatalf("viewer PR list: want 200, got %d", code)
+	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/branches", nil); code != http.StatusOK {
+		t.Fatalf("viewer branches: want 200, got %d", code)
 	}
 	// mutations are role-gated
 	code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/specs/a.md", map[string]string{"content": "x"})
 	if code != http.StatusForbidden || out["code"] != "role_forbidden" {
 		t.Fatalf("viewer write: want 403 role_forbidden, got %d %v", code, out)
 	}
-	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/prs", map[string]string{"title": "t", "source": "b", "target": "main"})
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": "b"})
 	if code != http.StatusForbidden || out["code"] != "role_forbidden" {
-		t.Fatalf("viewer PR create: want 403 role_forbidden, got %d %v", code, out)
+		t.Fatalf("viewer merge: want 403 role_forbidden, got %d %v", code, out)
 	}
 	// the repo list reports the effective role
 	if code, out := doJSON(t, h, cookie, "GET", "/api/me", nil); code != http.StatusOK {

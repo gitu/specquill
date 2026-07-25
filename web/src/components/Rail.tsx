@@ -7,7 +7,7 @@ import { IconChanges, IconDash, IconFolder, IconGear, IconMatrix, IconModel, Ico
 
 const VIEW_LABEL: Record<ViewName, string> = {
   dashboard: 'Overview', editor: 'Specs', changes: 'Changes', graph: 'Graph',
-  matrix: 'Matrix', model: 'Model definitions', prs: 'Pull requests',
+  matrix: 'Matrix', model: 'Model definitions',
 };
 
 const A = 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)';

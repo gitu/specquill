@@ -32,7 +32,7 @@ Everything the server owns lives under `data_dir`:
 | path | contents | rebuildable? |
 |---|---|---|
 | `<data_dir>/repos/` | bare clones + worktrees | yes — re-cloned from the remotes |
-| `<data_dir>/specquill.db` | users, sessions, PRs, approvals, workspace claims, collab logs | **no** |
+| `<data_dir>/specquill.db` | users, sessions, workspace claims, collab logs | **no** |
 
 So `data_dir` needs **persistent storage** (a real directory or a docker
 volume, as above), and it is what you back up. Document content itself lives

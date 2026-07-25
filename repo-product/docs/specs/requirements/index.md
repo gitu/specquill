@@ -7,7 +7,7 @@
 - [Conformant OKF bundles](REQ-005.md)
 - [Real-time collaborative editing](REQ-006.md)
 - [Grounded AI copilot](REQ-007.md)
-- [Reviewed merges via pull requests](REQ-008.md)
+- [Conflict-checked merges to the default branch](REQ-008.md)
 - [External source importers](REQ-009.md)
 - [Portable diagrams and sketches](REQ-010.md)
 - [Project-scoped shareable URLs](REQ-011.md)

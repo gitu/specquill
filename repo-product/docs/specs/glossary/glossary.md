@@ -27,5 +27,6 @@ copilot's context so answers cite real content; references stay read-only.
 **Room** — the per-(branch, path) collaborative session markdown editors join;
 the server relays its CRDT updates and owns the file while it is live.
 
-**Pull request** — the reviewed, conflict-checked path a workspace branch
-takes to reach the protected default branch.
+**Merge** — the conflict-checked path a workspace branch takes to reach the
+protected default branch. Previewed but not reviewed in-app; for review, push
+the branch and open a merge request on the forge.

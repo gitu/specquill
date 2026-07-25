@@ -5,7 +5,7 @@
 - [Workspace branches — protected main mechanics](workspace-branches.md)
 - [Co-editing — collaborative rooms](co-editing.md)
 - [Copilot grounding — context and limits](copilot-grounding.md)
-- [Pull requests — reviewed merges](pull-requests.md)
+- [Merging — landing workspace branches](merging.md)
 - [Importers — mirroring non-git sources](importers.md)
 - [Diagrams and sketches — portable formats](diagrams.md)
 - [URLs — project-scoped deep links](urls.md)

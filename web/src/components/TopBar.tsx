@@ -3,10 +3,10 @@ import { sx } from '../lib/sx';
 import { useNarrow } from '../hooks/useMediaQuery';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
-import { useBranches, useCreateBranch, useMe, usePRs, useStatus, useSync } from '../api/hooks';
+import { useBranches, useCreateBranch, useMe, useStatus, useSync } from '../api/hooks';
 import { api } from '../api/client';
-import { CreatePRDialog } from './CreatePRDialog';
-import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconQuill, IconSearch, IconUp, IconDown } from './icons';
+import { MergeDialog } from './MergeDialog';
+import { IconBranch, IconChevD, IconLock, IconMenu, IconMerge, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
   const nav = useNav();
@@ -16,13 +16,11 @@ export function TopBar() {
   const status = useStatus(app.repoId, app.branch);
   const sync = useSync(app.repoId, app.branch);
   const createBranch = useCreateBranch(app.repoId);
-  const prs = usePRs(app.repoId, 'open');
   const [open, setOpen] = useState(false);
-  const [prDialog, setPrDialog] = useState(false);
+  const [mergeDialog, setMergeDialog] = useState(false);
   const narrow = useNarrow();
   const pathname = useAppPath();
   const onTreeRoute = pathname.startsWith('/editor') || pathname.startsWith('/diff');
-  const branchPR = prs.data?.find((p) => p.source === app.branch);
   const ahead = status.data?.ahead ?? 0;
   const behind = status.data?.behind ?? 0;
   const logout = async () => {
@@ -132,13 +130,13 @@ export function TopBar() {
         </div>
       )}
       <button
-        onClick={() => (branchPR ? nav(`/prs/${branchPR.number}`) : setPrDialog(true))}
-        title={branchPR ? `open PR #${branchPR.number} for ${app.branch}` : 'create a PR from ' + app.branch}
+        onClick={() => setMergeDialog(true)}
+        title={'merge ' + app.branch + ' into the default branch'}
         style={sx('flex:none;display:flex;align-items:center;gap:6px;height:30px;padding:0 ' + (narrow ? '9px' : '12px') + ';border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}
       >
-        <IconPR /> {narrow ? (branchPR ? `#${branchPR.number}` : 'PR') : branchPR ? `PR #${branchPR.number}` : 'Open PR'}
+        <IconMerge /> {narrow ? '' : 'Merge'}
       </button>
-      {prDialog && <CreatePRDialog onClose={() => setPrDialog(false)} />}
+      {mergeDialog && <MergeDialog onClose={() => setMergeDialog(false)} />}
       <div
         title={me.data ? `${me.data.name} <${me.data.email}> — click to sign out` : ''}
         onClick={logout}
