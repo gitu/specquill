@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 )
 
@@ -80,6 +81,19 @@ func TestDirectMerge(t *testing.T) {
 	}
 	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": "ws/nope"}); code != http.StatusNotFound {
 		t.Fatalf("unknown branch: want 404, got %d", code)
+	}
+
+	// branch names reach git argv and worktree paths — refuse the dangerous
+	// shapes here rather than trusting git's refname rules downstream
+	for _, bad := range []string{"--output=/tmp/pwn", "..", "ws/../../etc", "ws/flo:x"} {
+		code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": bad})
+		if code != http.StatusBadRequest {
+			t.Fatalf("merge source %q: want 400, got %d %v", bad, code, out)
+		}
+		code, out = doJSON(t, h, cookie, "GET", "/api/repos/w/merge?source="+url.QueryEscape(bad), nil)
+		if code != http.StatusBadRequest {
+			t.Fatalf("preview source %q: want 400, got %d %v", bad, code, out)
+		}
 	}
 }
 

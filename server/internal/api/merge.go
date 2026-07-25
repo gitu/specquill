@@ -28,6 +28,13 @@ func (s *Server) mergeRefs(w http.ResponseWriter, repo *project.Project, source,
 	if target == "" {
 		target = repo.Cfg.DefaultBranch
 	}
+	// Both names come straight from the request and travel into git argv and
+	// worktree paths, so validate here rather than relying on git's own
+	// refname rules further down (a leading "-" would be read as an option).
+	if !gitx.ValidRef(source) || !gitx.ValidRef(target) {
+		jsonError(w, http.StatusBadRequest, "invalid branch name")
+		return "", "", false
+	}
 	if source == target {
 		jsonError(w, http.StatusBadRequest, "source and target are the same branch")
 		return "", "", false
