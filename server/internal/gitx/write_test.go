@@ -131,3 +131,25 @@ func TestDeleteFile(t *testing.T) {
 		t.Fatalf("want one deleted file, got %v", st.Dirty)
 	}
 }
+
+// Commit builds its `git add` argv from what safeRelPath returned, so a
+// traversing or reserved path is refused before git ever sees it.
+func TestCommitRejectsUnsafePaths(t *testing.T) {
+	m, _ := fixture(t)
+	repo, _ := m.Repo("w")
+	if err := repo.CreateBranch("ws/x", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveFile("ws/x", "specs/ok.md", "hello\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"../escape.md", "specs/../../escape.md", ".git/config"} {
+		if _, err := repo.Commit("ws/x", "m", "n", "e@t", []string{bad}); err == nil {
+			t.Errorf("Commit should refuse path %q", bad)
+		}
+	}
+	// the legitimate path still commits
+	if _, err := repo.Commit("ws/x", "m", "n", "e@t", []string{"specs/ok.md"}); err != nil {
+		t.Fatalf("Commit with a safe path: %v", err)
+	}
+}

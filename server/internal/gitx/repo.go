@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -263,11 +262,6 @@ func (r *Repo) ResolveRef(ref string) string {
 	return ref
 }
 
-// refRe constrains refs to what specquill deals in — branch names, tags and
-// shas: slash-separated segments of word chars, dots and dashes, bounded by
-// alphanumerics.
-var refRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$`)
-
 // resolveRef defaults empty refs to the configured default branch and
 // rejects anything git could misparse: option lookalikes (leading "-"),
 // traversal (".."), and meta characters. Every gitx entry point taking a
@@ -277,7 +271,7 @@ func (r *Repo) resolveRef(ref string) (string, error) {
 	if ref == "" {
 		return r.Cfg.DefaultBranch, nil
 	}
-	if strings.HasPrefix(ref, "-") || strings.Contains(ref, "..") || !refRe.MatchString(ref) {
+	if !ValidRef(ref) {
 		return "", fmt.Errorf("invalid ref %q", ref)
 	}
 	return ref, nil

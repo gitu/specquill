@@ -1,6 +1,15 @@
 package gitx
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// refRe is the character-level rule: ASCII alphanumerics plus . _ / -, and a
+// name must start and end with an alphanumeric. Deliberately narrower than
+// git-check-ref-format — the refs this app creates are `main`, `ws/<user>`
+// and `feature/<x>`, so there is no reason to accept more.
+var refRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$`)
 
 // ValidRef reports whether name is safe to hand to git as a ref.
 //
@@ -20,26 +29,16 @@ func ValidRef(name string) bool {
 	if name == "" || len(name) > 255 {
 		return false
 	}
-	if strings.HasPrefix(name, "-") || name == "@" {
+	// "-" would be read as an option; ".." both escapes worktree paths and
+	// means "range" to git. refRe covers the rest of the character rules.
+	if strings.HasPrefix(name, "-") || strings.Contains(name, "..") {
 		return false
 	}
-	if strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.Contains(name, "//") {
+	if strings.HasSuffix(name, ".lock") {
 		return false
 	}
-	if strings.Contains(name, "..") || strings.Contains(name, "@{") {
+	if !refRe.MatchString(name) {
 		return false
-	}
-	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") {
-		return false
-	}
-	for _, r := range name {
-		if r <= ' ' || r == 0x7f { // control characters and space
-			return false
-		}
-		switch r {
-		case '~', '^', ':', '?', '*', '[', '\\':
-			return false
-		}
 	}
 	// no path component may start with a dot (".git", ".." already covered)
 	for _, part := range strings.Split(name, "/") {
