@@ -316,9 +316,10 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 		"GIT_COMMITTER_NAME=" + authorName,
 		"GIT_COMMITTER_EMAIL=" + authorEmail,
 	}
+	// -F - takes the message on stdin: arbitrary user text never reaches argv
 	message = r.withServiceTrailer(message)
-	if _, err := run(wt, env, "commit", "--no-verify",
-		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-m", message); err != nil {
+	if _, _, err := runFull(wt, env, []byte(message), "commit", "--no-verify",
+		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-F", "-"); err != nil {
 		return "", err
 	}
 	sha, err := run(wt, nil, "rev-parse", "HEAD")
