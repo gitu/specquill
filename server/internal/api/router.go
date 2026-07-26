@@ -127,7 +127,11 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	mux.HandleFunc("GET /auth/providers", s.authProviders)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)
 	mux.HandleFunc("POST /auth/logout", s.authLogout)
-	mux.Handle("/", spaHandler(opts.Dist, opts.Dev))
+	var spa http.Handler = spaHandler(opts.Dist, opts.Dev)
+	if opts.Dev {
+		spa = devViteProxy(spa)
+	}
+	mux.Handle("/", spa)
 	return logMiddleware(csrfGuard(mux))
 }
 
