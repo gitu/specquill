@@ -64,12 +64,24 @@ from the code.
   read-only catalog entry projects reference. `internal/project` is the ONLY
   place project-relative ↔ full repo paths are mapped (MapIn/MapOut); store rows
   and git ops use full paths, the wire format is project-relative.
-- **3-stage authorization** (single-tenant): (1) catalog sources+credentials in
+- **3-stage authorization** (local-auth mode): (1) catalog sources+credentials in
   app YAML/admin, (2) in-repo `.specquill/config.yml` `references:` SELECT
   cataloged sources (read from the DEFAULT branch only), (3) deployment roles
   viewer<member<admin (`users.role`) plus per-repo grants. In-repo config can
   only select cataloged sources — it can NEVER mint access.
   `EffectiveReferences` = selection ∩ catalog.
+- **Forge-PAT mode flips stage 1** (`auth.forge`, July 2026): no server-side
+  catalog or credentials — `.specquill/config.yml` gains `sources:` DEFINITIONS
+  (git, https-only remotes) and `EffectiveReferencesInRepo` resolves references
+  against them. Safe because every user gets their OWN clones under
+  `data/runtime/repos/u<id>/`, fetched lazily with their own PAT
+  (`gitx.Fleet`/`NewUserManager`; `api/pat.go` is the mode's plumbing) — a
+  defined source a user's token cannot fetch 502s for them and nothing lands on
+  disk. PAT lives in browser localStorage + a RAM-only session vault
+  (`auth.TokenVault`); server restart ⇒ silent re-login from the SPA
+  (`client.ts` retry-once). Deployment role = forge permission on
+  `projects[0]`, refreshed each login. No boot clone, no sync loops; in-app
+  merge 403s (`merge_via_forge`) — `POST /propose` pushes and opens the MR/PR.
 - **Copilot grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
@@ -132,9 +144,14 @@ from the code.
 
 ## Deployment model
 
-- Two supported deployments (July 2026 decision): **v1** — one deployment per
-  tenant for BAs/non-technicals, a single writable repository, any-OIDC login;
-  **v2** — a developer's local machine, `auth.local`/`-dev`, no OIDC. The
-  GitHub integration (OAuth login, GitHub App tenants, webhooks) was removed
-  with this decision; GitHub-hosted repos are plain git remotes via
-  `token_env` — `gitx.credentialArgsEnv` is the single credentials seam.
+- Two supported deployments (July 2026 decision, revised 2026-07-27): **v1** —
+  one deployment per tenant, a single writable repository, **forge-PAT login**
+  (`auth.forge`: users bring a GitLab/GitHub personal access token; OIDC was
+  removed with this revision); **v2** — a developer's local machine,
+  `auth.local`/`-dev`. The GitHub integration (OAuth login, GitHub App
+  tenants, webhooks) was removed earlier; git remotes authenticate via the
+  per-user PAT (v1) or `token_env` (v2) — `gitx.credentialArgsEnv` is still
+  the single credentials seam (manager PAT wins, env is the fallback).
+  `scripts/mock-forge.py` (:8992) is the keyless GitLab mock for exercising
+  PAT mode; `web/e2e/patlogin.spec.ts` self-skips unless the target server
+  reports a `forge` provider.
