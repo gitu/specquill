@@ -76,43 +76,59 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 	var srcOnce sync.Once
 	var srcAllowed map[string]bool
 	var srcFiles map[string]map[string]string
+	mgr := s.gitm(r)
 	loadSources := func() {
 		srcOnce.Do(func() {
 			srcAllowed, srcFiles = map[string]bool{}, map[string]map[string]string{}
-			catalog, err := s.store.Sources()
-			if err != nil {
-				return
-			}
-			kinds := map[string]string{}
-			for _, src := range catalog {
-				kinds[src.Name] = src.Kind
-			}
-			names := make([]string, 0, len(kinds))
-			// selection ∩ catalog when the in-repo config selects; the whole
-			// catalog otherwise (same fallback as the tree's reference section)
-			if yml, _, err := repo.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
-				if cfg, err := project.ParseConfig(yml); err == nil {
-					if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
-						for _, ref := range refs {
-							names = append(names, ref.Source)
-						}
-					} else if cfg.References == nil {
-						for n := range kinds {
-							names = append(names, n)
-						}
+			var names []string
+			if s.patMode() {
+				// forge-PAT mode: the in-repo sources: definitions are the set
+				s.registerUserSources(mgr)
+				if cfg := inRepoConfig(repo); cfg != nil {
+					for _, sd := range cfg.Sources {
+						names = append(names, sd.Name)
 					}
 				}
 			} else {
-				for n := range kinds {
-					names = append(names, n)
+				catalog, err := s.store.Sources()
+				if err != nil {
+					return
+				}
+				kinds := map[string]string{}
+				for _, src := range catalog {
+					kinds[src.Name] = src.Kind
+				}
+				// selection ∩ catalog when the in-repo config selects; the whole
+				// catalog otherwise (same fallback as the tree's reference section)
+				if yml, _, err := repo.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
+					if cfg, err := project.ParseConfig(yml); err == nil {
+						if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
+							for _, ref := range refs {
+								names = append(names, ref.Source)
+							}
+						} else if cfg.References == nil {
+							for n := range kinds {
+								names = append(names, n)
+							}
+						}
+					}
+				} else {
+					for n := range kinds {
+						names = append(names, n)
+					}
 				}
 			}
 			for _, n := range names {
 				srcAllowed[n] = true
-				if gr, ok := s.git.Repo(n); ok {
-					if snap := s.sourceSnapshot(n, gr); snap != nil {
-						srcFiles[n] = snap
-					}
+				gr, ok := mgr.Repo(n)
+				if !ok {
+					continue
+				}
+				if s.patMode() && gr.EnsureCloned() != nil {
+					continue // unreachable with this token — links to it stay unverified
+				}
+				if snap := s.sourceSnapshot(n, gr); snap != nil {
+					srcFiles[n] = snap
 				}
 			}
 		})

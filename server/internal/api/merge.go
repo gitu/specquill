@@ -85,6 +85,12 @@ func (s *Server) getMergePreview(w http.ResponseWriter, r *http.Request, repo *p
 // writes and commits on their own branch, but publishing to the branch
 // everyone reads is the higher rung. Unprotected targets merge at editor.
 func (s *Server) postMerge(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.patMode() {
+		// forge-PAT mode: the default branch only moves on the forge — push
+		// the workspace branch and open a merge request (POST .../propose)
+		jsonError2(w, http.StatusForbidden, "in-app merges are disabled — propose the changes as a merge request instead", "merge_via_forge")
+		return
+	}
 	var body struct{ Source, Target, Strategy, Message string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid body")

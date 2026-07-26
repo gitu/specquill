@@ -90,13 +90,23 @@ type GitConfig struct {
 	CommitterEmail string `yaml:"committer_email"`
 }
 
-type OIDCConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	Issuer          string   `yaml:"issuer"`
-	ClientID        string   `yaml:"client_id"`
-	ClientSecretEnv string   `yaml:"client_secret_env"`
-	Scopes          []string `yaml:"scopes"`
+// ForgeAuthConfig turns on forge-PAT authentication: users sign in with a
+// personal access token from the deployment's git host. The token lives in
+// the user's browser (localStorage) and, per session, in server RAM — never
+// in the store. Identity, deployment role and git/forge credentials all come
+// from that token.
+type ForgeAuthConfig struct {
+	Kind    string `yaml:"kind"`     // github | gitlab
+	BaseURL string `yaml:"base_url"` // forge web base for self-hosted (e.g. https://gitlab.example.com)
+	// TokenCreateURL overrides the derived "create a token" deep link shown on
+	// the login page (prefilled name + scopes where the forge supports it).
+	TokenCreateURL string `yaml:"token_create_url"`
+	// Scopes the login page asks the user to grant; defaulted per kind
+	// (gitlab: api; github: repo).
+	Scopes []string `yaml:"scopes"`
 }
+
+func (f ForgeAuthConfig) Enabled() bool { return f.Kind != "" }
 
 type LocalAuthConfig struct {
 	Enabled bool `yaml:"enabled"`
@@ -110,7 +120,7 @@ type DevUser struct {
 }
 
 type AuthConfig struct {
-	OIDC  OIDCConfig      `yaml:"oidc"`
+	Forge ForgeAuthConfig `yaml:"forge"`
 	Local LocalAuthConfig `yaml:"local"`
 	// AdminEmails bootstrap administration: users whose email matches
 	// (case-insensitive, any provider) get the admin deployment role on
@@ -244,6 +254,15 @@ func (c *Config) Normalize() {
 	// defaults
 	for i := range c.Projects {
 		p := &c.Projects[i]
+		// forge-PAT mode: the deployment's forge is every project's forge
+		if c.Auth.Forge.Enabled() {
+			if p.Forge.Kind == "" {
+				p.Forge.Kind = c.Auth.Forge.Kind
+			}
+			if p.Forge.BaseURL == "" && c.Auth.Forge.BaseURL != "" {
+				p.Forge.BaseURL = forgeAPIBase(c.Auth.Forge.Kind, c.Auth.Forge.BaseURL)
+			}
+		}
 		if p.DefaultBranch == "" {
 			p.DefaultBranch = "main"
 		}
@@ -298,6 +317,60 @@ func (c *Config) Normalize() {
 	}
 }
 
+// forgeAPIBase derives the REST API base from a forge's web base URL.
+func forgeAPIBase(kind, webBase string) string {
+	base := strings.TrimSuffix(webBase, "/")
+	switch kind {
+	case forge.KindGitHub:
+		if strings.HasSuffix(base, "github.com") {
+			return "https://api.github.com"
+		}
+		return base + "/api/v3"
+	case forge.KindGitLab:
+		return base + "/api/v4"
+	}
+	return base
+}
+
+// TokenCreateLink is the "create a personal access token" deep link the login
+// page offers, prefilled where the forge supports it.
+func (c *Config) TokenCreateLink() string {
+	f := c.Auth.Forge
+	if f.TokenCreateURL != "" {
+		return f.TokenCreateURL
+	}
+	scopes := strings.Join(c.ForgeScopes(), ",")
+	base := strings.TrimSuffix(f.BaseURL, "/")
+	switch f.Kind {
+	case forge.KindGitLab:
+		if base == "" {
+			base = "https://gitlab.com"
+		}
+		return base + "/-/user_settings/personal_access_tokens?name=specquill&scopes=" + scopes
+	case forge.KindGitHub:
+		if base == "" {
+			base = "https://github.com"
+		}
+		return base + "/settings/tokens/new?description=specquill&scopes=" + scopes
+	}
+	return ""
+}
+
+// ForgeScopes is the scope list the login page asks for (config override or
+// the per-kind default that covers git push/pull plus the MR/PR API).
+func (c *Config) ForgeScopes() []string {
+	if len(c.Auth.Forge.Scopes) > 0 {
+		return c.Auth.Forge.Scopes
+	}
+	switch c.Auth.Forge.Kind {
+	case forge.KindGitLab:
+		return []string{"api"}
+	case forge.KindGitHub:
+		return []string{"repo"}
+	}
+	return nil
+}
+
 // cleanContentRoot normalizes a project subfolder: slash-separated, no
 // leading/trailing slashes, "" for the repo root. Traversal is rejected in
 // validate().
@@ -313,8 +386,21 @@ func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir is required")
 	}
-	if !c.Auth.OIDC.Enabled && !c.Auth.Local.Enabled {
-		return fmt.Errorf("at least one auth method (oidc or local) must be enabled")
+	if !c.Auth.Forge.Enabled() && !c.Auth.Local.Enabled {
+		return fmt.Errorf("at least one auth method (forge or local) must be enabled")
+	}
+	if c.Auth.Forge.Enabled() {
+		switch c.Auth.Forge.Kind {
+		case forge.KindGitHub, forge.KindGitLab:
+		default:
+			return fmt.Errorf("auth.forge.kind must be github or gitlab (got %q)", c.Auth.Forge.Kind)
+		}
+		// forge-PAT deployments read reference sources from the in-repo
+		// .specquill/config.yml `sources:` — a server-side catalog would need
+		// env credentials the per-user model deliberately does not have
+		if len(c.Sources) > 0 {
+			return fmt.Errorf("auth.forge: sources are defined in-repo (.specquill/config.yml sources:) in forge-PAT mode — remove the top-level sources: block")
+		}
 	}
 	switch c.Auth.DefaultRole {
 	case "", "viewer", "editor", "maintainer", "admin", "none":
@@ -366,12 +452,6 @@ func (c *Config) validate() error {
 		}
 		if src.Kind == "confluence" && src.Space == "" {
 			return fmt.Errorf("source %s: confluence sources require a space", src.Name)
-		}
-	}
-	if c.Auth.OIDC.Enabled {
-		o := c.Auth.OIDC
-		if o.Issuer == "" || o.ClientID == "" {
-			return fmt.Errorf("auth.oidc: issuer and client_id are required when enabled")
 		}
 	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {

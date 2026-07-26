@@ -12,22 +12,23 @@ import (
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
+	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
 // projectByID resolves a project id without an HTTP context (share downloads
-// have no session). Mirrors resolveProject's writable half; read-only
-// sources are never shareable.
-func (s *Server) projectByID(id string) (*project.Project, bool) {
+// have no session), against an explicit manager. Mirrors resolveProject's
+// writable half; read-only sources are never shareable.
+func (s *Server) projectByID(mgr *gitx.Manager, id string) (*project.Project, bool) {
 	if tp, err := s.store.Project(id); err == nil {
-		repo, ok := s.git.Repo(tp.RepoID)
+		repo, ok := mgr.Repo(tp.RepoID)
 		if !ok {
 			return nil, false
 		}
 		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
 	}
-	repo, ok := s.git.Repo(id)
+	repo, ok := mgr.Repo(id)
 	if !ok || !repo.Writable() {
 		return nil, false
 	}
@@ -46,7 +47,7 @@ func shareResp(l *store.ShareLink) map[string]any {
 // would wrongly deny grant-only members).
 func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) bool {
 	id := r.PathValue("repo")
-	p, ok := s.projectByID(id)
+	p, ok := s.projectByID(s.gitm(r), id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "unknown project "+id)
 		return false
@@ -118,7 +119,14 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p, ok := s.projectByID(l.ProjectID)
+	// forge-PAT mode: serve from the minting user's clone — the download has
+	// no session, so the only content it may expose is what the link's
+	// creator could already see
+	mgr := s.git
+	if s.patMode() {
+		mgr = s.fleet.ForUser(l.CreatedBy)
+	}
+	p, ok := s.projectByID(mgr, l.ProjectID)
 	if !ok {
 		http.NotFound(w, r)
 		return

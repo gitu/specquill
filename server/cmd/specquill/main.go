@@ -150,11 +150,17 @@ func serve(configPath string, dev bool) error {
 	git.Notify = func(kind, repo, branch string) {
 		bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
 	}
-	log.Printf("initializing %d repo(s) under %s", len(cfg.Repos), cfg.DataDir)
-	if err := git.Init(); err != nil {
-		return err
+	if cfg.Auth.Forge.Enabled() {
+		// forge-PAT mode: no deployment credentials — every clone and fetch
+		// happens lazily, per user, with that user's own token
+		log.Printf("forge-PAT auth (%s): per-user clones under %s, no boot clone/sync", cfg.Auth.Forge.Kind, cfg.DataDir)
+	} else {
+		log.Printf("initializing %d repo(s) under %s", len(cfg.Repos), cfg.DataDir)
+		if err := git.Init(); err != nil {
+			return err
+		}
+		git.StartSyncLoops()
 	}
-	git.StartSyncLoops()
 
 	// importer.Runner materializes non-git sources (url/openapi/confluence) into
 	// their mirror repos on a schedule; git.Init() has already created the empty
@@ -167,15 +173,6 @@ func serve(configPath string, dev bool) error {
 		}
 	}
 	imp.Start(context.Background())
-
-	var oidcAuth *auth.OIDC
-	if cfg.Auth.OIDC.Enabled {
-		oidcAuth, err = auth.NewOIDC(context.Background(), cfg)
-		if err != nil {
-			return err
-		}
-		log.Printf("oidc enabled: issuer %s", cfg.Auth.OIDC.Issuer)
-	}
 
 	var aiClient *ai.Client
 	if cfg.AI.Enabled {
@@ -190,7 +187,6 @@ func serve(configPath string, dev bool) error {
 	handler := api.New(cfg, git, api.Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
-		OIDC:     oidcAuth,
 		AI:       aiClient,
 		Bus:      bus,
 		Importer: imp,
