@@ -36,7 +36,9 @@ which the spec requires consumers to preserve.
   commit. Merge commits appear in `log.md` on the next commit after them.
   Per the spec both files are *optional* ("MAY appear in any directory", §6/§7)
   — generating them everywhere is a producer convenience, not a conformance
-  requirement.
+  requirement. The app marks these files as generated (grayed in the tree,
+  view-only in the editor) and refuses to create, edit or rename them
+  manually — a hand edit would be overwritten at the next commit.
 - **Relative links by default** — generated index entries use standard
   relative markdown paths, so a bundle renders on any forge (GitHub et al.)
   without SpecQuill. OKF §5.1 *recommends* the `/`-absolute bundle-root form

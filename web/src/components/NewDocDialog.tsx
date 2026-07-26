@@ -6,6 +6,7 @@ import { useNav } from '../state/nav';
 import { api } from '../api/client';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { newDocTemplate } from '../lib/newdoc';
+import { isReservedMd } from '../lib/model';
 import { existingIds, generateId, hasRandomToken, hasSlugToken, idPattern, slugify, slugifyPath } from '../lib/ids';
 
 // sentinel for the "create a new subfolder" option — real subfolders come
@@ -77,7 +78,9 @@ export function NewDocDialog({ initialKind, onClose }: { initialKind?: string; o
   const path = folder + (subPath ? subPath + '/' : '') + fileName;
   const idConflict = !!id && taken.has(id.toLowerCase());
   const pathConflict = !!files[path];
-  const canCreate = !!ent && !!id.trim() && !idConflict && !pathConflict && !busy && (sub !== NEW_SUB || !!slugifyPath(newSub));
+  // index.md/log.md are OKF reserved names, generated at commit time
+  const reserved = isReservedMd(fileName);
+  const canCreate = !!ent && !!id.trim() && !idConflict && !pathConflict && !reserved && !busy && (sub !== NEW_SUB || !!slugifyPath(newSub));
 
   const create = async () => {
     if (!canCreate) return;
@@ -160,9 +163,14 @@ export function NewDocDialog({ initialKind, onClose }: { initialKind?: string; o
             : <>scheme <span style={sx("font-family:'JetBrains Mono',monospace")}>{pattern}</span></>}
         </div>
 
-        <div style={sx("margin-top:14px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-family:'JetBrains Mono',monospace;font-size:11.5px;color:" + (pathConflict ? 'var(--del)' : 'var(--text-2)'))}>
+        <div style={sx("margin-top:14px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-family:'JetBrains Mono',monospace;font-size:11.5px;color:" + (pathConflict || reserved ? 'var(--del)' : 'var(--text-2)'))}>
           {path}{pathConflict ? ' — already exists' : ''}
         </div>
+        {reserved && (
+          <div style={sx('margin-top:8px;font-size:11.5px;color:var(--del)')}>
+            “index” and “log” are reserved — these files are generated automatically at commit time.
+          </div>
+        )}
 
         {error && <div style={sx('margin-top:8px;color:var(--del);font-size:12px')}>create failed: {error}</div>}
         <div style={sx('display:flex;gap:8px;justify-content:flex-end;margin-top:16px')}>

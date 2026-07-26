@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { sx } from '../lib/sx';
 import { referencingDocs, rewriteRefs } from '../lib/refactor';
+import { isReservedMd } from '../lib/model';
 import { useApp } from '../state/AppContext';
 import { useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -26,7 +27,10 @@ export function MoveDialog({ path, onClose }: { path: string; onClose: () => voi
   const refs = useMemo(() => (app.files ? referencingDocs(app.files, path) : []), [app.files, path]);
 
   const target = to.trim().replace(/^\/+/, '');
-  const valid = !!target && target !== path && !target.endsWith('/');
+  // reserved OKF names are generated at commit time — never a valid move
+  // source (it would regenerate) or target (it would be overwritten)
+  const reserved = isReservedMd(target) || isReservedMd(path);
+  const valid = !!target && target !== path && !target.endsWith('/') && !reserved;
 
   const submit = async () => {
     if (!valid || busy) return;
@@ -75,6 +79,11 @@ export function MoveDialog({ path, onClose }: { path: string; onClose: () => voi
         <label style={sx('display:block;font-size:11.5px;font-weight:600;color:var(--text-2);margin:14px 0 5px')}>New path</label>
         <input value={to} onChange={(e) => setTo(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
           style={sx("width:100%;height:32px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px")} />
+        {reserved && (
+          <div style={sx('margin-top:8px;font-size:12px;color:var(--del)')}>
+            index.md and log.md are reserved — these files are generated automatically at commit time.
+          </div>
+        )}
 
         {refs.length > 0 ? (
           <label style={sx('display:flex;align-items:flex-start;gap:8px;margin-top:14px;font-size:12.5px;cursor:pointer')}>
