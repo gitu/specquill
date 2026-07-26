@@ -221,7 +221,7 @@ function DraftResultCard({ result, onReview }: { result: DraftResult; onReview: 
         </div>
         {result.applied.length > 0 && (
           <button onClick={onReview} style={sx('margin-top:11px;display:flex;align-items:center;gap:8px;padding:8px 11px;border:none;border-radius:8px;background:var(--ai);color:#fff;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer')}>
-            Review on {result.branch} → commit → PR
+            Review on {result.branch} → commit → merge
           </button>
         )}
       </div>

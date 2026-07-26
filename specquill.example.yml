@@ -4,11 +4,12 @@ listen: ":8080"
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
 base_url: https://specquill.example.com
 
-# Postgres store: users, sessions, PR review state, collab logs. The DSN
-# carries credentials, so production must pass it via env (works great with
-# a serverless Postgres like Neon).
-database:
-  url_env: SPECQUILL_DATABASE_URL   # e.g. postgres://…neon.tech/specquill?sslmode=require
+# Store (users, sessions, PR review state, collab logs): an embedded SQLite
+# file. Defaults to <data_dir>/specquill.db, so this block is optional — set
+# it only to place the DB on another volume. Back it with persistent storage:
+# unlike data_dir's clones, it is not rebuildable.
+# database:
+#   path: /var/lib/specquill/specquill.db
 
 # projects are writable editing workspaces (a git repo, optionally rooted at a
 # content_root subfolder for monorepos)
@@ -18,6 +19,14 @@ projects:
     default_branch: main
     token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
     # content_root: docs/specs           # monorepo: workspace lives in a subfolder
+    # Optional, read-only: show the branch's open merge request and its
+    # comments from the git host. SpecQuill merges directly and has no in-app
+    # review, so this is where forge review feedback shows up.
+    # forge:
+    #   kind: gitlab                     # gitlab | github (omit = feature off)
+    #   # base_url: https://gitlab.example.com/api/v4   # self-hosted
+    #   # project: acme/specs            # only if the remote does not name it (ssh alias)
+    #   # token_env: SPECQUILL_FORGE_TOKEN              # defaults to token_env above
 
 # sources are the read-only reference catalog projects may reference and the
 # copilot may ground on. Credentials always come from token_env — never inline.
@@ -47,9 +56,6 @@ sources:
   #   remote: https://acme.atlassian.net/wiki
   #   space: REG
   #   token_env: SPECQUILL_CONFLUENCE_TOKEN
-
-# grants attach sources to the default (self-host) tenant; omit to grant all
-grants: [regulations]
 
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by

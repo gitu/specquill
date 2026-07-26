@@ -16,19 +16,15 @@ import (
 	"specquill/server/internal/store"
 )
 
-// P4 trust boundary: the copilot only grounds on sources that are BOTH selected
-// in the project's in-repo config (stage 3) AND granted to the tenant (stage 2).
-// Revoking the grant drops the source from the copilot context even though the
+// Trust boundary: the copilot only grounds on sources that are BOTH selected
+// in the project's in-repo config AND present in the catalog. Removing the
+// catalog entry drops the source from the copilot context even though the
 // in-repo selection is unchanged — an in-repo file can never mint access.
-func TestGroundingRequiresGrant(t *testing.T) {
+func TestGroundingRequiresCatalogEntry(t *testing.T) {
 	h, st, git := testGroundingServer(t)
 	cookie := login(t, h)
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	// register + globally source the readonly regulations repo (stage 1)
+	// register the readonly regulations repo, NOT yet in the catalog
 	reg := filepath.Join(t.TempDir(), "reg-src")
 	gitRun(t, "init", "-b", "main", reg)
 	if err := os.MkdirAll(filepath.Join(reg, "regulations"), 0o755); err != nil {
@@ -39,10 +35,7 @@ func TestGroundingRequiresGrant(t *testing.T) {
 	}
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "reg")
-	if _, err := git.AddRepo("default", config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: reg, DefaultBranch: "main"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncGlobalSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: reg, DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,29 +48,25 @@ func TestGroundingRequiresGrant(t *testing.T) {
 		return g
 	}
 
-	// selected in-repo but NOT granted → not grounded (stage-2 gate)
+	// selected in-repo but NOT cataloged → not grounded
 	if g := grounded(); len(g) != 0 {
-		t.Fatalf("ungranted source leaked into grounding: %v", g)
+		t.Fatalf("uncataloged source leaked into grounding: %v", g)
 	}
 
-	// grant it (stage 2) → the selection now takes effect
-	srcRow, err := st.SourceByName(ten.ID, "reg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.GrantSource(ten.ID, srcRow.ID, 0); err != nil {
+	// catalog it → the selection now takes effect
+	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
 		t.Fatal(err)
 	}
 	if g := grounded(); len(g) != 1 || g[0] != "reg" {
-		t.Fatalf("granted source not grounded: %v", g)
+		t.Fatalf("cataloged source not grounded: %v", g)
 	}
 
-	// revoke → grounding drops it again, in-repo selection untouched
-	if err := st.RevokeGrant(ten.ID, srcRow.ID); err != nil {
+	// remove the entry → grounding drops it again, in-repo selection untouched
+	if err := st.SyncSources(nil); err != nil {
 		t.Fatal(err)
 	}
 	if g := grounded(); len(g) != 0 {
-		t.Fatalf("revoked source still grounded: %v", g)
+		t.Fatalf("removed source still grounded: %v", g)
 	}
 }
 
@@ -114,11 +103,7 @@ func testGroundingServer(t *testing.T) (http.Handler, *store.Store, *gitx.Manage
 		Repos:   []config.RepoConfig{{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"}},
 	}
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
+	if err := st.SyncProjects([]store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")

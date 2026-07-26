@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"specquill/server/internal/gitx"
 	"specquill/server/internal/store"
 )
 
@@ -27,22 +26,15 @@ func login(t *testing.T, h http.Handler) *http.Cookie {
 	return nil
 }
 
-// promoteTenantRole sets the user's role in the default config tenant —
-// tests exercising gates above the auto-enrolled editor floor use it.
-func promoteTenantRole(t *testing.T, st *store.Store, email, role string) {
+// promoteRole sets the user's deployment role — tests exercising gates above
+// the auto-enrolled editor floor use it.
+func promoteRole(t *testing.T, st *store.Store, email, role string) {
 	t.Helper()
-	u, err := st.UserByEmailOrLogin(email)
+	u, err := st.UserByEmail(email)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ten, err := st.TenantBySlug(gitx.DefaultTenant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.EnsureMember(ten.ID, u.ID, role); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SetMemberRole(ten.ID, u.ID, role); err != nil {
+	if err := st.SetUserRole(u.ID, role); err != nil {
 		t.Fatal(err)
 	}
 }

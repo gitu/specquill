@@ -5,15 +5,16 @@ import (
 	"testing"
 )
 
-// REQ-021.2: merging into a protected branch requires maintainer; an editor
-// opens and approves PRs but cannot land them on main. A PR onto an
-// unprotected branch merges at editor.
+// REQ-021.2: landing on a protected branch requires maintainer. An editor
+// writes and commits on their own branch but cannot publish to the branch
+// everyone reads; an unprotected target merges at editor.
 func TestMergeRequiresMaintainerOnProtected(t *testing.T) {
 	h, st, _ := testServerFull(t, true) // main protected
-	cookie := login(t, h)              // auto-enrolled as editor
+	cookie := login(t, h)               // auto-enrolled as editor
 	wRepoRow(t, st)
 
-	prep := func(branch, file string) float64 {
+	prep := func(branch, file string) {
+		t.Helper()
 		if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/branches", map[string]string{"name": branch}); code != http.StatusOK {
 			t.Fatalf("branch %s: %d %v", branch, code, out)
 		}
@@ -23,35 +24,28 @@ func TestMergeRequiresMaintainerOnProtected(t *testing.T) {
 		if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/commit?branch="+branch, map[string]any{"message": "c", "paths": []string{file}}); code != http.StatusOK {
 			t.Fatalf("commit on %s: %d %v", branch, code, out)
 		}
-		return 0
 	}
 
-	// editor → PR onto protected main: open yes, merge no
+	// editor → protected main: previewing is fine, landing is not
 	prep("feat", "a.md")
-	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/prs", map[string]string{"title": "t", "source": "feat", "target": "main"})
-	if code != http.StatusOK {
-		t.Fatalf("editor PR create: %d %v", code, out)
+	if code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/merge?source=feat", nil); code != http.StatusOK {
+		t.Fatalf("editor preview: want 200, got %d %v", code, out)
 	}
-	n := jsonStr(out["number"])
-	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/prs/"+n+"/merge", nil)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": "feat"})
 	if code != http.StatusForbidden || out["code"] != "role_forbidden" {
 		t.Fatalf("editor merge into protected: want 403 role_forbidden, got %d %v", code, out)
 	}
 
 	// an unprotected target merges at editor
 	prep("side", "b.md")
-	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/prs", map[string]string{"title": "t2", "source": "side", "target": "feat"})
-	if code != http.StatusOK {
-		t.Fatalf("editor PR create (unprotected): %d %v", code, out)
-	}
-	n2 := jsonStr(out["number"])
-	if code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/prs/"+n2+"/merge", nil); code != http.StatusOK {
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/merge",
+		map[string]string{"source": "side", "target": "feat"}); code != http.StatusOK {
 		t.Fatalf("editor merge into unprotected: want 200, got %d %v", code, out)
 	}
 
 	// maintainer lands the protected merge
-	promoteTenantRole(t, st, "flo@test.local", "maintainer")
-	if code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/prs/"+n+"/merge", nil); code != http.StatusOK {
+	promoteRole(t, st, "flo@test.local", "maintainer")
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/merge", map[string]string{"source": "feat"}); code != http.StatusOK {
 		t.Fatalf("maintainer merge into protected: want 200, got %d %v", code, out)
 	}
 }

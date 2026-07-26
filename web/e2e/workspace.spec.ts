@@ -108,19 +108,18 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
   const stamp = Date.now().toString(36);
 
   // the workspace may carry real commits (diverged) — land them through the
-  // normal PR flow first so the update below can fast-forward
+  // normal merge flow first so the update below can fast-forward
   const st = (await (await request.get(`/api/repos/${REPO}/status?branch=${encodeURIComponent(branch)}`)).json()) as { ahead: number };
   const ws0 = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { state: string };
   if (ws0.state === 'diverged' || ws0.state === 'ahead') {
-    const pr0 = (await (await request.post(`/api/repos/${REPO}/prs`, {
-      headers: H, data: { title: `land workspace ${stamp}`, source: branch },
-    })).json()) as { number: number };
-    const merged = await request.post(`/api/repos/${REPO}/prs/${pr0.number}/merge`, { headers: H, data: {} });
+    const merged = await request.post(`/api/repos/${REPO}/merge`, {
+      headers: H, data: { source: branch, message: `land workspace ${stamp}` },
+    });
     test.skip(!merged.ok(), 'workspace commits conflict with main — cannot set up an ff-able workspace');
   }
   void st;
 
-  // move main via a feature branch + PR merge (main itself is protected)
+  // move main via a feature branch merge (main itself is protected)
   const fb = `feature/banner-${stamp}`;
   await request.post(`/api/repos/${REPO}/branches`, { headers: H, data: { name: fb, from: 'main' } });
   const f = (await (await request.get(`/api/repos/${REPO}/files/notes-banner-${stamp}.md?ref=${fb}`)).json()) as { error?: string };
@@ -129,8 +128,7 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
     headers: H, data: { content: `# banner ${stamp}\n`, baseSha: '' },
   });
   await request.post(`/api/repos/${REPO}/commit?branch=${fb}`, { headers: H, data: { message: `banner ${stamp}` } });
-  const pr = (await (await request.post(`/api/repos/${REPO}/prs`, { headers: H, data: { title: `banner ${stamp}`, source: fb } })).json()) as { number: number };
-  await request.post(`/api/repos/${REPO}/prs/${pr.number}/merge`, { headers: H, data: {} });
+  await request.post(`/api/repos/${REPO}/merge`, { headers: H, data: { source: fb, message: `banner ${stamp}` } });
 
   // sit on the (now stale) workspace → banner appears → update clears it
   await page.goto('/p/trading-specs/editor/specs/venue.md');

@@ -3,9 +3,7 @@ package api
 // Share links: an unauthenticated download of the project's OKF bundle as a
 // zip — the secret token in the URL is the only credential, so the link can
 // be pasted straight into an LLM chat or fetched by an agent. Minting and
-// revoking require the maintainer role (REQ-021: exporting protected-branch
-// content to an unauthenticated URL is a protected-content decision);
-// downloads do not.
+// revoking require a session (member role); downloads do not.
 
 import (
 	"crypto/rand"
@@ -18,18 +16,18 @@ import (
 	"specquill/server/internal/store"
 )
 
-// projectByID resolves a project id within a tenant without an HTTP context
-// (share downloads have no session). Mirrors tenantProject's writable half;
-// read-only sources are never shareable.
-func (s *Server) projectByID(t *store.Tenant, id string) (*project.Project, bool) {
-	if tp, err := s.store.TenantProject(t.ID, id); err == nil {
-		repo, ok := s.git.Repo(t.Slug + "/" + tp.RepoID)
+// projectByID resolves a project id without an HTTP context (share downloads
+// have no session). Mirrors resolveProject's writable half; read-only
+// sources are never shareable.
+func (s *Server) projectByID(id string) (*project.Project, bool) {
+	if tp, err := s.store.Project(id); err == nil {
+		repo, ok := s.git.Repo(tp.RepoID)
 		if !ok {
 			return nil, false
 		}
 		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
 	}
-	repo, ok := s.git.Repo(t.Slug + "/" + id)
+	repo, ok := s.git.Repo(id)
 	if !ok || !repo.Writable() {
 		return nil, false
 	}
@@ -43,35 +41,30 @@ func shareResp(l *store.ShareLink) map[string]any {
 	}
 }
 
-// shareAccess resolves the tenant + project of {repo} and gates on the
-// effective per-repo role (share links are repo-scoped, so tenant-level
-// roleH would wrongly deny grant-only members).
-func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) (*store.Tenant, bool) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return nil, false
-	}
+// shareAccess resolves the project of {repo} and gates on the effective
+// per-repo role (share links are repo-scoped, so deployment-level roleH
+// would wrongly deny grant-only members).
+func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) bool {
 	id := r.PathValue("repo")
-	p, ok := s.projectByID(t, id)
+	p, ok := s.projectByID(id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "unknown project "+id)
-		return nil, false
+		return false
 	}
 	u := auth.UserFrom(r.Context())
-	if s.effectiveRepoRole(u, t, p.Repo.Cfg.ID) < minRole {
+	if s.effectiveRepoRole(u, p.Repo.Cfg.ID) < minRole {
 		jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
-		return nil, false
+		return false
 	}
-	return t, true
+	return true
 }
 
 // GET /api/repos/{repo}/share — the project's current share link, if any.
 func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, authz.Viewer)
-	if !ok {
+	if !s.shareAccess(w, r, authz.Viewer) {
 		return
 	}
-	l, err := s.store.ShareLink(t.ID, r.PathValue("repo"))
+	l, err := s.store.ShareLink(r.PathValue("repo"))
 	if err != nil {
 		jsonOK(w, map[string]any{"url": nil})
 		return
@@ -81,8 +74,7 @@ func (s *Server) getShare(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/repos/{repo}/share — mint (or rotate) the share token.
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, authz.Maintainer)
-	if !ok {
+	if !s.shareAccess(w, r, authz.Maintainer) {
 		return
 	}
 	id := r.PathValue("repo")
@@ -93,11 +85,11 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(buf)
 	u := auth.UserFrom(r.Context())
-	if err := s.store.SetShareLink(t.ID, id, token, u.ID); err != nil {
+	if err := s.store.SetShareLink(id, token, u.ID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	l, err := s.store.ShareLink(t.ID, id)
+	l, err := s.store.ShareLink(id)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -107,11 +99,10 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/repos/{repo}/share — revoke the link.
 func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.shareAccess(w, r, authz.Maintainer)
-	if !ok {
+	if !s.shareAccess(w, r, authz.Maintainer) {
 		return
 	}
-	if err := s.store.DeleteShareLink(t.ID, r.PathValue("repo")); err != nil {
+	if err := s.store.DeleteShareLink(r.PathValue("repo")); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -127,12 +118,7 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	t, err := s.store.TenantByID(l.TenantID)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	p, ok := s.projectByID(t, l.ProjectID)
+	p, ok := s.projectByID(l.ProjectID)
 	if !ok {
 		http.NotFound(w, r)
 		return

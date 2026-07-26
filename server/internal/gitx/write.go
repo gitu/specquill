@@ -291,11 +291,16 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 			return "", err
 		}
 	} else {
-		args := append([]string{"add", "-A", "--"}, paths...)
+		// validate first, then build argv from what the check returned —
+		// git must never see a path that has not been through safeRelPath
+		args := make([]string, 0, len(paths)+3)
+		args = append(args, "add", "-A", "--")
 		for _, p := range paths {
-			if _, err := safeRelPath(p); err != nil {
+			clean, err := safeRelPath(p)
+			if err != nil {
 				return "", err
 			}
+			args = append(args, clean)
 		}
 		if _, err := run(wt, nil, args...); err != nil {
 			return "", err
@@ -311,9 +316,10 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 		"GIT_COMMITTER_NAME=" + authorName,
 		"GIT_COMMITTER_EMAIL=" + authorEmail,
 	}
+	// -F - takes the message on stdin: arbitrary user text never reaches argv
 	message = r.withServiceTrailer(message)
-	if _, err := run(wt, env, "commit", "--no-verify",
-		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-m", message); err != nil {
+	if _, _, err := runFull(wt, env, []byte(message), "commit", "--no-verify",
+		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-F", "-"); err != nil {
 		return "", err
 	}
 	sha, err := run(wt, nil, "rev-parse", "HEAD")

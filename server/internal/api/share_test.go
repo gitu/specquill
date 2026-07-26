@@ -16,7 +16,7 @@ func TestShareLinkLifecycle(t *testing.T) {
 	h, st, _ := testGroundingServer(t)
 	cookie := login(t, h)
 	// minting is maintainer-gated (REQ-021) — promote the enrolled editor
-	promoteTenantRole(t, st, "flo@test.local", "maintainer")
+	promoteRole(t, st, "flo@test.local", "maintainer")
 
 	// no link yet
 	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/share", nil)

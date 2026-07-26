@@ -9,8 +9,7 @@ export interface StatusResp {
   behindDefault: number;
 }
 
-export interface Membership { tenant: { slug: string; provider: string; displayName: string }; role: string }
-export interface Me { id: number; name: string; email: string; provider: string; initials: string; tenants?: Membership[] }
+export interface Me { id: number; name: string; email: string; provider: string; initials: string; role: string }
 
 export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/api/me'), staleTime: 60_000 });
@@ -84,84 +83,71 @@ export function useStatus(repo: string | undefined, branch: string) {
   });
 }
 
-// ---------------------------------------------------------------- PRs
+// ---------------------------------------------------------------- diffs
 
-export interface PRUser { id: number; name: string; email: string }
-export interface PRApproval { user: PRUser; commitSha: string; createdAt: number; current: boolean }
-export interface PR {
-  repo: string; number: number; title: string; body: string;
-  source: string; target: string; author: PRUser; state: 'open' | 'merged' | 'closed';
-  mergedCommit?: string; createdAt: number; mergedAt?: number;
-  headSha: string; mergeable?: boolean; conflicts?: string[];
-  approvals: PRApproval[]; commentCount: number;
-}
 export interface DiffLine { op: string; text: string }
 export interface DiffHunk { header: string; lines: DiffLine[] }
 export interface DiffFile {
   path: string; oldPath?: string; status: string;
   additions: number; deletions: number; binaryLike: boolean; hunks: DiffHunk[] | null;
 }
-export interface PRComment {
-  id: number; author: PRUser; filePath?: string; line?: number;
-  anchoredCommit?: string; body: string; resolved: boolean; createdAt: number; outdated: boolean;
+
+// ---------------------------------------------------------------- merging
+
+export interface MergePreview {
+  source: string; target: string;
+  dirty?: string[]; mergeable?: boolean; conflicts?: string[]; files: DiffFile[];
 }
 
-export function usePRs(repo: string | undefined, state = 'open') {
+/** What merging `source` into `target` would land — diff, conflicts, dirty files. */
+export function useMergePreview(repo: string | undefined, source: string | undefined, target: string | undefined) {
   return useQuery({
-    queryKey: ['prs', repo, state],
-    queryFn: () => api<PR[]>(`/api/repos/${repo}/prs?state=${state}`),
-    enabled: !!repo,
+    queryKey: ['mergepreview', repo, source, target],
+    queryFn: () => api<MergePreview>(
+      `/api/repos/${repo}/merge?source=${encodeURIComponent(source!)}&target=${encodeURIComponent(target ?? '')}`),
+    enabled: !!repo && !!source,
   });
 }
 
-export function usePR(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['pr', repo, n],
-    queryFn: () => api<PR>(`/api/repos/${repo}/prs/${n}`),
-    enabled: !!repo && !!n,
-  });
-}
-
-export function usePRDiff(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['prdiff', repo, n],
-    queryFn: () => api<{ files: DiffFile[] }>(`/api/repos/${repo}/prs/${n}/diff`),
-    enabled: !!repo && !!n,
-  });
-}
-
-export function usePRComments(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['prcomments', repo, n],
-    queryFn: () => api<PRComment[]>(`/api/repos/${repo}/prs/${n}/comments`),
-    enabled: !!repo && !!n,
-  });
-}
-
-export function useCreatePR(repo: string | undefined) {
+/** Land a branch on the target. 409 `dirty` means commit first. */
+export function useMerge(repo: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { title: string; body?: string; source: string; target?: string }) =>
-      api<PR>(`/api/repos/${repo}/prs`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['prs', repo] }),
-  });
-}
-
-export function usePRAction(repo: string | undefined, n: number | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ action, payload }: { action: 'approve' | 'merge' | 'close' | 'comments'; payload?: unknown }) =>
-      api(`/api/repos/${repo}/prs/${n}/${action}`, { method: 'POST', body: JSON.stringify(payload ?? {}) }),
-    onSuccess: (_, { action }) => {
-      qc.invalidateQueries({ queryKey: ['pr', repo, n] });
-      qc.invalidateQueries({ queryKey: ['prs', repo] });
-      qc.invalidateQueries({ queryKey: ['prcomments', repo, n] });
-      if (action === 'merge') {
-        qc.invalidateQueries({ queryKey: ['snapshot'] });
-        qc.invalidateQueries({ queryKey: ['branches', repo] });
-        qc.invalidateQueries({ queryKey: ['status'] });
-      }
+    mutationFn: (body: { source: string; target?: string; strategy?: string; message?: string }) =>
+      api<{ mergedCommit: string }>(`/api/repos/${repo}/merge`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mergepreview', repo] });
+      qc.invalidateQueries({ queryKey: ['snapshot'] });
+      qc.invalidateQueries({ queryKey: ['branches', repo] });
+      qc.invalidateQueries({ queryKey: ['status'] });
+      qc.invalidateQueries({ queryKey: ['history'] });
     },
+  });
+}
+
+
+// ---------------------------------------------------------------- forge
+
+export interface ForgeComment {
+  author: string; body: string; path?: string; line?: number; createdAt: string; url?: string;
+}
+export interface ForgeRequest {
+  number: number; title: string; state: string; author: string; url: string; comments: ForgeComment[];
+}
+export interface ForgeResp {
+  enabled: boolean;
+  request?: ForgeRequest | null;   // null = the branch has no open merge request
+  error?: string;                  // forge unreachable/misconfigured — panel degrades
+}
+
+/** The open merge request for a branch on the configured forge, read-only. */
+export function useForgeRequest(repo: string | undefined, branch: string | undefined) {
+  return useQuery({
+    queryKey: ['forge', repo, branch],
+    queryFn: () => api<ForgeResp>(`/api/repos/${repo}/forge/request?branch=${encodeURIComponent(branch!)}`),
+    enabled: !!repo && !!branch,
+    staleTime: 60_000,
+    retry: false,
   });
 }
 

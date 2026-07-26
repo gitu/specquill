@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useMe, usePRs } from '../api/hooks';
+import { useBranches, useMergePreview } from '../api/hooks';
 import { buildDashboard, srcMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
+import { ForgeReview } from '../components/ForgeReview';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -13,27 +14,24 @@ interface ReviewItem { key: string; icon: string; fg: string; bg: string; title:
 export function Dashboard() {
   const nav = useNav();
   const app = useApp();
-  const me = useMe();
-  const prs = usePRs(app.repoId);
+  const branches = useBranches(app.repoId);
+  const defaultBranch = branches.data?.find((b) => b.isDefault)?.name;
+  const onFeature = !!defaultBranch && app.branch !== defaultBranch;
+  const merge = useMergePreview(app.repoId, onFeature ? app.branch : undefined, defaultBranch);
   const [newDoc, setNewDoc] = useState(false);
   if (!app.model) return <Loading />;
   const d = buildDashboard(app.model);
   const covColor = d.cov > 80 ? 'var(--data)' : d.cov > 60 ? 'var(--prod)' : 'var(--reg)';
 
-  // needs-your-review: open PRs (yours vs. awaiting your approval), mapping
-  // docs with drifted fields, and change records still in triage
+  // needs-your-attention: committed work not yet on the default branch,
+  // mapping docs with drifted fields, and change records still in triage
   const review: ReviewItem[] = [];
-  for (const p of prs.data || []) {
-    const mine = p.author.id === me.data?.id;
-    const approvedByMe = p.approvals.some((a) => a.current && a.user.id === me.data?.id);
-    const state = mine ? (p.approvals.some((a) => a.current) ? 'approved — ready to merge' : 'your open PR')
-      : approvedByMe ? 'you approved' : 'awaiting your review';
-    const comments = p.commentCount ? ` · ${p.commentCount} comment${p.commentCount === 1 ? '' : 's'}` : '';
+  const pending = merge.data?.files?.length ?? 0;
+  if (pending > 0) {
     review.push({
-      key: 'pr' + p.number, icon: '⑂', fg: 'var(--prod)', bg: 'var(--prod-bg)',
-      title: `PR #${p.number} · ${p.title}`,
-      sub: state + comments,
-      go: `/prs/${p.number}`,
+      key: 'merge', icon: '⑂', fg: 'var(--prod)', bg: 'var(--prod-bg)',
+      title: `${pending} file${pending === 1 ? '' : 's'} ready to merge`,
+      sub: `committed on ${app.branch}, not yet on ${defaultBranch} — use Merge in the header`,
     });
   }
   const driftByMap: Record<string, number> = {};
@@ -148,6 +146,7 @@ export function Dashboard() {
               </div>
             </div>
             <LinkCheckCard />
+            <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>
       </div>

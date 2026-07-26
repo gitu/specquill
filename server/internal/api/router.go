@@ -17,41 +17,36 @@ import (
 	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
-	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/store"
 )
 
 type Server struct {
-	cfg      *config.Config
-	git      *gitx.Manager
-	store    *store.Store
-	sessions *auth.Sessions
-	oidc     *auth.OIDC
-	github   *auth.GitHub
-	ghApp    *githubapp.App // nil unless github_app: is configured
-	ghRoles  *roleCache     // TTL cache of github permission→role lookups
-	ai       *ai.Client     // nil when disabled
-	bus      *events.Bus    // nil-safe
-	hub      *collab.Hub
-	devUser  *store.User
-	srcCache *srcCache        // grounding source snapshots, keyed by repo key + head SHA
-	importer *importer.Runner // nil when no non-git sources are configured
+	cfg        *config.Config
+	git        *gitx.Manager
+	store      *store.Store
+	sessions   *auth.Sessions
+	oidc       *auth.OIDC
+	ai         *ai.Client  // nil when disabled
+	bus        *events.Bus // nil-safe
+	hub        *collab.Hub
+	devUser    *store.User
+	srcCache   *srcCache        // grounding source snapshots, keyed by repo key + head SHA
+	forgeCache *forgeCache      // forge review threads, keyed by repo key + branch
+	importer   *importer.Runner // nil when no non-git sources are configured
 }
 
 type Options struct {
-	Store     *store.Store
-	Sessions  *auth.Sessions
-	OIDC      *auth.OIDC     // nil when disabled
-	GitHub    *auth.GitHub   // nil when disabled
-	GitHubApp *githubapp.App // nil unless github_app: is configured
-	AI        *ai.Client     // nil when disabled
-	Bus       *events.Bus    // nil-safe
-	Hub       *collab.Hub
-	Importer  *importer.Runner // nil when no non-git sources are configured
-	Dist      fs.FS
-	Dev       bool
+	Store    *store.Store
+	Sessions *auth.Sessions
+	OIDC     *auth.OIDC  // nil when disabled
+	AI       *ai.Client  // nil when disabled
+	Bus      *events.Bus // nil-safe
+	Hub      *collab.Hub
+	Importer *importer.Runner // nil when no non-git sources are configured
+	Dist     fs.FS
+	Dev      bool
 }
 
 func (s *Server) publish(kind, repo, branch string) {
@@ -59,7 +54,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, github: opts.GitHub, ghApp: opts.GitHubApp, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), ghRoles: newRoleCache()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache()}
 	if s.hub == nil {
 		s.hub = collab.NewHub(opts.Store, git)
 	}
@@ -67,11 +62,9 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
 			s.devUser = u
-			// the dev user administers the default tenant (management API)
-			if def, err := opts.Store.TenantBySlug(gitx.DefaultTenant); err == nil {
-				_ = opts.Store.EnsureMember(def.ID, u.ID, "admin")
-				_ = opts.Store.SetMemberRole(def.ID, u.ID, "admin")
-			}
+			// the dev user administers the deployment (management API)
+			_ = opts.Store.SetUserRole(u.ID, "admin")
+			u.Role = "admin"
 			log.Printf("dev mode: auto-authenticating as %s <%s>", u.Name, u.Email)
 		}
 	}
@@ -84,13 +77,10 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("DELETE /api/projects/{id}", s.roleH(authz.Admin, s.deleteProject))
 	apiMux.HandleFunc("POST /api/sources/{name}/sync", s.roleH(authz.Editor, s.syncSource))
 	apiMux.HandleFunc("GET /api/members", s.roleH(authz.Admin, s.listMembers))
-	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.repoAdminH(s.listGrants))
-	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.repoAdminH(s.createGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.repoAdminH(s.deleteGrant))
-	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.repoAdminH(s.deleteGrantInvite))
-	apiMux.HandleFunc("GET /api/github/repos", s.roleH(authz.Admin, s.listGitHubRepos))
-	apiMux.HandleFunc("POST /api/github/repos", s.roleH(authz.Admin, s.addGitHubRepo))
-	apiMux.HandleFunc("DELETE /api/github/repos/{id}", s.roleH(authz.Admin, s.removeGitHubRepo))
+	apiMux.HandleFunc("GET /api/repos/{repo}/grants", s.roleH(authz.Admin, s.listGrants))
+	apiMux.HandleFunc("POST /api/repos/{repo}/grants", s.roleH(authz.Admin, s.createGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/{userId}", s.roleH(authz.Admin, s.deleteGrant))
+	apiMux.HandleFunc("DELETE /api/repos/{repo}/grants/invites/{id}", s.roleH(authz.Admin, s.deleteGrantInvite))
 	apiMux.HandleFunc("GET /api/repos/{repo}/tree", s.repoH(s.getTree))
 	apiMux.HandleFunc("GET /api/repos/{repo}/linkcheck", s.repoH(s.getLinkCheck))
 	apiMux.HandleFunc("GET /api/repos/{repo}/snapshot", s.repoH(s.getSnapshot))
@@ -114,22 +104,16 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/repos/{repo}/diff/worktree", s.writableH(s.getWorktreeDiff))
 	apiMux.HandleFunc("GET /api/repos/{repo}/collab/{path...}", s.writableH(s.collabWS))
 	apiMux.HandleFunc("GET /api/repos/{repo}/presence", s.writableViewH(s.getPresence))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs", s.writableViewH(s.listPRs))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs", s.writableH(s.createPR))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}", s.writableViewH(s.getPR))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/diff", s.writableViewH(s.getPRDiff))
-	apiMux.HandleFunc("GET /api/repos/{repo}/prs/{n}/comments", s.writableViewH(s.prComments))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/comments", s.writableViewH(s.prComments))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/approve", s.writableH(s.approvePR))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/merge", s.writableH(s.mergePR))
-	apiMux.HandleFunc("POST /api/repos/{repo}/prs/{n}/close", s.writableH(s.closePR))
+	apiMux.HandleFunc("GET /api/repos/{repo}/merge", s.writableViewH(s.getMergePreview))
+	apiMux.HandleFunc("GET /api/repos/{repo}/forge/request", s.writableViewH(s.getForgeRequest))
+	apiMux.HandleFunc("POST /api/repos/{repo}/merge", s.writableH(s.postMerge))
 	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.createShare)
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
 	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
-	// legacy aliases: resolve the tenant's sole project
+	// legacy aliases: resolve the deployment's sole project
 	apiMux.HandleFunc("POST /api/copilot/chat", s.copilotChatAlias)
 	apiMux.HandleFunc("POST /api/copilot/draft", s.copilotDraftAlias)
 
@@ -138,30 +122,26 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	// public OKF-bundle download — the share token in the URL is the only
 	// credential; {name} is the cosmetic filename and is not checked
 	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
-	// GitHub push webhooks — HMAC-authenticated, sessionless
-	mux.HandleFunc("POST /hooks/github", s.githubWebhook)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
 	mux.HandleFunc("GET /auth/callback", s.authCallback)
 	mux.HandleFunc("GET /auth/providers", s.authProviders)
-	mux.HandleFunc("GET /auth/github/login", s.authGitHubLogin)
-	mux.HandleFunc("GET /auth/github/callback", s.authGitHubCallback)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)
 	mux.HandleFunc("POST /auth/logout", s.authLogout)
 	mux.Handle("/", spaHandler(opts.Dist, opts.Dev))
 	return logMiddleware(csrfGuard(mux))
 }
 
-// repoH resolves the {repo} path segment within the request's tenant and
-// gates on the effective per-repo role (REQ-020): reading needs viewer. The
-// resolved role rides the request context for writableH and handlers.
+// repoH resolves the {repo} path segment and gates on the effective per-repo
+// role (REQ-020): reading needs viewer. The resolved role rides the request
+// context for writableH and handlers.
 func (s *Server) repoH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		repo, t, ok := s.tenantProject(w, r)
+		repo, ok := s.resolveProject(w, r)
 		if !ok {
 			return
 		}
 		u := auth.UserFrom(r.Context())
-		role := s.effectiveRepoRole(u, t, repo.Repo.Cfg.ID)
+		role := s.effectiveRepoRole(u, repo.Repo.Cfg.ID)
 		if role < authz.Viewer {
 			jsonError2(w, http.StatusForbidden, "no access to repo "+repo.ID, "repo_forbidden")
 			return

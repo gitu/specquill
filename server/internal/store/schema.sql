@@ -1,12 +1,18 @@
--- specquill review/auth metadata (Postgres). Content lives in git; this DB
--- holds only users, sessions, PR review state, and the collab update log.
+-- specquill auth/session metadata (SQLite, a file in the data dir). Content
+-- lives in git; this DB holds only users, sessions, workspace claims and the
+-- collab update log. Single-tenant: one deployment serves one workspace; the
+-- canonical repo key in all other tables is the plain repo id.
+--
+-- Foreign keys are enforced (PRAGMA foreign_keys=ON in store.Open) — the
+-- repo_grants / repo_grant_invites cascades depend on it.
 
 CREATE TABLE IF NOT EXISTS users (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   provider   TEXT NOT NULL,             -- 'oidc' | 'local'
   subject    TEXT NOT NULL,             -- OIDC sub / local username
   name       TEXT NOT NULL,
   email      TEXT NOT NULL,
+  role       TEXT NOT NULL DEFAULT '',  -- admin | member | viewer | '' (not enrolled)
   UNIQUE(provider, subject)
 );
 
@@ -24,66 +30,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 
--- tenancy (docs/multi-tenancy.md): tenant = GitHub App installation, or the
--- built-in 'default' tenant mirroring the YAML repos list (self-hosting).
--- The canonical repo key in all other tables is '<tenant_slug>/<repo_id>'.
-CREATE TABLE IF NOT EXISTS tenants (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  slug            TEXT UNIQUE NOT NULL,
-  provider        TEXT NOT NULL,          -- 'config' | 'github'
-  installation_id BIGINT,                 -- GitHub App installation (NULL for config)
-  display_name    TEXT NOT NULL DEFAULT '',
-  created_at      BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS tenant_repos (
-  tenant_id      BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id        TEXT NOT NULL,           -- short id, unique within the tenant
+-- the deployment's repo registry, mirroring the YAML list at boot
+-- (managed_by='config'); rows added through the API persist across boots.
+CREATE TABLE IF NOT EXISTS repos (
+  repo_id        TEXT PRIMARY KEY,
   mode           TEXT NOT NULL,           -- writable | readonly
   remote         TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
-  gh_full_name   TEXT NOT NULL DEFAULT '',
   managed_by     TEXT NOT NULL DEFAULT 'config',  -- config rows reconcile at boot
-  created_at     BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id)
-);
-ALTER TABLE tenant_repos ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'config';
-
-CREATE TABLE IF NOT EXISTS tenant_members (
-  tenant_id BIGINT NOT NULL REFERENCES tenants(id),
-  user_id   BIGINT NOT NULL REFERENCES users(id),
-  role      TEXT NOT NULL DEFAULT 'editor',   -- admin | maintainer | editor | viewer
-  synced_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, user_id)
+  created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS prs (
-  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  repo          TEXT NOT NULL,
-  number        INTEGER NOT NULL,
-  title         TEXT NOT NULL,
-  body          TEXT,
-  source_branch TEXT NOT NULL,
-  target_branch TEXT NOT NULL,
-  author_id     BIGINT NOT NULL REFERENCES users(id),
-  state         TEXT NOT NULL DEFAULT 'open',   -- open|merged|closed
-  merged_commit TEXT,
-  created_at    BIGINT NOT NULL,
-  merged_at     BIGINT,
-  UNIQUE(repo, number)
-);
 
-CREATE TABLE IF NOT EXISTS pr_comments (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  pr_id           BIGINT NOT NULL REFERENCES prs(id),
-  author_id       BIGINT NOT NULL REFERENCES users(id),
-  file_path       TEXT,                 -- NULL = general comment
-  line            INTEGER,
-  anchored_commit TEXT,
-  body            TEXT NOT NULL,
-  resolved        BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at      BIGINT NOT NULL
-);
 
 -- personal workspace branch ownership (ws/<slug> claimed per user)
 CREATE TABLE IF NOT EXISTS workspace_branches (
@@ -111,7 +69,7 @@ CREATE TABLE IF NOT EXISTS collab_updates (
   branch  TEXT NOT NULL,
   path    TEXT NOT NULL,
   seq     BIGINT NOT NULL,
-  payload BYTEA NOT NULL,
+  payload BLOB   NOT NULL,
   PRIMARY KEY (repo, branch, path, seq)
 );
 CREATE TABLE IF NOT EXISTS collab_contributors (
@@ -123,31 +81,21 @@ CREATE TABLE IF NOT EXISTS collab_contributors (
   PRIMARY KEY (repo, branch, path, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS pr_approvals (
-  pr_id      BIGINT NOT NULL REFERENCES prs(id),
-  user_id    BIGINT NOT NULL REFERENCES users(id),
-  commit_sha TEXT NOT NULL,             -- approval pinned to head commit
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (pr_id, user_id)
-);
 
 -- projects & sources (config-split plan): a project is a writable workspace
 -- (repo + content_root); a source is a catalog entry projects may reference.
 -- managed_by: 'config' rows reconcile to the YAML at boot, 'api' rows persist.
-CREATE TABLE IF NOT EXISTS tenant_projects (
-  tenant_id    BIGINT NOT NULL REFERENCES tenants(id),
-  project_id   TEXT NOT NULL,
-  repo_id      TEXT NOT NULL,           -- tenant_repos.repo_id (same tenant)
+CREATE TABLE IF NOT EXISTS projects (
+  project_id   TEXT PRIMARY KEY,
+  repo_id      TEXT NOT NULL,           -- repos.repo_id
   content_root TEXT NOT NULL DEFAULT '',
   managed_by   TEXT NOT NULL DEFAULT 'config',   -- config | api
-  created_at   BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at   BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sources (
-  id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id      BIGINT REFERENCES tenants(id),  -- NULL = global (app YAML / platform)
-  name           TEXT NOT NULL,
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL UNIQUE,
   kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
   remote         TEXT NOT NULL,
   token_env      TEXT NOT NULL DEFAULT '',       -- env var NAME; never a secret value
@@ -155,74 +103,51 @@ CREATE TABLE IF NOT EXISTS sources (
   default_branch TEXT NOT NULL DEFAULT 'main',
   sync_interval  BIGINT NOT NULL DEFAULT 300,    -- seconds
   managed_by     TEXT NOT NULL DEFAULT 'config',
-  created_at     BIGINT NOT NULL,
-  UNIQUE (tenant_id, name)
+  created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS source_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  source_id  BIGINT NOT NULL REFERENCES sources(id),
-  granted_by BIGINT REFERENCES users(id),        -- NULL = boot sync
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, source_id)
-);
-
--- last-import status per non-git (importer) source, keyed by tenant + source
--- name. Populated by importer.Runner; surfaced in the sources list + sync API.
+-- last-import status per non-git (importer) source, keyed by source name.
+-- Populated by importer.Runner; surfaced in the sources list + sync API.
 CREATE TABLE IF NOT EXISTS source_syncs (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  name       TEXT NOT NULL,
+  name       TEXT PRIMARY KEY,
   status     TEXT NOT NULL,                       -- ok | error
   error      TEXT NOT NULL DEFAULT '',
   file_count INT NOT NULL DEFAULT 0,
   head_sha   TEXT NOT NULL DEFAULT '',
-  synced_at  BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, name)
+  synced_at  BIGINT NOT NULL
 );
-
--- the GitHub @handle behind a github-provider user — what permission
--- lookups and allow-lists match on (subjects are the immutable numeric id)
-ALTER TABLE users ADD COLUMN IF NOT EXISTS login TEXT NOT NULL DEFAULT '';
 
 -- unauthenticated OKF-bundle share links: the URL token is the only
 -- credential (LLM copy-paste use case). One active link per project;
 -- minting again rotates the token, deleting revokes access.
 CREATE TABLE IF NOT EXISTS share_links (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  project_id TEXT NOT NULL,
+  project_id TEXT PRIMARY KEY,
   token      TEXT NOT NULL UNIQUE,
   created_by BIGINT NOT NULL REFERENCES users(id),
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at BIGINT NOT NULL
 );
 
--- per-repo user grants (REQ-020): explicit access layered on derived roles;
--- effective role = max(derived, granted). Role sync never touches these —
--- that is the point: a GitHub revocation must not drop an explicit grant.
+-- per-repo user grants (REQ-020): explicit access layered on the deployment
+-- role; effective role = max(deployment role, granted).
 CREATE TABLE IF NOT EXISTS repo_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
   user_id    BIGINT NOT NULL REFERENCES users(id),
-  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | editor | maintainer | admin (REQ-021)
+  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is admin-scoped)
   granted_by BIGINT REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id, user_id),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  PRIMARY KEY (repo_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
 
 -- pending grants for users who have not logged in yet; the matcher is a
--- lowercased email or GitHub login, claimed (converted to repo_grants rows)
--- and deleted on the invitee's first login.
+-- lowercased email, claimed (converted to repo_grants rows) and deleted on
+-- the invitee's first login.
 CREATE TABLE IF NOT EXISTS repo_grant_invites (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
-  kind       TEXT   NOT NULL,                    -- 'email' | 'github'
-  matcher    TEXT   NOT NULL,                    -- lowercased
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
+  matcher    TEXT   NOT NULL,                    -- lowercased email
   role       TEXT   NOT NULL DEFAULT 'viewer',
   granted_by BIGINT NOT NULL REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  UNIQUE (tenant_id, repo_id, kind, matcher),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  UNIQUE (repo_id, matcher)
 );

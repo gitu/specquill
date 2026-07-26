@@ -9,11 +9,9 @@ ORIGIN=data/origin
 rm -rf "$ORIGIN"
 mkdir -p "$ORIGIN"
 
-# the store lives in the compose postgres — reset it alongside the fixtures
-# so sessions/PRs/collab logs don't reference vanished git state
-docker compose -f docker-compose.dev.yml up -d --wait postgres
-docker compose -f docker-compose.dev.yml exec -T postgres \
-  psql -q -U specquill -d specquill -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+# drop the store alongside the fixtures so sessions/PRs/collab logs don't
+# reference vanished git state (-wal/-shm are WAL sidecars)
+rm -f data/runtime/specquill.db data/runtime/specquill.db-wal data/runtime/specquill.db-shm
 
 fixture_env=(-c user.name=specquill-fixture -c user.email=fixture@specquill.local)
 

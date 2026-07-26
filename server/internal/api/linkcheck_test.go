@@ -59,11 +59,7 @@ func TestLinkCheck(t *testing.T) {
 	}
 	cfg.Normalize()
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "r", RepoID: "r"}}); err != nil {
+	if err := st.SyncProjects([]store.Project{{ProjectID: "r", RepoID: "r"}}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")

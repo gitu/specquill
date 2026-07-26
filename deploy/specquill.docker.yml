@@ -1,0 +1,56 @@
+# Default runtime config baked into the container image by the Dockerfile
+# (→ /etc/specquill/specquill.yml). It is a starting point: mount your own
+# over it (`-v $PWD/specquill.yml:/etc/specquill/specquill.yml:ro`) — see
+# deploy/local.md.
+#
+# NO SECRETS IN THIS FILE: every credential is referenced by env-var NAME
+# only and injected at run time.
+#
+# MOUNT A PERSISTENT VOLUME at data_dir — it holds both the git clones
+# (rebuildable) and specquill.db (NOT rebuildable: users, sessions,
+# workspace claims, collab logs).
+
+listen: ":8080"
+data_dir: /var/lib/specquill        # persistent volume — clones + specquill.db
+base_url: https://specquill.example.com
+
+# store: <data_dir>/specquill.db by default — no `database:` block needed.
+
+projects:
+  # exactly one writable repo is the editing workspace
+  - id: workspace
+    remote: https://github.com/OWNER/SPECS-REPO.git
+    default_branch: main
+    token_env: SPECQUILL_TOKEN       # push/fetch token, from the secret store
+
+git:
+  # service identity — recorded as a Co-authored-by trailer; the logged-in
+  # user is author AND committer on every commit and merge
+  committer_name: specquill
+  committer_email: specquill@example.com
+
+auth:
+  # one deployment per tenant: authenticate against the tenant's own IdP
+  oidc:
+    enabled: true
+    issuer: https://login.example.com
+    client_id: specquill
+    client_secret_env: SPECQUILL_OIDC_SECRET
+    scopes: [openid, profile, email]
+  local:
+    enabled: false                   # no password logins in a hosted deployment
+  # bootstrap administration: these users get the admin role on login
+  # (projects/sources/grants management API + UI)
+  admin_emails: [you@example.com]
+  # default_role: member             # or viewer / none (grants-only access)
+
+session:
+  ttl: 10m
+  cookie_secure: true
+
+ai:
+  enabled: true
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-2.5-pro            # main tier (thinking-class): chat + draft edits
+  quick_model: gemini-2.5-flash    # fast one-shot tier: commit messages
+  api_key_env: SPECQUILL_AI_KEY

@@ -2,7 +2,7 @@
 # Build TWO extra sample spec repositories with a real multi-commit history
 # under data/origin/ — for local testing of history-aware features (file
 # history, log.md, blame-ish flows, PR diffs) beyond the single-commit demo
-# fixtures. Complements scripts/dev-fixture.sh; never touches postgres.
+# fixtures. Complements scripts/dev-fixture.sh; never touches the store.
 #
 #   sample-payments.git    — payments platform specs, 7 commits, 2 authors
 #   sample-onboarding.git  — customer onboarding specs, 6 commits, 2 authors

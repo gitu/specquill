@@ -6,9 +6,10 @@
 # Stage 2 (server) — static Go build with the SPA embedded.
 # Stage 3 (runner) — alpine + git (specquill requires git >= 2.38) + the binary.
 #
-# The runtime config is baked in from deploy/specquill.cloud.yml — it contains
-# no secrets (tokens/keys are referenced by env-var NAME and injected at
-# deploy time, e.g. from Secret Manager — see cloudbuild.yaml).
+# A default runtime config is baked in from deploy/specquill.docker.yml — it
+# contains no secrets (tokens/keys are referenced by env-var NAME and injected
+# at run time). Mount your own over /etc/specquill/specquill.yml to override,
+# and mount a persistent volume at /var/lib/specquill — see deploy/local.md.
 
 ARG GO_VERSION=1.26
 ARG NODE_VERSION=24
@@ -39,7 +40,7 @@ RUN apk add --no-cache git ca-certificates tzdata \
  && adduser -D -H -u 10001 specquill \
  && mkdir -p /var/lib/specquill && chown specquill /var/lib/specquill
 COPY --from=server /specquill /usr/local/bin/specquill
-COPY deploy/specquill.cloud.yml /etc/specquill/specquill.yml
+COPY deploy/specquill.docker.yml /etc/specquill/specquill.yml
 USER specquill
 EXPOSE 8080
 ENTRYPOINT ["specquill"]

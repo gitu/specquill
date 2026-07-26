@@ -12,7 +12,7 @@ from the code.
 - Start: `./server/specquill -config specquill.dev.yml -dev` — the `-dev` flag
   auto-authenticates every request as `auth.dev_user` ("Flo Dev", workspace
   branch `ws/dev`) and bypasses session TTLs.
-- **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts postgres, `air`
+- **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts `air`
   (rebuilds/restarts the Go server on save; a bare `touch` does NOT trigger it,
   air ignores chmod-only events), and vite HMR on :5173 (proxies /api+/auth,
   ws included). In this mode browse the **vite port** — :8643 still serves
@@ -22,21 +22,24 @@ from the code.
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
 - `pkill specquill` matches the wrapper shell (exit 143) — use `pkill -x specquill`.
-- **The store is Postgres** (users, sessions, PRs, collab room logs), NOT in
-  `data/`: dev runs the compose container on **:5433**
-  (`docker compose -f docker-compose.dev.yml up -d postgres`, DSN in
-  `specquill.dev.yml`). Go tests need it too (they skip without it; isolation is
-  a throwaway schema per test via `store.OpenTest`). Neon in production.
-- Repo clones/worktrees live under `data/runtime/tenants/<tenant>/<repo>/`
-  (tenancy foundation, repo-product/docs/specs/specs/multi-tenancy.md); the canonical repo key in DB
-  rows and room keys is `<tenant>/<repo>`, e.g. `default/trading-specs`.
+- **The store is embedded SQLite** (users, sessions, workspace claims, collab room logs) at
+  `<data_dir>/specquill.db` = `data/runtime/specquill.db` in dev — no service
+  to start, nothing in docker compose. Go tests get a throwaway DB per test
+  via `store.OpenTest` and never skip. WAL mode, so `specquill.db-wal` /
+  `-shm` sidecars sit next to it; `PRAGMA foreign_keys=ON` and
+  `_txlock=immediate` are set in `store.Open` and the grant cascades depend
+  on the former.
+- Repo clones/worktrees live under `data/runtime/repos/<repo>/`; the
+  canonical repo key in DB rows and room keys is the plain repo id, e.g.
+  `trading-specs` (single-tenant since July 2026).
 - `make dev-samples` adds two EXTRA sample projects (`sample-payments`,
   `sample-onboarding`) with real multi-commit/multi-author history — for
   testing history-aware features; auto-registers via the management API when
-  the dev server is up. Survives until the next postgres schema reset.
+  the dev server is up. Survives until the next store reset.
 - Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
-  — the fixture script also drops+recreates the postgres schema; `rm -rf
-  data/runtime` alone does NOT clear sessions/PRs anymore.
+  — with the store inside `data/runtime`, removing that directory now clears
+  sessions/merge state/collab logs too (the fixture script also deletes the DB, so
+  fixtures and store can't drift apart).
 - Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
   (it self-skips unless the configured model is `mock-1`).
@@ -60,11 +63,12 @@ from the code.
   read-only catalog entry projects reference. `internal/project` is the ONLY
   place project-relative ↔ full repo paths are mapped (MapIn/MapOut); store rows
   and git ops use full paths, the wire format is project-relative.
-- **4-stage authorization**: (1) catalog sources+credentials in app YAML/admin,
-  (2) grants attach a source to a tenant, (3) in-repo `.specquill/config.yml`
-  `references:` SELECT granted sources (read from the DEFAULT branch only), (4)
-  roles viewer<member<admin. In-repo config can only select already-granted
-  sources — it can NEVER mint access. `EffectiveReferences` = selection ∩ grants.
+- **3-stage authorization** (single-tenant): (1) catalog sources+credentials in
+  app YAML/admin, (2) in-repo `.specquill/config.yml` `references:` SELECT
+  cataloged sources (read from the DEFAULT branch only), (3) deployment roles
+  viewer<member<admin (`users.role`) plus per-repo grants. In-repo config can
+  only select cataloged sources — it can NEVER mint access.
+  `EffectiveReferences` = selection ∩ catalog.
 - **Copilot grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
@@ -78,8 +82,12 @@ from the code.
   up — it goes green on the next interval or a manual `POST /api/sources/platform-api/sync`
   (or the Admin "Sync now" button).
 - **Protected main**: the default branch is never edited; the first edit
-  auto-creates/switches to the caller's `ws/<user>` branch (claimed in Postgres).
-  Direct writes to protected branches 403 (`protected_branch`).
+  auto-creates/switches to the caller's `ws/<user>` branch (claimed in the store).
+  Direct writes to protected branches 403 (`protected_branch`). A **merge** from
+  a workspace branch (`POST /api/repos/{repo}/merge`, member role) is the only
+  thing that moves it — there is no in-app PR/review flow, that lives on the
+  forge. Merges refuse a dirty source worktree (409 `dirty`) and conflicts
+  (409 `conflicts`), and reset the merged workspace onto the new head.
 - **Worktree = draft store**: saves are uncommitted changes on a per-branch
   worktree; explicit Commit turns them into history.
 - **Commit identity**: the logged-in user is **author AND committer**; the
@@ -87,7 +95,7 @@ from the code.
   `Co-authored-by:` trailer, alongside trailers for collab contributors.
 - **CRDT co-editing**: markdown files in edit mode join a Yjs room per
   (branch, path). The server is a dumb relay (`internal/collab`) — opaque
-  update log in Postgres, replay to joiners, leader flushes serialized markdown
+  update log in the store, replay to joiners, leader flushes serialized markdown
   to the worktree. While a room is live it OWNS the file: direct PUTs 409
   (`room_active`), pulls/workspace-ffs on that branch are withheld.
 - **Byte fidelity**: untouched documents save byte-identical; only real user
@@ -95,6 +103,14 @@ from the code.
 - **Sketches**: `*.excalidraw.png` — PNGs with the excalidraw scene embedded
   (export-embed-scene), natively viewable anywhere, editable in the modal via
   `loadFromBlob`/`exportToBlob`. Legacy `*.excalidraw` JSON still supported.
+- **Forge review (optional, read-only)**: `projects[].forge.kind: gitlab|github`
+  turns on `GET /api/repos/{repo}/forge/request?branch=` — the branch's open
+  MR/PR plus its comments, shown on the Overview. GitLab auth is the
+  `PRIVATE-TOKEN` header, GitHub a bearer token; GitLab project paths are
+  URL-encoded whole (nested groups), GitHub needs `owner:branch` in the
+  `head=` filter or it is ignored. `forge.project` overrides path derivation
+  when the remote is an ssh alias. Answers are cached 60s server-side; any
+  failure degrades to an `error` field, never a broken page.
 - **AI tiers**: `ai.model` (thinking-class: chat, draft edits) vs
   `ai.quick_model` (one-shot: commit messages). Both through any
   OpenAI-compatible endpoint. `.specquill/skills/*.md` in the workspace are
@@ -127,8 +143,11 @@ from the code.
 - `sx()` converts inline-style strings to React style objects; components
   carry design styles as strings on purpose — keep that idiom.
 
-## Deferred / planned
+## Deployment model
 
-- GitHub App integration (login + installation repos as workspaces) — planned,
-  blocked on an app registration (contents:rw, pull_requests:rw, metadata:r).
-  `gitx.credentialArgsEnv` is the single credentials seam to extend.
+- Two supported deployments (July 2026 decision): **v1** — one deployment per
+  tenant for BAs/non-technicals, a single writable repository, any-OIDC login;
+  **v2** — a developer's local machine, `auth.local`/`-dev`, no OIDC. The
+  GitHub integration (OAuth login, GitHub App tenants, webhooks) was removed
+  with this decision; GitHub-hosted repos are plain git remotes via
+  `token_env` — `gitx.credentialArgsEnv` is the single credentials seam.

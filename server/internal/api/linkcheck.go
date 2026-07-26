@@ -79,21 +79,17 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 	loadSources := func() {
 		srcOnce.Do(func() {
 			srcAllowed, srcFiles = map[string]bool{}, map[string]map[string]string{}
-			t := s.tenantQuiet(r)
-			if t == nil {
-				return
-			}
-			granted, err := s.store.TenantGrantedSources(t.ID)
+			catalog, err := s.store.Sources()
 			if err != nil {
 				return
 			}
 			kinds := map[string]string{}
-			for _, src := range granted {
+			for _, src := range catalog {
 				kinds[src.Name] = src.Kind
 			}
 			names := make([]string, 0, len(kinds))
-			// selection ∩ grants when the in-repo config selects; all grants
-			// otherwise (same fallback as the tree's reference section)
+			// selection ∩ catalog when the in-repo config selects; the whole
+			// catalog otherwise (same fallback as the tree's reference section)
 			if yml, _, err := repo.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
 				if cfg, err := project.ParseConfig(yml); err == nil {
 					if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
@@ -113,8 +109,8 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 			}
 			for _, n := range names {
 				srcAllowed[n] = true
-				if gr, ok := s.git.Repo(repo.Repo.Tenant() + "/" + n); ok {
-					if snap := s.sourceSnapshot(repo.Repo.Tenant()+"/"+n, gr); snap != nil {
+				if gr, ok := s.git.Repo(n); ok {
+					if snap := s.sourceSnapshot(n, gr); snap != nil {
 						srcFiles[n] = snap
 					}
 				}

@@ -5,7 +5,7 @@
 requirements, specs, regulations, data mappings and change records live as
 plain markdown in git; SpecQuill is the editing and review surface on top —
 traceability graph & matrix, change inbox, rich editors, and an in-app
-branch-based PR flow, every commit authored by the logged-in user.
+branch-based merge flow, every commit authored by the logged-in user.
 
 The artifact SpecQuill produces is deliberately **not proprietary**: a
 workspace is a conformant **Open Knowledge Format (v0.1) bundle** — typed
@@ -27,10 +27,10 @@ server/           Go single binary (specquill)
                     as Co-authored-by), structured diffs, merge-tree merges,
                     env-token push/fetch
   internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
-                    opaque session cookies in Postgres
-  internal/store    Postgres (pgx; Neon in prod): users, sessions, PRs,
-                    comments, approvals, workspace claims, collab room
-                    logs — content never leaves git
+                    opaque session cookies in the store
+  internal/store    embedded SQLite (modernc, cgo-free) at <data_dir>/specquill.db:
+                    users, sessions, per-repo grants, workspace claims,
+                    collab room logs — content never leaves git
   internal/collab   real-time co-editing relay: the server is a dumb Yjs
                     update log (no server-side CRDT) — rooms per
                     (branch, path), seed handshake, replay to joiners,
@@ -56,8 +56,8 @@ Key properties:
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected
   branches 403. Drafts autosave to the branch worktree (debounced), survive branch
   switches and navigation (localStorage recovery + unload keepalive), and an explicit
-  Commit turns them into history. Tree badges are real `git status`; opening a PR
-  prompts to commit pending changes.
+  Commit turns them into history. Tree badges are real `git status`; merging
+  prompts to commit pending changes first.
 - **Real-time co-editing (CRDT).** Editing a markdown file in WYSIWYG mode joins a Yjs
   room per (branch, file): live text sync, named cursors, presence dots in the tree,
   invite links ("Switch & join"). The room owns the file while live — direct PUTs 409,
@@ -65,10 +65,12 @@ Key properties:
   doc to the worktree. Commits run a flush barrier and append `Co-authored-by:`
   trailers for every room contributor. Unflushed sessions (crash) are surfaced as
   orphaned rooms and recovered on next open.
-- **PRs are branches.** Review (diff, inline comments, approvals pinned to the head sha)
-  lives in the app; merge uses `git merge-tree` (merge commit or squash) with conflicts
-  detected and blocked. No forge API involved; `push`/`fetch` sync the plain remote with
-  a token from the environment.
+- **Direct merges, no review ceremony.** A workspace branch lands on the protected
+  default branch through a previewed merge (diff + conflict check + dirty-worktree
+  refusal); `git merge-tree` does the work as a merge commit or squash, conflicts
+  detected and blocked. There is no in-app PR object — for reviewed merges, push the
+  branch and open a merge request on your forge. No forge API involved here;
+  `push`/`fetch` sync the plain remote with a token from the environment.
 - **Honest git identity.** The logged-in user is both **author and committer** on every
   commit and merge; the SpecQuill service identity is recorded as a `Co-authored-by:`
   trailer instead, alongside trailers for live co-editing contributors.
@@ -118,13 +120,13 @@ Key properties:
   "Draft edits & open as diff" asks the model for surgical search/replace edits,
   validates them (impacted files only, unique match), and applies them as
   **uncommitted saves on a `copilot/<change>` branch** — the human reviews via the
-  normal status → commit → PR flow. `scripts/mock-llm.py` is a keyless dev provider.
+  normal status → commit → merge flow. `scripts/mock-llm.py` is a keyless dev provider.
 
 ## Run (dev)
 
 ```sh
 make dev-fixture        # local bare origins under data/origin/ from repo/
-                        # (also starts + resets the compose postgres, the store)
+                        # (also drops the store so it can't outlive the fixtures)
 make web server         # build SPA into the embed dir + build specquill
 python3 scripts/mock-llm.py &          # keyless copilot provider for dev
 ./server/specquill -config specquill.dev.yml -dev
@@ -137,7 +139,6 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on :5173, proxying /ap
 
 ```sh
 cp specquill.example.yml specquill.yml     # point at your remotes, OIDC issuer, data dir
-export SPECQUILL_DATABASE_URL=…          # Postgres DSN (e.g. Neon), env only
 export SPECQUILL_TOKEN_TRADING=…         # git token, env only
 export SPECQUILL_OIDC_SECRET=…
 make build && ./server/specquill -config specquill.yml
@@ -152,25 +153,20 @@ the git author on every commit and merge.
 
 ```sh
 make test               # Go: gitx/auth/API suites · web: model, frontmatter, Milkdown round-trip
-make e2e                # Playwright against a running dev server: edit → commit → PR → merge
+make e2e                # Playwright against a running dev server: edit → commit → merge
 python3 scripts/verify-write-path.py   # API-level write/commit/push/409 checks
-python3 scripts/verify-pr-flow.py      # API-level PR lifecycle incl. conflict blocking
 docker compose -f docker-compose.dev.yml up -d   # dex IdP for exercising real OIDC
 ```
 
 ## Deploy
 
-`Dockerfile` builds the whole thing into one alpine+git image;
-[`DEPLOY.md`](DEPLOY.md) documents the Cloud Run pipeline (GitHub Actions →
-ghcr.io → deploy-only Cloud Build trigger → Cloud Run, staging on `main`,
-prod on `v*` tags).
+`Dockerfile` builds the whole thing into one alpine+git image (pushed to
+ghcr.io on every push to `main` and every tag); [`DEPLOY.md`](DEPLOY.md)
+documents self-hosting it — one binary or container, one YAML file, a
+persistent directory, a reverse proxy.
 
 ## Notes & future work
 
-- **GitHub App integration is planned** (next round; needs an app registration): GitHub
-  login beside OIDC, installation repos as workspace/reference repos, installation
-  tokens through the existing `credentialArgsEnv` seam. Co-author trailers already give
-  correct multi-avatar attribution on GitHub.
 - Collab protocol notes: never mutate a Y.Doc before its socket is open (pre-sync local
   items never transmit and every later edit references clock ranges peers never
   received); the seeder initializes shared metadata after the seed grant and pushes

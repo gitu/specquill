@@ -1,6 +1,6 @@
 // Package authz holds the per-repo role ladder (REQ-021) — the single
-// vocabulary for every authorization decision: tenant roles, derived GitHub
-// roles and explicit repo grants all speak these four levels.
+// vocabulary for every authorization decision: the deployment role and
+// explicit repo grants both speak these four levels.
 package authz
 
 // Role is one rung of the ladder: viewer < editor < maintainer < admin.
@@ -11,14 +11,11 @@ const (
 	None Role = iota
 	// Viewer reads everything and comments on PRs.
 	Viewer
-	// Editor writes workspace branches, commits, opens/approves/closes PRs,
-	// co-edits and uses the copilot.
+	// Editor writes workspace branches, commits, co-edits and uses the copilot.
 	Editor
-	// Maintainer merges PRs into protected branches and manages share links.
+	// Maintainer merges into protected branches and manages share links.
 	Maintainer
-	// Admin manages the repo's grants and settings; the tenant-level admin
-	// role additionally gates tenant management and derives repo admin
-	// everywhere.
+	// Admin manages grants and settings, and gates the management API.
 	Admin
 )
 
@@ -43,30 +40,13 @@ func Parse(s string) Role {
 // String is Parse's inverse; None renders as "".
 func (r Role) String() string { return names[r] }
 
-// Max returns the higher rung — how derived roles and explicit grants
-// compose (effective role = max(derived, granted), REQ-020/REQ-021).
+// Max returns the higher rung — how the deployment role and explicit grants
+// compose (effective role = max(deployment, granted), REQ-020/REQ-021).
 func Max(a, b Role) Role {
 	if a > b {
 		return a
 	}
 	return b
-}
-
-// FromGitHub maps a GitHub repo permission onto the ladder (REQ-021.3):
-// pull/read → viewer, triage/push/write → editor, maintain → maintainer,
-// admin → admin. Unknown permissions grant nothing.
-func FromGitHub(permission string) Role {
-	switch permission {
-	case "admin":
-		return Admin
-	case "maintain":
-		return Maintainer
-	case "write", "push", "triage":
-		return Editor
-	case "read", "pull":
-		return Viewer
-	}
-	return None
 }
 
 // ValidGrant reports whether s names a grantable rung (any real role).

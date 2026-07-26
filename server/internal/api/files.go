@@ -23,44 +23,37 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		DefaultBranch     string   `json:"defaultBranch"`
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
-		Role              string   `json:"role"` // caller's effective role (viewer|editor|maintainer|admin)
-	}
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
+		Role              string   `json:"role"` // caller's effective role (viewer|member|admin)
 	}
 	u := auth.UserFrom(r.Context())
 	rootOf := map[string]string{}
-	if projects, err := s.store.TenantProjects(t.ID); err == nil {
+	if projects, err := s.store.Projects(); err == nil {
 		for _, p := range projects {
 			rootOf[p.RepoID] = p.ContentRoot
 		}
 	}
-	grantedNames := map[string]bool{}
-	grantedKind := map[string]string{}
-	if granted, err := s.store.TenantGrantedSources(t.ID); err == nil {
-		for _, src := range granted {
-			grantedNames[src.Name] = true
-			grantedKind[src.Name] = src.Kind
+	catalogNames := map[string]bool{}
+	catalogKind := map[string]string{}
+	if catalog, err := s.store.Sources(); err == nil {
+		for _, src := range catalog {
+			catalogNames[src.Name] = true
+			catalogKind[src.Name] = src.Kind
 		}
 	}
-	syncs, _ := s.store.TenantSourceSyncs(t.ID)
+	syncs, _ := s.store.SourceSyncs()
 	var out []repoInfo
 	for _, repo := range s.git.Repos() {
-		if repo.Tenant() != t.Slug {
-			continue
-		}
 		kind := "source"
 		if repo.Writable() {
 			kind = "project"
 		}
-		// ungranted sources are invisible (browsing is grant-gated)
-		if kind == "source" && !grantedNames[repo.Cfg.ID] {
+		// uncataloged sources are invisible (browsing is catalog-gated)
+		if kind == "source" && !catalogNames[repo.Cfg.ID] {
 			continue
 		}
 		// repos the caller has no effective role on are invisible (REQ-020:
 		// grant-only users see exactly their granted repos)
-		role := s.effectiveRepoRole(u, t, repo.Cfg.ID)
+		role := s.effectiveRepoRole(u, repo.Cfg.ID)
 		if role < authz.Viewer {
 			continue
 		}
@@ -74,8 +67,8 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 			ProtectedBranches: repo.Cfg.ProtectedBranches,
 		}
 		if kind == "source" {
-			info.OKF = s.sourceIsOKF(t.Slug, repo.Cfg.ID)
-			if k := grantedKind[repo.Cfg.ID]; k != "" && k != "git" {
+			info.OKF = s.sourceIsOKF(repo.Cfg.ID)
+			if k := catalogKind[repo.Cfg.ID]; k != "" && k != "git" {
 				info.Importer = k
 			}
 			if rec, ok := syncs[repo.Cfg.ID]; ok {

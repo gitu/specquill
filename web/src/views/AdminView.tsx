@@ -11,7 +11,7 @@ interface ProjectRow {
   managedBy: 'config' | 'api';
 }
 
-// Tenant administration: projects (add/remove at runtime; config-managed
+// Administration: projects (add/remove at runtime; config-managed
 // rows come from specquill.yml and are read-only here). Requires the admin
 // role — the API enforces it; this view just surfaces the errors.
 export function AdminView() {
@@ -94,28 +94,22 @@ export function AdminView() {
           </div>
         )}
 
-        <GitHubReposPanel onError={setError} />
-        <AccessPanel
-          projects={(repos.data || []).filter((r) => r.kind === 'project' && r.role === 'admin').map((r) => r.id)}
-          sources={sources.filter((s) => s.role === 'admin').map((s) => s.id)}
-          onError={setError}
-        />
+        <AccessPanel projects={(projects.data || []).map((p) => p.id)} sources={sources.map((s) => s.id)} onError={setError} />
       </div>
     </div>
   );
 }
 
-// AccessPanel — tenant members plus per-repo grants (REQ-020/REQ-021.4).
-// The two sections gate independently: the Members list needs the tenant
-// admin role (/api/members 403s otherwise), while Repository access renders
-// for every repo the caller holds the repo admin role on — the props carry
-// only those, so a repo admin without tenant admin still manages grants.
-// Renders nothing when the caller administers neither.
+// AccessPanel — deployment members plus per-repo grants (REQ-020/REQ-021):
+// grant a user (by email) viewer/editor/maintainer access to a single
+// repository, beyond or without their deployment role. Unknown addresses
+// become pending invites claimed on first login. Renders nothing for
+// non-admins (the members request 403s).
 function AccessPanel({ projects, sources, onError }: { projects: string[]; sources: string[]; onError: (m: string) => void }) {
   const qc = useQueryClient();
-  interface Member { userId: number; role: string; name: string; email: string; login?: string; provider: string }
-  interface Grant { repo: string; userId: number; role: string; name: string; email: string; login?: string }
-  interface Invite { id: number; repo: string; kind: string; matcher: string; role: string }
+  interface Member { userId: number; role: string; name: string; email: string; provider: string }
+  interface Grant { repo: string; userId: number; role: string; name: string; email: string }
+  interface Invite { id: number; repo: string; matcher: string; role: string }
   const repos = [...projects, ...sources];
   const [repo, setRepo] = useState('');
   const active = repo || repos[0] || '';
@@ -173,7 +167,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
           {members.data.map((m) => (
             <div key={m.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
               <span style={sx('font-size:12.5px;font-weight:600')}>{m.name}</span>
-              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.login ? '@' + m.login : m.email}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{m.email}</span>
               <span style={sx('flex:1')} />
               <span style={sx(roleChip(m.role))}>{m.role}</span>
             </div>
@@ -197,7 +191,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
         {(grants.data?.grants || []).map((g) => (
           <div key={g.userId} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
             <span style={sx('font-size:12.5px;font-weight:600')}>{g.name}</span>
-            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{g.login ? '@' + g.login : g.email}</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{g.email}</span>
             <span style={sx('flex:1')} />
             <span style={sx(roleChip(g.role))}>{g.role}</span>
             <button disabled={revoke.isPending} onClick={() => revoke.mutate(g.userId)} style={sx(btn + ';color:var(--del);border-color:var(--reg-line)')}>Revoke</button>
@@ -205,7 +199,7 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
         ))}
         {(grants.data?.invites || []).map((v) => (
           <div key={v.id} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
-            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px")}>{v.kind === 'github' ? '@' + v.matcher : v.matcher}</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px")}>{v.matcher}</span>
             <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--surface-2);color:var(--text-3)')}>invited</span>
             <span style={sx('flex:1')} />
             <span style={sx(roleChip(v.role))}>{v.role}</span>
@@ -214,18 +208,17 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
         ))}
         {grants.data && grants.data.grants.length === 0 && grants.data.invites.length === 0 && (
           <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)')}>
-            No explicit grants — access to {active || 'this repo'} follows tenant roles.
+            No explicit grants — access to {active || 'this repo'} follows deployment roles.
           </div>
         )}
         <form onSubmit={(e) => { e.preventDefault(); if (form.user.trim()) add.mutate(); }}
           style={sx('display:flex;gap:8px;align-items:center;padding:12px 14px;flex-wrap:wrap')}>
-          <input required placeholder="email or @github-login" value={form.user}
+          <input required placeholder="email" value={form.user}
             onChange={(e) => setForm({ ...form, user: e.target.value })} style={sx(input + ';flex:1;min-width:200px')} />
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={sx(input + ';width:110px')}>
             <option value="viewer">viewer</option>
             <option value="editor">editor</option>
             <option value="maintainer">maintainer</option>
-            <option value="admin">admin</option>
           </select>
           <button type="submit" disabled={add.isPending || !active}
             style={sx('height:30px;padding:0 14px;border:none;border-radius:7px;background:var(--brand);color:var(--brand-fg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
@@ -236,75 +229,6 @@ function AccessPanel({ projects, sources, onError }: { projects: string[]; sourc
       </div>
       )}
     </>
-  );
-}
-
-// GitHubReposPanel — GitHub-App tenants pick which installation repositories
-// become workspaces or reference sources. Renders nothing for config tenants
-// or when no GitHub App is configured (the list request 4xxes).
-function GitHubReposPanel({ onError }: { onError: (m: string) => void }) {
-  const qc = useQueryClient();
-  interface GhRepo { fullName: string; private: boolean; description?: string; defaultBranch: string; state?: string; id?: string }
-  const repos = useQuery({
-    queryKey: ['github-repos'],
-    queryFn: () => api<GhRepo[]>('/api/github/repos'),
-    retry: false,
-  });
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['github-repos'] });
-    qc.invalidateQueries({ queryKey: ['repos'] });
-    qc.invalidateQueries({ queryKey: ['projects'] });
-  };
-  const add = useMutation({
-    mutationFn: (v: { fullName: string; mode: string }) =>
-      api('/api/github/repos', { method: 'POST', body: JSON.stringify(v) }),
-    onSuccess: invalidate,
-    onError: (e) => onError(String((e as Error).message || e)),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api(`/api/github/repos/${id}`, { method: 'DELETE' }),
-    onSuccess: invalidate,
-    onError: (e) => onError(String((e as Error).message || e)),
-  });
-  if (!repos.data) return null; // not a github tenant / app not configured
-  const btn = 'height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer';
-  return (
-    <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);margin-top:22px')}>
-      <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
-        GitHub repositories · this installation
-      </div>
-      {repos.data.map((r) => (
-        <div key={r.fullName} style={sx('display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)')}>
-          <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:600")}>{r.fullName}</span>
-          {r.private && <span style={sx('font-size:10px;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 5px')}>private</span>}
-          <span style={sx('flex:1')} />
-          {r.state ? (
-            <>
-              <span style={sx('font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;' +
-                (r.state === 'workspace' ? 'background:var(--data-bg);color:var(--data)' : 'background:var(--surface-2);color:var(--text-2)'))}>
-                {r.state}
-              </span>
-              <button disabled={remove.isPending} onClick={() => remove.mutate(r.id!)}
-                style={sx(btn + ';color:var(--del);border-color:var(--reg-line)')}>Remove</button>
-            </>
-          ) : (
-            <>
-              <button disabled={add.isPending} onClick={() => add.mutate({ fullName: r.fullName, mode: 'workspace' })} style={sx(btn)}>
-                + workspace
-              </button>
-              <button disabled={add.isPending} onClick={() => add.mutate({ fullName: r.fullName, mode: 'reference' })} style={sx(btn)}>
-                + reference
-              </button>
-            </>
-          )}
-        </div>
-      ))}
-      {repos.data.length === 0 && (
-        <div style={sx('padding:12px 14px;font-size:12px;color:var(--text-3)')}>
-          The installation grants no repositories — add some in GitHub's installation settings.
-        </div>
-      )}
-    </div>
   );
 }
 

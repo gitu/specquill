@@ -16,8 +16,8 @@ export interface WorkspaceState {
 const STATE_NOTE: Record<string, string> = {
   current: '',
   behind: ' (behind main — update blocked, commit or discard first)',
-  ahead: ' (has unmerged commits — open a PR when ready)',
-  diverged: ' (diverged from main — open a PR when ready)',
+  ahead: ' (has unmerged commits — merge when ready)',
+  diverged: ' (diverged from main — merge when ready)',
   dirty: ' (picking up your uncommitted changes)',
 };
 

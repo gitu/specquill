@@ -24,25 +24,6 @@ func TestParseString(t *testing.T) {
 	}
 }
 
-func TestFromGitHub(t *testing.T) {
-	cases := map[string]Role{
-		"admin":    Admin,
-		"maintain": Maintainer,
-		"write":    Editor,
-		"push":     Editor,
-		"triage":   Editor,
-		"read":     Viewer,
-		"pull":     Viewer,
-		"":         None,
-		"none":     None,
-	}
-	for perm, want := range cases {
-		if got := FromGitHub(perm); got != want {
-			t.Errorf("FromGitHub(%q) = %v, want %v", perm, got, want)
-		}
-	}
-}
-
 func TestMax(t *testing.T) {
 	if Max(Viewer, Editor) != Editor || Max(Admin, None) != Admin || Max(Maintainer, Maintainer) != Maintainer {
 		t.Fatal("Max broken")

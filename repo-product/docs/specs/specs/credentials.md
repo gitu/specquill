@@ -1,12 +1,18 @@
 ---
 type: Specification
 title: Credentials — tenant-owned encrypted repo tokens
-status: in_review
+status: deprecated
 satisfies: [requirements/REQ-023.md]
-updated: 2026-07-19
+updated: 2026-07-25
 ---
 
 # Credentials — tenant-owned encrypted repo tokens
+
+> **Deprecated 2026-07-25.** This describes tenant-owned encrypted repo tokens — part of the
+> multi-tenancy model that was removed when the product settled on one
+> deployment per tenant (see [ADR-006](../decisions/ADR-006.md) and
+> [multi-tenancy.md](../specs/multi-tenancy.md)). Credentials reach the
+> server by env-var name (`token_env`); there is no tenant to own them.
 
 How [REQ-023](../requirements/REQ-023.md) is realized. GitHub-App tenants
 authenticate git with installation tokens ([tenants.md](tenants.md)); this

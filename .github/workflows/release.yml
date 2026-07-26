@@ -2,7 +2,7 @@ name: Release
 
 # Every v* tag publishes a GitHub Release with the single-binary builds
 # (SPA embedded). The Docker image for the same tag is built by the Docker
-# workflow; Cloud Run prod rolls out from it via the deploy trigger.
+# workflow.
 
 on:
   push:

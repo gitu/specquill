@@ -24,7 +24,6 @@ func load(t *testing.T, yml string) *Config {
 const commonTail = `
 git: { committer_name: svc, committer_email: svc@t }
 auth: { local: { enabled: true } }
-database: { url: "postgres://x" }
 data_dir: ./data
 `
 
@@ -79,7 +78,6 @@ projects:
 sources:
   - { name: reg, kind: git, remote: "https://x/reg.git" }
   - { name: api, kind: openapi, remote: "https://x/openapi.yaml", sync_interval: 6h }
-grants: [reg]
 `+commonTail)
 	if cfg.Projects[0].ContentRoot != "docs/specs" {
 		t.Fatalf("content_root not cleaned: %q", cfg.Projects[0].ContentRoot)
@@ -92,9 +90,6 @@ grants: [reg]
 	if api := cfg.Repos[2]; api.ID != "api" || !api.Mirror || api.Remote != "" || api.Mode != ReadOnly {
 		t.Fatalf("openapi source should materialize as a remote-less mirror: %+v", api)
 	}
-	if len(cfg.Grants) != 1 || cfg.Grants[0] != "reg" {
-		t.Fatalf("grants: %v", cfg.Grants)
-	}
 }
 
 func TestValidationErrors(t *testing.T) {
@@ -106,8 +101,6 @@ sources: [{name: a, kind: git, remote: r}]` + commonTail, "duplicate"},
 		{`projects: [{id: a, remote: r, content_root: "../up"}]` + commonTail, "traverse"},
 		{`projects: [{id: a, remote: r}]
 sources: [{name: s, kind: ftp, remote: r}]` + commonTail, "kind"},
-		{`projects: [{id: a, remote: r}]
-grants: [nope]` + commonTail, "unknown source"},
 	}
 	for i, c := range cases {
 		p := filepath.Join(t.TempDir(), "c.yml")
@@ -125,5 +118,50 @@ func TestNormalizeIdempotent(t *testing.T) {
 	cfg.Normalize()
 	if len(cfg.Projects) != 1 || len(cfg.Repos) != 1 {
 		t.Fatalf("not idempotent: projects=%d repos=%d", len(cfg.Projects), len(cfg.Repos))
+	}
+}
+
+// The forge block is opt-in per project and must survive YAML → struct →
+// clone-registry normalization, inheriting the project's token by default.
+func TestForgeConfigParses(t *testing.T) {
+	cfg := load(t, `
+projects:
+  - id: specs
+    remote: "https://gitlab.example.com/acme/specs.git"
+    token_env: SPECQUILL_TOKEN
+    forge:
+      kind: gitlab
+      base_url: https://gitlab.example.com/api/v4
+      project: acme/specs
+`+commonTail)
+	f := cfg.Projects[0].Forge
+	if !f.Enabled() || f.Kind != "gitlab" || f.BaseURL != "https://gitlab.example.com/api/v4" || f.Project != "acme/specs" {
+		t.Fatalf("forge block not parsed: %+v", f)
+	}
+	// the clone registry carries it, defaulting the API token to the repo's
+	if rf := cfg.Repos[0].Forge; rf.Kind != "gitlab" || rf.TokenEnv != "SPECQUILL_TOKEN" {
+		t.Fatalf("forge not carried into the repo registry: %+v", rf)
+	}
+	// omitted entirely = feature off
+	off := load(t, `
+projects:
+  - { id: specs, remote: "https://x/specs.git" }
+`+commonTail)
+	if off.Projects[0].Forge.Enabled() || off.Repos[0].Forge.Enabled() {
+		t.Fatalf("forge should default to disabled: %+v", off.Projects[0].Forge)
+	}
+}
+
+func TestForgeKindValidated(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "specquill.yml")
+	yml := `
+projects:
+  - { id: specs, remote: "https://x/specs.git", forge: { kind: bitbucket } }
+` + commonTail
+	if err := os.WriteFile(p, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "forge.kind") {
+		t.Fatalf("unknown forge kind should be rejected, got %v", err)
 	}
 }

@@ -29,7 +29,6 @@ import (
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
-	"specquill/server/internal/githubapp"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/importer"
 	"specquill/server/internal/scaffold"
@@ -70,11 +69,7 @@ func openStore(cfg *config.Config) (*store.Store, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
 	}
-	dsn, err := cfg.Database.DSN()
-	if err != nil {
-		return nil, err
-	}
-	return store.Open(dsn)
+	return store.Open(cfg.Database.Path)
 }
 
 func serve(configPath string, dev bool) error {
@@ -97,28 +92,22 @@ func serve(configPath string, dev bool) error {
 	}
 	defer release()
 
-	// mirror the YAML repos into the built-in default tenant's registry
-	// (repo-product/docs/specs/specs/multi-tenancy.md — GitHub App installations add further tenants)
-	def, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
-	if err != nil {
-		return err
-	}
-	decls := make([]store.TenantRepo, 0, len(cfg.Repos))
+	// mirror the YAML repos, projects and source catalog into the registry
+	// (config-managed rows reconcile to the YAML; api-managed rows persist)
+	decls := make([]store.RepoRow, 0, len(cfg.Repos))
 	for _, rc := range cfg.Repos {
-		decls = append(decls, store.TenantRepo{
+		decls = append(decls, store.RepoRow{
 			RepoID: rc.ID, Mode: string(rc.Mode), Remote: rc.Remote, DefaultBranch: rc.DefaultBranch,
 		})
 	}
-	if err := st.SyncTenantRepos(def.ID, decls); err != nil {
+	if err := st.SyncRepos(decls); err != nil {
 		return err
 	}
-	// projects + the global source catalog + default-tenant grants
-	// (config-managed rows reconcile to the YAML; api-managed rows persist)
 	projDecls := make([]store.Project, 0, len(cfg.Projects))
 	for _, pc := range cfg.Projects {
 		projDecls = append(projDecls, store.Project{ProjectID: pc.ID, RepoID: pc.ID, ContentRoot: pc.ContentRoot})
 	}
-	if err := st.SyncTenantProjects(def.ID, projDecls); err != nil {
+	if err := st.SyncProjects(projDecls); err != nil {
 		return err
 	}
 	srcDecls := make([]store.Source, 0, len(cfg.Sources))
@@ -128,24 +117,7 @@ func serve(configPath string, dev bool) error {
 			DefaultBranch: sc.DefaultBranch, SyncInterval: int64(sc.SyncInterval.Seconds()),
 		})
 	}
-	if err := st.SyncGlobalSources(srcDecls); err != nil {
-		return err
-	}
-	granted := cfg.Grants
-	if len(granted) == 0 { // omitted = all sources (self-host convenience)
-		for _, sc := range cfg.Sources {
-			granted = append(granted, sc.Name)
-		}
-	}
-	grantIDs := make([]int64, 0, len(granted))
-	for _, name := range granted {
-		src, err := st.SourceByName(def.ID, name)
-		if err != nil {
-			return fmt.Errorf("grants: source %s: %w", name, err)
-		}
-		grantIDs = append(grantIDs, src.ID)
-	}
-	if err := st.SyncGrants(def.ID, grantIDs); err != nil {
+	if err := st.SyncSources(srcDecls); err != nil {
 		return err
 	}
 
@@ -154,49 +126,9 @@ func serve(configPath string, dev bool) error {
 		return err
 	}
 
-	// GitHub App: installation tokens authenticate git for github tenants
-	// (the TokenFor seam), so it must be wired before any AddRepo below
-	var ghApp *githubapp.App
-	if cfg.GitHubApp.Enabled() {
-		ghApp, err = githubapp.New(cfg.GitHubApp)
-		if err != nil {
-			return err
-		}
-		git.TokenFor = func(r *gitx.Repo) (string, string, bool) {
-			if ten, err := st.TenantBySlug(r.Tenant()); err == nil && ten.Provider == "github" && ten.Installation != 0 {
-				tok, err := ghApp.InstallationToken(ten.Installation)
-				if err != nil {
-					log.Printf("github app: token for %s: %v", r.Key(), err)
-					return "", "", false
-				}
-				return "x-access-token", tok, true
-			}
-			// config-tenant repos on github.com ride the app too when it is
-			// installed on them — no PAT needed; anything else (app not
-			// installed, non-GitHub host) falls back to token_env
-			if full, ok := githubapp.RepoFromRemote(r.Cfg.Remote); ok {
-				inst, err := ghApp.RepoInstallation(full)
-				if err != nil {
-					if err != githubapp.ErrNotInstalled {
-						log.Printf("github app: installation for %s: %v", full, err)
-					}
-					return "", "", false
-				}
-				tok, err := ghApp.InstallationToken(inst)
-				if err != nil {
-					log.Printf("github app: token for %s: %v", r.Key(), err)
-					return "", "", false
-				}
-				return "x-access-token", tok, true
-			}
-			return "", "", false
-		}
-		log.Printf("github app enabled: app id %d", cfg.GitHubApp.AppID)
-	}
-
 	// api-managed repos (added in-app) survive reconciliation — re-register
 	// them with the manager so their projects resolve after a restart
-	if repos, err := st.TenantRepos(def.ID); err == nil {
+	if repos, err := st.RepoRows(); err == nil {
 		for _, tr := range repos {
 			if tr.ManagedBy != "api" {
 				continue
@@ -205,7 +137,7 @@ func serve(configPath string, dev bool) error {
 			if tr.Mode == string(config.Writable) {
 				mode = config.Writable
 			}
-			if _, err := git.AddRepo(def.Slug, config.RepoConfig{
+			if _, err := git.AddRepo(config.RepoConfig{
 				ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
 				SyncInterval:      2 * time.Minute,
 				ProtectedBranches: []string{tr.DefaultBranch},
@@ -214,34 +146,6 @@ func serve(configPath string, dev bool) error {
 			}
 		}
 	}
-	// github tenants: re-register their persisted repos too (clones happen
-	// through the installation-token TokenFor above)
-	if ghApp != nil {
-		tens, err := st.TenantsByProvider("github")
-		if err != nil {
-			return err
-		}
-		for _, ten := range tens {
-			repos, err := st.TenantRepos(ten.ID)
-			if err != nil {
-				continue
-			}
-			for _, tr := range repos {
-				mode := config.ReadOnly
-				if tr.Mode == string(config.Writable) {
-					mode = config.Writable
-				}
-				if _, err := git.AddRepo(ten.Slug, config.RepoConfig{
-					ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
-					SyncInterval:      2 * time.Minute,
-					ProtectedBranches: []string{tr.DefaultBranch},
-				}); err != nil {
-					log.Printf("github tenant repo %s/%s: %v", ten.Slug, tr.RepoID, err)
-				}
-			}
-		}
-	}
-
 	bus := events.New()
 	git.Notify = func(kind, repo, branch string) {
 		bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
@@ -258,7 +162,7 @@ func serve(configPath string, dev bool) error {
 	imp := importer.NewRunner(git, st)
 	for _, sc := range cfg.Sources {
 		if !sc.IsGit() {
-			imp.Register(def.Slug, def.ID, sc)
+			imp.Register(sc)
 			log.Printf("importer registered: %s (%s)", sc.Name, sc.Kind)
 		}
 	}
@@ -273,12 +177,6 @@ func serve(configPath string, dev bool) error {
 		log.Printf("oidc enabled: issuer %s", cfg.Auth.OIDC.Issuer)
 	}
 
-	var githubAuth *auth.GitHub
-	if cfg.Auth.GitHub.Enabled {
-		githubAuth = auth.NewGitHub(cfg)
-		log.Printf("github login enabled: client %s (%d allowed users)", cfg.Auth.GitHub.ClientID, len(cfg.Auth.GitHub.AllowedUsers))
-	}
-
 	var aiClient *ai.Client
 	if cfg.AI.Enabled {
 		aiClient = ai.New(cfg.AI)
@@ -290,16 +188,14 @@ func serve(configPath string, dev bool) error {
 		return err
 	}
 	handler := api.New(cfg, git, api.Options{
-		Store:     st,
-		Sessions:  auth.NewSessions(st, cfg),
-		OIDC:      oidcAuth,
-		GitHub:    githubAuth,
-		GitHubApp: ghApp,
-		AI:        aiClient,
-		Bus:       bus,
-		Importer:  imp,
-		Dist:      dist,
-		Dev:       dev,
+		Store:    st,
+		Sessions: auth.NewSessions(st, cfg),
+		OIDC:     oidcAuth,
+		AI:       aiClient,
+		Bus:      bus,
+		Importer: imp,
+		Dist:     dist,
+		Dev:      dev,
 	})
 	log.Printf("listening on %s (dev=%v)", cfg.Listen, dev)
 	return http.ListenAndServe(cfg.Listen, handler)
