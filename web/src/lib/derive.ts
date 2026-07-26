@@ -53,6 +53,7 @@ export function defaultDoc(files: Record<string, string> | undefined, entities: 
 export interface TreeFile {
   path: string; name: string; icon: string; color: string;
   badge: string; badgeStyle: string; active: boolean;
+  generated: boolean; // OKF reserved file, regenerated at commit time
 }
 export interface TreeFolder { name: string; desc?: string; files: TreeFile[] }
 
@@ -88,6 +89,7 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
           badge,
           badgeStyle: badge === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
           active: path === openPath,
+          generated: isReservedMd(path),
         };
       }),
     };

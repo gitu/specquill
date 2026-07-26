@@ -117,10 +117,17 @@ export function Tree() {
                 key={f.path}
                 onClick={() => nav('/editor/' + f.path)}
                 style={sx('display:flex;align-items:center;gap:7px;padding:5px 8px 5px 26px;border-radius:6px;cursor:pointer;' +
-                  (f.active ? 'background:var(--surface);box-shadow:var(--shadow);font-weight:600;color:var(--text)' : 'color:var(--text-2)'))}
+                  (f.active ? 'background:var(--surface);box-shadow:var(--shadow);font-weight:600;color:var(--text)' : 'color:var(--text-2)') +
+                  (f.generated ? ';opacity:.55' : ''))}
               >
-                <span style={{ color: f.color, flex: 'none' }}>{f.icon}</span>
+                <span style={{ color: f.generated ? 'var(--text-3)' : f.color, flex: 'none' }}>{f.icon}</span>
                 <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{f.name}</span>
+                {f.generated && (
+                  <span title="generated automatically at commit time"
+                    style={sx("flex:none;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--surface-2);color:var(--text-3)")}>
+                    GEN
+                  </span>
+                )}
                 <div style={sx('flex:1')} />
                 {liveHere[f.path] && (
                   <span title={`co-editing live: ${liveHere[f.path].join(', ')}`}

@@ -9,7 +9,7 @@ import { useFileAtHead, useFileQuery, useMe, usePresence, useSaveFile } from '..
 import { api, rawUrl, uploadAsset } from '../api/client';
 import { useCollabSession } from '../collab/useCollabSession';
 import { userColor } from '../collab/session';
-import { esc, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
+import { esc, isReservedMd, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
 import { assemble } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { MoveDialog } from '../components/MoveDialog';
@@ -72,6 +72,9 @@ export function EditorView() {
   const fileRepo = roMatch ? roMatch[1] : app.repoId;
   const fileRef = roMatch ? '' : app.branch;
   const path = roMatch ? roMatch[2] : raw0;
+  // OKF reserved files are derived artifacts, regenerated at commit time —
+  // viewable but never hand-edited (a manual edit would be overwritten anyway)
+  const generated = isReservedMd(path);
   const name = path.split('/').pop()!;
   const kind = kindOf(name);
   const file = useFileQuery(fileRepo, fileRef, path);
@@ -101,7 +104,7 @@ export function EditorView() {
     file,
     // md edit mode is room-driven (the collab session owns persistence);
     // source mode and non-md files keep the PUT autosave path
-    enabled: !readOnly && !app.isProtectedBranch && !(mode === 'edit' && kind === 'md'),
+    enabled: !readOnly && !generated && !app.isProtectedBranch && !(mode === 'edit' && kind === 'md'),
     onRecovered: () => toasts.push({ text: `Recovered unsaved changes for ${name}`, kind: 'info' }),
     beforePersist: () => {
       const fresh = editorApi.current?.flush();
@@ -114,7 +117,7 @@ export function EditorView() {
   rawRef.current = draft.raw;
   const conflict = syncState === 'conflict';
   // committed baseline for the source-mode changed-line gutter
-  const headBaseline = useFileAtHead(fileRepo, app.branch, path, mode === 'source' && !readOnly && !app.isProtectedBranch);
+  const headBaseline = useFileAtHead(fileRepo, app.branch, path, mode === 'source' && !readOnly && !generated && !app.isProtectedBranch);
 
   // ---- real-time co-editing (markdown, edit mode, writable branch) ----
   const me = useMe();
@@ -125,7 +128,7 @@ export function EditorView() {
     (r) => r.branch === app.branch && r.path === path && !r.orphaned &&
       r.users.some((u) => u.userId !== (me.data?.id ?? -1)),
   );
-  const collabEligible = mode === 'edit' && kind === 'md' && !readOnly && !app.isProtectedBranch;
+  const collabEligible = mode === 'edit' && kind === 'md' && !readOnly && !generated && !app.isProtectedBranch;
   // note: no !file.isFetching here — flush acks invalidate the file query,
   // and dropping the session on every refetch remounts the editor/toolbar
   const session = useCollabSession({
@@ -208,9 +211,9 @@ export function EditorView() {
   const onRawChange = useCallback((raw: string) => {
     // typing in source mode on a protected branch triggers the workspace
     // switch; the dirty draft is carried onto the new branch
-    if (app.isProtectedBranch && !readOnly) void ensureWritableBranch();
+    if (app.isProtectedBranch && !readOnly && !generated) void ensureWritableBranch();
     setRaw(raw);
-  }, [setRaw, app.isProtectedBranch, readOnly, ensureWritableBranch]);
+  }, [setRaw, app.isProtectedBranch, readOnly, generated, ensureWritableBranch]);
 
   const enterEdit = useCallback(async () => {
     await ensureWritableBranch();
@@ -323,7 +326,7 @@ export function EditorView() {
   // ready only when the draft belongs to *this* path — during a file switch
   // the draft briefly still holds the previous document
   const ready = !!file.data && draft.path === path && draft.raw !== '';
-  const editable = kind === 'md' && !readOnly;
+  const editable = kind === 'md' && !readOnly && !generated;
   // a persisted 'edit' choice degrades gracefully on files that can't be edited
   const effMode = mode === 'edit' && !editable ? 'view' : mode;
 
@@ -451,7 +454,7 @@ export function EditorView() {
           <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
         </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
-        {!readOnly && (
+        {!readOnly && !generated && (
           <button onClick={() => setMoveOpen(true)} title="Move or rename this file — referencing documents can be rewritten"
             style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
             Move
@@ -508,8 +511,13 @@ export function EditorView() {
         {file.error != null && (
           <div style={sx('max-width:820px;margin:0 auto;padding:16px;border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:10px;color:var(--reg);font-size:13px')}>
             Couldn't load {path}: {String((file.error as Error).message || file.error)}
+            {generated && /not found/.test(String((file.error as Error).message || '')) && (
+              <div style={sx('margin-top:10px;color:var(--text-2);font-size:12px')}>
+                {name} is generated automatically at commit time — it can't be created manually.
+              </div>
+            )}
             {/* missing optional workspace files (and plain docs) can be created in place */}
-            {!readOnly && /not found/.test(String((file.error as Error).message || '')) &&
+            {!readOnly && !generated && /not found/.test(String((file.error as Error).message || '')) &&
               (scaffoldFor(path, app.repoId || '') !== null || kind === 'md') && (
               <div style={sx('margin-top:10px')}>
                 <button
@@ -550,6 +558,12 @@ export function EditorView() {
               {readOnly && (
                 <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:var(--surface-2);color:var(--text-3);font-size:11.5px;font-weight:600')}>
                   <IconLock /> read-only · {fileRepo}
+                </span>
+              )}
+              {generated && (
+                <span title="Regenerated automatically at commit time — manual edits are overwritten"
+                  style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:var(--surface-2);color:var(--text-3);font-size:11.5px;font-weight:600')}>
+                  ⟳ generated
                 </span>
               )}
               <div style={sx('flex:1')} />
@@ -693,7 +707,7 @@ export function EditorView() {
               value={draft.raw}
               lang={kind === 'md' ? 'markdown' : kind === 'yaml' ? 'yaml' : 'text'}
               onChange={onRawChange}
-              readOnly={readOnly || othersInRoom}
+              readOnly={readOnly || generated || othersInRoom}
               baseline={headBaseline.data?.content}
             />
           </div>
