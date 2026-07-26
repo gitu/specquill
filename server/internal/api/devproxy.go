@@ -14,13 +14,22 @@ import (
 // request falls through to the embedded build, so the proxy is safe to have
 // always-on in dev.
 func devViteProxy(fallback http.Handler) http.Handler {
-	target := &url.URL{Scheme: "http", Host: "127.0.0.1:5643"}
-	if v := os.Getenv("SPECQUILL_VITE_ADDR"); v != "" {
-		target.Host = v
-	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := httputil.NewSingleHostReverseProxy(devViteTarget(os.Getenv("SPECQUILL_VITE_ADDR")))
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
 		fallback.ServeHTTP(w, r)
 	}
 	return proxy
+}
+
+// devViteTarget accepts SPECQUILL_VITE_ADDR as either host:port or a full
+// http(s) URL; anything unreachable just means every request takes the
+// embedded-build fallback.
+func devViteTarget(v string) *url.URL {
+	if v == "" {
+		return &url.URL{Scheme: "http", Host: "127.0.0.1:5643"}
+	}
+	if u, err := url.Parse(v); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return &url.URL{Scheme: u.Scheme, Host: u.Host}
+	}
+	return &url.URL{Scheme: "http", Host: v}
 }
