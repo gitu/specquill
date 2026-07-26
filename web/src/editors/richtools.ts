@@ -145,10 +145,6 @@ export function slashView(ctx: Ctx, hooks: () => RichHooks) {
     update: (view: EditorView, prevState?: import('@milkdown/kit/prose/state').EditorState) => {
       if (!currentView) view.dom.addEventListener('keydown', onKey, true);
       currentView = view;
-      // no-op transactions (collab y-sync echoes) must not reach the provider:
-      // its debounce keeps only the LAST call's args, and its isSame guard
-      // would then discard the real edit that preceded them
-      if (prevState && prevState.doc.eq(view.state.doc) && prevState.selection.eq(view.state.selection)) return;
       provider.update(view, prevState);
     },
     destroy: () => {
@@ -206,8 +202,6 @@ export function selectionTooltipView(ctx: Ctx) {
 
   return {
     update: (view: EditorView, prevState?: import('@milkdown/kit/prose/state').EditorState) => {
-      // same no-op-transaction filter as the slash menu (collab echoes)
-      if (prevState && prevState.doc.eq(view.state.doc) && prevState.selection.eq(view.state.selection)) return;
       provider.update(view, prevState);
     },
     destroy: () => {

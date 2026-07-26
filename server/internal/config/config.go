@@ -130,8 +130,8 @@ type SessionConfig struct {
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
 
-// DatabaseConfig locates the SQLite store (users, sessions, PR review state,
-// collab logs) — a single file, by default inside data_dir, so a deployment
+// DatabaseConfig locates the SQLite store (users, sessions, workspace
+// claims) — a single file, by default inside data_dir, so a deployment
 // has no service to operate beside the binary. Load() resolves Path to an
 // absolute location; back it with a persistent volume, since the same disk
 // already holds the worktree drafts.

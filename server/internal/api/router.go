@@ -14,7 +14,6 @@ import (
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
-	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
 	"specquill/server/internal/gitx"
@@ -30,7 +29,6 @@ type Server struct {
 	oidc       *auth.OIDC
 	ai         *ai.Client  // nil when disabled
 	bus        *events.Bus // nil-safe
-	hub        *collab.Hub
 	devUser    *store.User
 	srcCache   *srcCache        // grounding source snapshots, keyed by repo key + head SHA
 	forgeCache *forgeCache      // forge review threads, keyed by repo key + branch
@@ -42,8 +40,7 @@ type Options struct {
 	Sessions *auth.Sessions
 	OIDC     *auth.OIDC  // nil when disabled
 	AI       *ai.Client  // nil when disabled
-	Bus      *events.Bus // nil-safe
-	Hub      *collab.Hub
+	Bus      *events.Bus      // nil-safe
 	Importer *importer.Runner // nil when no non-git sources are configured
 	Dist     fs.FS
 	Dev      bool
@@ -54,10 +51,7 @@ func (s *Server) publish(kind, repo, branch string) {
 }
 
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, hub: opts.Hub, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache()}
-	if s.hub == nil {
-		s.hub = collab.NewHub(opts.Store, git)
-	}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache()}
 	if opts.Dev && cfg.Auth.DevUser != nil {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
@@ -102,8 +96,6 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("POST /api/repos/{repo}/workspace", s.writableH(s.postWorkspace))
 	apiMux.HandleFunc("POST /api/repos/{repo}/pull", s.writableH(s.postPull))
 	apiMux.HandleFunc("GET /api/repos/{repo}/diff/worktree", s.writableH(s.getWorktreeDiff))
-	apiMux.HandleFunc("GET /api/repos/{repo}/collab/{path...}", s.writableH(s.collabWS))
-	apiMux.HandleFunc("GET /api/repos/{repo}/presence", s.writableViewH(s.getPresence))
 	apiMux.HandleFunc("GET /api/repos/{repo}/merge", s.writableViewH(s.getMergePreview))
 	apiMux.HandleFunc("GET /api/repos/{repo}/forge/request", s.writableViewH(s.getForgeRequest))
 	apiMux.HandleFunc("POST /api/repos/{repo}/merge", s.writableH(s.postMerge))

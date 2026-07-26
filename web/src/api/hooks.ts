@@ -28,19 +28,6 @@ export function useProjects() {
   return useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
 }
 
-export interface PresencePeer { connId: number; userId: number; name: string }
-export interface PresenceRoom { branch: string; path: string; users: PresencePeer[]; orphaned: boolean }
-
-/** who is co-editing what (live rooms + orphaned unflushed sessions) */
-export function usePresence(repo: string | undefined) {
-  return useQuery({
-    queryKey: ['presence', repo],
-    queryFn: () => api<PresenceRoom[]>(`/api/repos/${repo}/presence`),
-    enabled: !!repo,
-    refetchInterval: 10_000,
-  });
-}
-
 export function useSnapshot(repo: string | undefined, ref: string) {
   return useQuery({
     queryKey: ['snapshot', repo, ref],

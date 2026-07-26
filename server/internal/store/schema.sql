@@ -1,6 +1,6 @@
 -- specquill auth/session metadata (SQLite, a file in the data dir). Content
--- lives in git; this DB holds only users, sessions, workspace claims and the
--- collab update log. Single-tenant: one deployment serves one workspace; the
+-- lives in git; this DB holds only users, sessions and workspace claims —
+-- never documents. Single-tenant: one deployment serves one workspace; the
 -- canonical repo key in all other tables is the plain repo id.
 --
 -- Foreign keys are enforced (PRAGMA foreign_keys=ON in store.Open) — the
@@ -52,34 +52,11 @@ CREATE TABLE IF NOT EXISTS workspace_branches (
   UNIQUE (repo, branch)
 );
 
--- real-time co-editing: room state, opaque Yjs update log, contributor sets
-CREATE TABLE IF NOT EXISTS collab_rooms (
-  repo        TEXT NOT NULL,
-  branch      TEXT NOT NULL,
-  path        TEXT NOT NULL,
-  last_seq    BIGINT NOT NULL DEFAULT 0,
-  seed_seq    BIGINT NOT NULL DEFAULT 0,
-  flushed_seq BIGINT NOT NULL DEFAULT 0,
-  flushed_sha TEXT NOT NULL DEFAULT '',
-  updated_at  BIGINT NOT NULL,
-  PRIMARY KEY (repo, branch, path)
-);
-CREATE TABLE IF NOT EXISTS collab_updates (
-  repo    TEXT NOT NULL,
-  branch  TEXT NOT NULL,
-  path    TEXT NOT NULL,
-  seq     BIGINT NOT NULL,
-  payload BLOB   NOT NULL,
-  PRIMARY KEY (repo, branch, path, seq)
-);
-CREATE TABLE IF NOT EXISTS collab_contributors (
-  repo       TEXT NOT NULL,
-  branch     TEXT NOT NULL,
-  path       TEXT NOT NULL,
-  user_id    BIGINT NOT NULL REFERENCES users(id),
-  updated_at BIGINT NOT NULL,
-  PRIMARY KEY (repo, branch, path, user_id)
-);
+-- real-time co-editing was removed (July 2026); this schema runs on every
+-- store.Open, so the drops clean up databases from older versions
+DROP TABLE IF EXISTS collab_updates;
+DROP TABLE IF EXISTS collab_contributors;
+DROP TABLE IF EXISTS collab_rooms;
 
 
 -- projects & sources (config-split plan): a project is a writable workspace

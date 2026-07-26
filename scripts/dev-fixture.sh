@@ -9,7 +9,7 @@ ORIGIN=data/origin
 rm -rf "$ORIGIN"
 mkdir -p "$ORIGIN"
 
-# drop the store alongside the fixtures so sessions/PRs/collab logs don't
+# drop the store alongside the fixtures so sessions don't
 # reference vanished git state (-wal/-shm are WAL sidecars)
 rm -f data/runtime/specquill.db data/runtime/specquill.db-wal data/runtime/specquill.db-shm
 

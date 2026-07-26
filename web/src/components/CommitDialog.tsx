@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useCommit, usePresence, StatusResp } from '../api/hooks';
+import { useCommit, StatusResp } from '../api/hooks';
 import { useCopilotInfo } from '../api/copilot';
 import { api } from '../api/client';
 import { flushAllDrafts } from '../lib/draftRegistry';
@@ -12,12 +12,6 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
   const app = useApp();
   const commit = useCommit(app.repoId, app.branch);
   const [message, setMessage] = useState('');
-  // orphaned rooms hold co-editing changes that never reached the worktree —
-  // this commit would not include them
-  const presence = usePresence(app.repoId);
-  const orphaned = (presence.data || [])
-    .filter((r) => r.branch === app.branch && r.orphaned)
-    .map((r) => r.path);
 
   // AI-drafted message (quick one-shot tier): prefill unless the user typed
   const copilot = useCopilotInfo();
@@ -62,12 +56,6 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
             </div>
           ))}
         </div>
-        {orphaned.length > 0 && (
-          <div style={sx('margin:0 0 12px;padding:8px 11px;border:1px solid var(--reg);border-radius:9px;font-size:12px;color:var(--text-2);background:color-mix(in srgb, var(--reg) 8%, transparent)')}>
-            <b>Unsaved co-editing changes</b> on {orphaned.map((p) => p.split('/').pop()).join(', ')} are not
-            part of this commit — open the file{orphaned.length === 1 ? '' : 's'} first to recover them.
-          </div>
-        )}
         <textarea
           value={message}
           onChange={(e) => { touched.current = true; setMessage(e.target.value); }}

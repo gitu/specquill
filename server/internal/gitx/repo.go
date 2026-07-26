@@ -32,7 +32,7 @@ func (m *Manager) notify(kind, repo, branch string) {
 
 type Repo struct {
 	Cfg       config.RepoConfig
-	key       string   // canonical repo id — store rows, room keys
+	key       string   // canonical repo id — store rows, event payloads
 	mgr       *Manager // back-pointer: Notify hook
 	gitDir    string   // bare clone
 	wtRoot    string   // worktrees live here, one dir per branch
@@ -144,7 +144,7 @@ func (m *Manager) Repos() []*Repo {
 }
 
 // Key is the canonical repo identifier (the repo id) — what lands in store
-// rows, collab room keys, and event payloads.
+// rows and event payloads.
 func (r *Repo) Key() string { return r.key }
 
 func (r *Repo) Writable() bool { return r.Cfg.Mode == config.Writable }

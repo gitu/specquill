@@ -17,9 +17,8 @@ var ErrDiverged = fmt.Errorf("branch has diverged")
 
 // EnsureWorkspace creates branch from the default branch when missing, or
 // reuses it — fast-forwarding onto the default branch when that is safe
-// (clean worktree, no own commits, noFF false). Never discards commits or
-// dirty work.
-func (r *Repo) EnsureWorkspace(branch string, noFF bool) (*WorkspaceState, error) {
+// (clean worktree, no own commits). Never discards commits or dirty work.
+func (r *Repo) EnsureWorkspace(branch string) (*WorkspaceState, error) {
 	if !r.Writable() {
 		return nil, fmt.Errorf("repo %s is read-only", r.Cfg.ID)
 	}
@@ -56,12 +55,7 @@ func (r *Repo) EnsureWorkspace(branch string, noFF bool) (*WorkspaceState, error
 	case ahead > 0:
 		ws.State = "ahead"
 	case behind > 0:
-		// clean and strictly behind → safe to fast-forward onto main,
-		// unless the caller forbids ref moves (live co-editing room)
-		if noFF {
-			ws.State = "behind"
-			return ws, nil
-		}
+		// clean and strictly behind → safe to fast-forward onto main
 		if err := r.ResetBranchFF(branch, base); err != nil {
 			ws.State = "behind"
 			return ws, nil

@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useMe, usePresence, useProjects, useRepos, useStatus, useTree } from '../api/hooks';
+import { useProjects, useRepos, useStatus, useTree } from '../api/hooks';
 import { buildTree } from '../lib/derive';
 import { CommitDialog } from './CommitDialog';
 import { NewDocDialog } from './NewDocDialog';
@@ -54,8 +54,6 @@ export function Tree() {
   const { '*': openPath } = useParams();
   const status = useStatus(app.repoId, app.branch);
   const repos = useRepos();
-  const me = useMe();
-  const presence = usePresence(app.repoId);
   const [commitOpen, setCommitOpen] = useState(false);
   // reference section: the ACTIVE project's effective references (stage-3
   // selection ∩ grants); a project without references falls back to every
@@ -69,20 +67,6 @@ export function Tree() {
   // guided document creation (family, subfolder, auto-ID) lives in the
   // dialog; a string preselects that entity family
   const [newDoc, setNewDoc] = useState<{ kind?: string } | null>(null);
-
-  // who is co-editing what: dots on files roomed on this branch, a status
-  // line for live sessions on other branches (discoverability)
-  const liveHere: Record<string, string[]> = {};
-  const orphanedHere: Record<string, boolean> = {};
-  const elsewhere: { path: string; branch: string; names: string[] }[] = [];
-  for (const room of presence.data || []) {
-    if (room.branch === app.branch) {
-      if (room.orphaned) orphanedHere[room.path] = true;
-      else if (room.users.length) liveHere[room.path] = room.users.map((u) => u.name);
-    } else if (room.users.some((u) => u.userId !== me.data?.id)) {
-      elsewhere.push({ path: room.path, branch: room.branch, names: room.users.map((u) => u.name) });
-    }
-  }
 
   const gitStatus: Record<string, string> = {};
   status.data?.dirty.forEach((f) => { gitStatus[f.path] = f.state; });
@@ -129,14 +113,6 @@ export function Tree() {
                   </span>
                 )}
                 <div style={sx('flex:1')} />
-                {liveHere[f.path] && (
-                  <span title={`co-editing live: ${liveHere[f.path].join(', ')}`}
-                    style={sx('width:7px;height:7px;flex:none;border-radius:50%;background:var(--data);box-shadow:0 0 0 2px color-mix(in srgb, var(--data) 25%, transparent)')} />
-                )}
-                {orphanedHere[f.path] && !liveHere[f.path] && (
-                  <span title="unsaved co-editing changes — open the file to recover them"
-                    style={sx('width:7px;height:7px;flex:none;border-radius:50%;background:var(--reg)')} />
-                )}
                 <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;" + f.badgeStyle)}>{f.badge}</span>
               </div>
             ))}
@@ -145,21 +121,6 @@ export function Tree() {
         {readOnlyRepos.map((r) => (
           <ReadOnlyRepoSection key={r.id} repoId={r.id} syncedAt={r.syncedAt} okf={r.okf} openPath={openPath} />
         ))}
-        {elsewhere.length > 0 && (
-          <div style={sx('margin-top:10px;border-top:1px solid var(--border);padding:8px 8px 0')}>
-            {elsewhere.map((r) => (
-              <div key={r.branch + r.path}
-                onClick={() => nav('/editor/' + r.path + '?branch=' + encodeURIComponent(r.branch) + '&invite=1')}
-                title="open and join"
-                style={sx('display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;color:var(--text-3);cursor:pointer')}>
-                <span style={sx('width:6px;height:6px;flex:none;border-radius:50%;background:var(--data)')} />
-                <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>
-                  {r.names.join(', ')} editing {r.path.split('/').pop()} on {r.branch}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
       <div style={sx("height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-2)")}>
         {nDirty > 0 ? (

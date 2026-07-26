@@ -47,7 +47,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	repo := protect(t, m)
 
 	// create
-	ws, err := repo.EnsureWorkspace("ws/jane", false)
+	ws, err := repo.EnsureWorkspace("ws/jane")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	}
 
 	// reuse clean+current
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.Created || ws.State != "current" {
 		t.Fatalf("reuse: %+v", ws)
 	}
@@ -71,7 +71,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	repo.Cfg.ProtectedBranches = []string{"main"}
 
 	// clean + behind → fast-forwarded
-	ws, err = repo.EnsureWorkspace("ws/jane", false)
+	ws, err = repo.EnsureWorkspace("ws/jane")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	if _, err := repo.Commit("ws/jane", "own work", "J", "j@t", nil); err != nil {
 		t.Fatal(err)
 	}
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.State != "ahead" {
 		t.Fatalf("want ahead, got %+v", ws)
 	}
@@ -98,7 +98,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	_, _ = repo.SaveFile("main", "specs/a.md", "---\ntitle: A\n---\n\n# A3\n", mustSha(t, repo, "main", "specs/a.md"))
 	_, _ = repo.Commit("main", "more main", "J", "j@t", nil)
 	repo.Cfg.ProtectedBranches = []string{"main"}
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.State != "diverged" {
 		t.Fatalf("want diverged, got %+v", ws)
 	}
@@ -106,7 +106,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	// dirty → reused untouched
 	_ = repo.CreateBranch("ws/bob", "main")
 	_, _ = repo.SaveFile("ws/bob", "notes.txt", "wip\n", mustSha(t, repo, "ws/bob", "notes.txt"))
-	ws, _ = repo.EnsureWorkspace("ws/bob", false)
+	ws, _ = repo.EnsureWorkspace("ws/bob")
 	if ws.State != "dirty" {
 		t.Fatalf("want dirty, got %+v", ws)
 	}
@@ -119,7 +119,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 func TestEnsureWorkspaceRejectsProtectedName(t *testing.T) {
 	m, _ := fixture(t)
 	repo := protect(t, m)
-	if _, err := repo.EnsureWorkspace("main", false); !errors.Is(err, ErrProtected) {
+	if _, err := repo.EnsureWorkspace("main"); !errors.Is(err, ErrProtected) {
 		t.Fatalf("want ErrProtected, got %v", err)
 	}
 }

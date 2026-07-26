@@ -145,54 +145,6 @@ func (r *Repo) SaveFile(branch, path, content, baseSha string) (sha string, err 
 	return strings.TrimSpace(newSha), nil
 }
 
-// SaveFileForce writes room-owned content without an optimistic-concurrency
-// check — collaboration rooms are the single writer for their file while
-// active. Protection still applies.
-func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err error) {
-	branch, err = r.resolveRef(branch)
-	if err != nil {
-		return "", err
-	}
-	if err := r.protectedErr(branch); err != nil {
-		return "", err
-	}
-	path, err = safeRelPath(path)
-	if err != nil {
-		return "", err
-	}
-	wt, err := r.Worktree(branch)
-	if err != nil {
-		return "", err
-	}
-	mu := r.lockBranch(branch)
-	mu.Lock()
-	defer mu.Unlock()
-	abs := filepath.Join(wt, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "", err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(abs), ".specquill-*")
-	if err != nil {
-		return "", err
-	}
-	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp.Name(), abs); err != nil {
-		return "", err
-	}
-	newSha, err := runFull2(wt, nil, []byte(content), "hash-object", "-t", "blob", "--stdin")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(newSha), nil
-}
-
 // MoveFile renames a file inside the branch worktree. Tracked files move via
 // `git mv` so the rename is staged explicitly; untracked drafts (not yet
 // known to git) fall back to a plain filesystem rename.

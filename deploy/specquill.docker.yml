@@ -8,7 +8,7 @@
 #
 # MOUNT A PERSISTENT VOLUME at data_dir — it holds both the git clones
 # (rebuildable) and specquill.db (NOT rebuildable: users, sessions,
-# workspace claims, collab logs).
+# workspace claims).
 
 listen: ":8080"
 data_dir: /var/lib/specquill        # persistent volume — clones + specquill.db

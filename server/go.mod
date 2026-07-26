@@ -3,7 +3,6 @@ module specquill/server
 go 1.26.4
 
 require (
-	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.20.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/oauth2 v0.36.0
