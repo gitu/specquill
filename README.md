@@ -133,7 +133,7 @@ python3 scripts/mock-llm.py &          # keyless copilot provider for dev
 # → http://localhost:8643  (dev flag auto-authenticates as auth.dev_user)
 ```
 
-Frontend dev loop with HMR: `cd web && npm run dev` (Vite on :5173, proxying /api).
+Frontend dev loop with HMR: `cd web && npm run dev` (Vite on 127.0.0.1:5643, proxying /api). A server started with `-dev` reverse-proxies the SPA routes on :8643 to vite while it runs — :8643 never serves a stale build in dev — and falls back to the embedded build when vite is down.
 
 ## Run (production-ish)
 

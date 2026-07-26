@@ -8,7 +8,7 @@ web:                             ## build the SPA into the server's embed dir
 server:                          ## build the Go server (embeds web build)
 	cd server && CGO_ENABLED=0 go build -o specquill ./cmd/specquill
 
-dev:                             ## hot-reload dev loop: air (Go rebuild) + vite (web HMR on :5173)
+dev:                             ## hot-reload dev loop: air (Go rebuild) + vite (web HMR, proxied at :8643)
 	./scripts/dev.sh
 
 dev-fixture:                     ## create local bare origin repos under data/origin/

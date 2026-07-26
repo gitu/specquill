@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Full dev loop: Go hot-rebuild (air) + vite HMR. The store is an embedded
 # SQLite file under data/runtime — no service to start.
-# Frontend: http://localhost:5173 (HMR, proxies /api + /auth to :8643)
-# API:      http://localhost:8643 (serves the last *embedded* SPA — stale in dev, use :5173)
+# Browse:   http://localhost:8643 — in -dev mode the Go server reverse-proxies
+#           the SPA (HMR ws included) to vite on 127.0.0.1:5643, falling back
+#           to the embedded build when vite is down. :5643 works directly too.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

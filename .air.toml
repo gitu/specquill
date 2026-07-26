@@ -1,7 +1,7 @@
 # Hot-rebuild loop for the Go server (`air` from repo root, or `make dev`).
 # Watches server/*.go + specquill.dev.yml; the SPA is NOT rebuilt here —
-# in dev the frontend is served by vite on :5173 with HMR (see web/vite.config.ts),
-# proxying /api and /auth to this server on :8643.
+# in dev the frontend comes from vite on 127.0.0.1:5643 (HMR), which the Go
+# server reverse-proxies at :8643 (see internal/api/devproxy.go).
 root = "."
 tmp_dir = "server/tmp"
 

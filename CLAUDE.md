@@ -14,10 +14,12 @@ from the code.
   branch `ws/dev`) and bypasses session TTLs.
 - **Hot-reload loop: `make dev`** (`scripts/dev.sh`) — starts `air`
   (rebuilds/restarts the Go server on save; a bare `touch` does NOT trigger it,
-  air ignores chmod-only events), and vite HMR on :5173 (proxies /api+/auth,
-  ws included). In this mode browse the **vite port** — :8643 still serves
-  whatever SPA was last embedded. E2E still needs the embedded build
-  (`make build`).
+  air ignores chmod-only events), and vite HMR on 127.0.0.1:5643 (strictPort —
+  another project squats :5173 on this machine; proxies /api+/auth, ws
+  included). In `-dev` mode the Go server reverse-proxies SPA routes to vite
+  (`internal/api/devproxy.go`, override via `SPECQUILL_VITE_ADDR`), so browse
+  **:8643** — HMR works there, tailnet included; it falls back to the embedded
+  build when vite is down. E2E still needs the embedded build (`make build`).
 - **The SPA is embedded in the Go binary.** After `cd web && npm run build`
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
