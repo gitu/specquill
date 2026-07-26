@@ -4,8 +4,9 @@ import { useNarrow } from '../hooks/useMediaQuery';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useBranches, useCreateBranch, useMe, useStatus, useSync } from '../api/hooks';
-import { api } from '../api/client';
+import { api, clearStoredPat } from '../api/client';
 import { MergeDialog } from './MergeDialog';
+import { ProposeDialog } from './ProposeDialog';
 import { IconBranch, IconChevD, IconLock, IconMenu, IconMerge, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
@@ -24,6 +25,7 @@ export function TopBar() {
   const ahead = status.data?.ahead ?? 0;
   const behind = status.data?.behind ?? 0;
   const logout = async () => {
+    clearStoredPat(); // else the 401 handler would silently sign right back in
     await api('/auth/logout', { method: 'POST' });
     window.location.href = '/auth/login';
   };
@@ -131,13 +133,17 @@ export function TopBar() {
       )}
       <button
         onClick={() => setMergeDialog(true)}
-        aria-label="Merge branch"
-        title={'merge ' + app.branch + ' into the default branch'}
+        aria-label={app.mergeMode === 'forge' ? 'Propose changes' : 'Merge branch'}
+        title={app.mergeMode === 'forge'
+          ? 'push ' + app.branch + ' and open a merge request'
+          : 'merge ' + app.branch + ' into the default branch'}
         style={sx('flex:none;display:flex;align-items:center;gap:6px;height:30px;padding:0 ' + (narrow ? '9px' : '12px') + ';border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}
       >
-        <IconMerge /> {narrow ? '' : 'Merge'}
+        <IconMerge /> {narrow ? '' : app.mergeMode === 'forge' ? 'Propose' : 'Merge'}
       </button>
-      {mergeDialog && <MergeDialog onClose={() => setMergeDialog(false)} />}
+      {mergeDialog && (app.mergeMode === 'forge'
+        ? <ProposeDialog onClose={() => setMergeDialog(false)} />
+        : <MergeDialog onClose={() => setMergeDialog(false)} />)}
       <div
         title={me.data ? `${me.data.name} <${me.data.email}> — click to sign out` : ''}
         onClick={logout}

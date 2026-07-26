@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useRepos, useSnapshot } from '../api/hooks';
+import { api } from '../api/client';
 import { buildModel, WorkspaceModel } from '../lib/model';
 import { EntityDef, parseEntities } from '../lib/entities';
 import { flushAllDrafts } from '../lib/draftRegistry';
@@ -36,6 +37,8 @@ interface AppState {
   canEdit: boolean;
   canMerge: boolean;
   canAdmin: boolean;
+  /** how work lands on main: in-app merge, or push + MR/PR on the forge */
+  mergeMode: 'local' | 'forge';
   theme: 'light' | 'dark';        // resolved — what actually renders
   themeMode: ThemeMode;           // the preference behind it
   systemTheme: 'light' | 'dark';  // what the OS currently prefers
@@ -93,6 +96,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (repos.data && urlPid && !projects.some((r) => r.id === urlPid)) navigate('/', { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlPid, repos.data]);
+
+  // forge mode has no background sync loops (fetching needs the user's own
+  // token) — fetch once when a project is opened so its state is fresh
+  const fetchedFor = useRef<string>('');
+  useEffect(() => {
+    const id = writable?.id;
+    if (!id || writable?.mergeMode !== 'forge' || fetchedFor.current === id) return;
+    fetchedFor.current = id;
+    api(`/api/repos/${id}/fetch`, { method: 'POST', body: '{}' }).catch(() => { /* offline forge — stale is fine */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writable?.id, writable?.mergeMode]);
 
   // branch state never leaks across projects (URL-driven switches included)
   const prevProject = useRef(writable?.id);
@@ -228,8 +242,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // flash for viewers
       repoRole,
       canEdit: RANK[repoRole] >= RANK.editor,
-      canMerge: RANK[repoRole] >= RANK.maintainer,
+      // forge mode: proposing = pushing your own branch (editor); the actual
+      // merge is gated on the forge, not here
+      canMerge: writable?.mergeMode === 'forge' ? RANK[repoRole] >= RANK.editor : RANK[repoRole] >= RANK.maintainer,
       canAdmin: RANK[repoRole] >= RANK.admin,
+      mergeMode: writable?.mergeMode === 'forge' ? 'forge' : 'local',
       theme,
       themeMode,
       systemTheme,

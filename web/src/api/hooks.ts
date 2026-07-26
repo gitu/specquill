@@ -9,7 +9,10 @@ export interface StatusResp {
   behindDefault: number;
 }
 
-export interface Me { id: number; name: string; email: string; provider: string; initials: string; role: string }
+export interface Me {
+  id: number; name: string; email: string; provider: string; initials: string; role: string;
+  mergeMode?: 'local' | 'forge';
+}
 
 export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/api/me'), staleTime: 60_000 });
@@ -112,6 +115,20 @@ export function useMerge(repo: string | undefined) {
   });
 }
 
+
+/** Forge mode: push the branch and open (or re-use) a merge request there. */
+export function usePropose(repo: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { source: string; title?: string; body?: string }) =>
+      api<{ number: number; url: string; title: string; created: boolean }>(
+        `/api/repos/${repo}/propose`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (_, { source }) => {
+      qc.invalidateQueries({ queryKey: ['forge', repo, source] });
+      qc.invalidateQueries({ queryKey: ['status', repo, source] });
+    },
+  });
+}
 
 // ---------------------------------------------------------------- forge
 
