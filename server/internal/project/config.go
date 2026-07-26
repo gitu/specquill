@@ -19,10 +19,22 @@ type Reference struct {
 	Grounding bool     `yaml:"grounding"` // include in copilot context
 }
 
+// SourceDef DEFINES a read-only reference repo inside the workspace itself —
+// forge-PAT mode only, where there is no server-side catalog. Defining a repo
+// here never mints access: every user clones it with their own token, so the
+// forge's permissions are the gate. Git repos only (importer kinds stay a
+// catalog feature of local deployments).
+type SourceDef struct {
+	Name          string `yaml:"name"`
+	Remote        string `yaml:"remote"`
+	DefaultBranch string `yaml:"default_branch"` // default: main
+}
+
 type Config struct {
 	Version    int         `yaml:"version"`
 	Project    string      `yaml:"project"`
 	References []Reference `yaml:"references"`
+	Sources    []SourceDef `yaml:"sources"` // forge-PAT mode source definitions
 }
 
 // ParseConfig parses the in-repo config. Unknown keys (the v1 taxonomy/ui
@@ -65,6 +77,38 @@ func EffectiveReferences(cfg *Config, kinds map[string]string) (refs []Effective
 		}
 		refs = append(refs, EffectiveReference{
 			Source: r.Source, Kind: kind, Paths: r.Paths, Grounding: r.Grounding,
+		})
+	}
+	return refs, warnings
+}
+
+// EffectiveReferencesInRepo resolves references against the config's OWN
+// `sources:` definitions — the forge-PAT counterpart of EffectiveReferences,
+// where the repo defines its reference set and each user's token bounds what
+// they can actually clone. A `sources:` entry without a matching reference is
+// still browsable; a reference without a definition becomes a warning.
+func EffectiveReferencesInRepo(cfg *Config) (refs []EffectiveReference, warnings []string) {
+	if cfg == nil {
+		return nil, nil
+	}
+	defined := map[string]bool{}
+	for _, sd := range cfg.Sources {
+		if sd.Name != "" && sd.Remote != "" {
+			defined[sd.Name] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, r := range cfg.References {
+		if r.Source == "" || seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		if !defined[r.Source] {
+			warnings = append(warnings, "reference "+r.Source+" has no matching sources: definition")
+			continue
+		}
+		refs = append(refs, EffectiveReference{
+			Source: r.Source, Kind: "git", Paths: r.Paths, Grounding: r.Grounding,
 		})
 	}
 	return refs, warnings
