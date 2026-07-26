@@ -24,7 +24,7 @@ async function renderInto(el: HTMLElement, code: string, errText = 'mermaid: syn
   try {
     initMermaid();
     const { svg } = await mermaid.render('mmdv-' + ++seq, code);
-    // diagram source is collaborative document content — strip anything
+    // diagram source is user-authored document content — strip anything
     // executable from the rendered SVG (foreignObject carries html labels)
     el.innerHTML = DOMPurify.sanitize(svg, { ADD_TAGS: ['foreignObject'] });
     const svgEl = el.querySelector('svg');

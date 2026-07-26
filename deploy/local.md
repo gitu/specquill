@@ -32,7 +32,7 @@ Everything the server owns lives under `data_dir`:
 | path | contents | rebuildable? |
 |---|---|---|
 | `<data_dir>/repos/` | bare clones + worktrees | yes — re-cloned from the remotes |
-| `<data_dir>/specquill.db` | users, sessions, workspace claims, collab logs | **no** |
+| `<data_dir>/specquill.db` | users, sessions, workspace claims | **no** |
 
 So `data_dir` needs **persistent storage** (a real directory or a docker
 volume, as above), and it is what you back up. Document content itself lives
@@ -132,8 +132,7 @@ WantedBy=multi-user.target
 ## 5. Reverse proxy / TLS
 
 Terminate TLS in front (caddy/nginx/traefik — or simply a Tailscale/HTTPS
-tunnel) and forward to `listen`. **Websockets must be proxied** (collab
-rooms ride the same port). Caddy example:
+tunnel) and forward to `listen`. Caddy example:
 
 ```
 specs.example.com {
@@ -141,8 +140,8 @@ specs.example.com {
 }
 ```
 
-Run exactly **one instance**: the collab hub is in-process, the worktrees are
-on local disk, and SQLite wants a single writer.
+Run exactly **one instance**: the worktrees are on local disk, and SQLite
+wants a single writer.
 
 ## 6. Day-2
 

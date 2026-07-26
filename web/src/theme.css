@@ -77,9 +77,6 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 /* mermaid renders on a transparent background in both themes */
 .mermaid-block svg, :is(#specquill-doc,.doc-typo) svg[id^="mmd-"] { background: transparent !important; }
 
-/* y-prosemirror remote cursors + selections */
-.ProseMirror .ProseMirror-yjs-cursor{position:relative;border-left:2px solid;margin-left:-1px;margin-right:-1px;pointer-events:none;word-break:normal}
-.ProseMirror .ProseMirror-yjs-cursor>div{position:absolute;top:-1.35em;left:-2px;padding:1px 5px;border-radius:4px 4px 4px 0;font-size:9.5px;font-weight:700;color:#fff;white-space:nowrap;line-height:1.4;user-select:none}
 .ProseMirror ::selection{background:var(--selection)}
 
 /* ---- rich editing chrome: slash menu, selection toolbar, tables, links ---- */

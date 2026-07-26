@@ -12,3 +12,4 @@ playwright-report/
 # committed, secret-free Cloud Run config)
 specquill.yml
 .env
+web/tsconfig.tsbuildinfo

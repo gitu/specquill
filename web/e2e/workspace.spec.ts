@@ -135,14 +135,6 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
   await expect(page.locator('[data-banner]')).toBeVisible({ timeout: 20_000 });
-  // the ff is withheld while a co-editing room is still live (5s grace after
-  // the previous test) — wait for it to close
-  await expect
-    .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
-      return rooms.filter((r) => r.users.length > 0).length;
-    }, { timeout: 20_000 })
-    .toBe(0);
   await page.getByRole('button', { name: 'Update workspace' }).click();
   await expect(page.locator('[data-banner]')).toBeHidden({ timeout: 10_000 });
 });

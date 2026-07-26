@@ -8,21 +8,11 @@ import { $view, callCommand, getMarkdown, insert, replaceAll } from '@milkdown/k
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { tableBlock, tableBlockConfig } from '@milkdown/kit/component/table-block';
 import { linkTooltipPlugin, linkTooltipConfig, configureLinkTooltip } from '@milkdown/kit/component/link-tooltip';
-import { collab as collabPlugin, collabServiceCtx } from '@milkdown/plugin-collab';
 import { addLinkOnSelection, selectionTooltip, selectionTooltipView, slash, slashView } from './richtools';
-import type { Doc } from 'yjs';
-import type { Awareness } from 'y-protocols/awareness';
 import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view';
 import { mermaidBlockView } from './MermaidBlock';
 import { excalidrawImageView } from './ExcalidrawImage';
 import type { OpenExcalidraw } from './ExcalidrawImage';
-
-export interface CollabBinding {
-  doc: Doc;
-  awareness: Awareness;
-  /** this client seeds the room's document from `body` */
-  seedGranted: boolean;
-}
 
 /**
  * WYSIWYG markdown editor (Preview mode). Receives the body only — the
@@ -40,24 +30,21 @@ export interface MilkdownApi {
    * debounce window (e.g. a diagram edit followed by an immediate save).
    */
   flush: () => string | null;
-  /** unconditional serialization (collab flushes are room-driven) */
+  /** unconditional serialization */
   serialize: () => string;
   /** toggle an inline mark on the selection (toolbar; ⌘B/⌘I also work) */
   format: (mark: 'strong' | 'em' | 'code' | 'strike') => void;
 }
 
-export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty, onOpenPath, onOpenExcalidraw, onReady, onCollabTeardown, resolveAsset, onUploadImage, onRequestImage, onRequestSketch }: {
+export function MilkdownEditor({ body, docPath, files, onChange, onDirty, onOpenPath, onOpenExcalidraw, onReady, resolveAsset, onUploadImage, onRequestImage, onRequestSketch }: {
   body: string;
   docPath: string;
   files: Record<string, string> | undefined;
-  collab?: CollabBinding; // co-editing: bind to the room's Y.Doc instead of defaultValue
   onChange: (markdown: string) => void;
   onDirty?: () => void; // fires immediately on the first doc change (undebounced)
   onOpenPath: (path: string) => void;
   onOpenExcalidraw: OpenExcalidraw;
   onReady?: (api: MilkdownApi | null) => void;
-  /** collab: final serialization at unmount, before pending flushes lose the editor */
-  onCollabTeardown?: (markdown: string) => void;
   /** doc-relative image src → displayable URL (raw endpoint) */
   resolveAsset?: (src: string) => string;
   /** upload a pasted/dropped image; resolves to the doc-relative src to embed */
@@ -67,14 +54,11 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
   onRequestSketch?: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const cbRef = useRef({ onChange, onDirty, onOpenPath, onOpenExcalidraw, onCollabTeardown, resolveAsset, onUploadImage, onRequestImage, onRequestSketch, files, docPath });
-  cbRef.current = { onChange, onDirty, onOpenPath, onOpenExcalidraw, onCollabTeardown, resolveAsset, onUploadImage, onRequestImage, onRequestSketch, files, docPath };
+  const cbRef = useRef({ onChange, onDirty, onOpenPath, onOpenExcalidraw, resolveAsset, onUploadImage, onRequestImage, onRequestSketch, files, docPath });
+  cbRef.current = { onChange, onDirty, onOpenPath, onOpenExcalidraw, resolveAsset, onUploadImage, onRequestImage, onRequestSketch, files, docPath };
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const editedRef = useRef(false);
-  // captured once per mount — a different room remounts via the React key
-  const collabRef = useRef(collab);
-  collabRef.current = collab;
 
   useEffect(() => {
     if (!host.current) return;
@@ -91,7 +75,6 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
     };
     hostEl.addEventListener('input', onDomInput);
 
-    const collabBinding = collabRef.current;
     // pasted/dropped images upload to the branch worktree, then embed
     const insertImages = (view: PMEditorView, imgs: File[], pos?: number) => {
       for (const file of imgs) {
@@ -113,7 +96,7 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
     const builder = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, host.current!);
-        if (!collabBinding) ctx.set(defaultValueCtx, body); // collab seeds via applyTemplate
+        ctx.set(defaultValueCtx, body);
         ctx.update(editorViewOptionsCtx, (prev) => ({
           ...prev,
           attributes: { class: 'doc-typo milkdown-editable', spellcheck: 'false' },
@@ -202,10 +185,8 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
       .use(slash)
       .use(selectionTooltip)
       .use(tableBlock)
-      .use(linkTooltipPlugin);
-    // collab mode: y-undo replaces the history plugin (undo stays local-only)
-    if (collabBinding) builder.use(collabPlugin);
-    else builder.use(history);
+      .use(linkTooltipPlugin)
+      .use(history);
 
     builder
       .create()
@@ -216,18 +197,6 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
           return;
         }
         editor = e;
-        if (collabBinding) {
-          e.action((ctx) => {
-            const service = ctx.get(collabServiceCtx);
-            service.bindDoc(collabBinding.doc).setAwareness(collabBinding.awareness);
-            // emptiness guard: a rebind within the session's teardown grace
-            // (theme switch, navigate away & back) must not re-apply the
-            // stale template over the live doc
-            service.applyTemplate(body, () =>
-              collabBinding.seedGranted && collabBinding.doc.getXmlFragment('prosemirror').length === 0);
-            service.connect();
-          });
-        }
         onReadyRef.current?.({
           insert: (md) => {
             e.action(insert(md));
@@ -254,9 +223,12 @@ export function MilkdownEditor({ body, docPath, files, collab, onChange, onDirty
     return () => {
       destroyed = true;
       hostEl.removeEventListener('input', onDomInput);
-      // give pending room flushes their content while the editor still exists
-      if (collabBinding && editor) {
-        try { cbRef.current.onCollabTeardown?.(editor.action(getMarkdown())); } catch { /* torn-down editor */ }
+      // the listener's markdownUpdated is debounced — edits made just before
+      // unmount (e.g. type, then switch to View) would never reach onChange.
+      // Serialize once more while the editor still exists; editedRef keeps
+      // untouched documents byte-identical.
+      if (editedRef.current && editor) {
+        try { cbRef.current.onChange(editor.action(getMarkdown())); } catch { /* torn-down editor */ }
       }
       onReadyRef.current?.(null);
       editor?.destroy();

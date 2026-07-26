@@ -47,13 +47,6 @@ test('asset upload round-trips through the raw endpoint', async ({ request }) =>
 });
 
 async function restoreDoc(request: APIRequestContext, branch: string) {
-  // wait for live rooms only — orphaned rooms (unflushed logs) linger by design
-  await expect
-    .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
-      return rooms.filter((r) => r.users.length > 0).length;
-    }, { timeout: 20_000 })
-    .toBe(0);
   const head = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
   const cur = (await (await request.get(`/api/repos/${REPO}/files/${DOC}?ref=${encodeURIComponent(branch)}`)).json()) as { sha: string };
   await request.put(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, {
@@ -77,9 +70,7 @@ test('editor: upload button embeds an image; bold toolbar formats text', async (
   const img = page.locator(`.milkdown-editable img[src*="/raw/requirements/assets/shot"]`).first();
   await expect(img).toBeVisible({ timeout: 10_000 });
 
-  // bold: type, select the word, hit the B button (wait for the session
-  // toolbar cluster to render first — it shifts the buttons once)
-  await expect(page.locator('[data-sync]')).toBeVisible({ timeout: 10_000 });
+  // bold: type, select the word, hit the B button
   await page.locator('.milkdown-editable').click();
   await page.keyboard.press('Control+End');
   await page.keyboard.type(' boldcheck');

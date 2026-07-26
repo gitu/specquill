@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -40,7 +41,7 @@ func (s *Store) SyncRepos(repos []RepoRow) error {
 	}
 	q := "DELETE FROM repos WHERE managed_by = 'config'"
 	if len(repos) > 0 {
-		q += " AND repo_id NOT IN (?" + repeat(",?", len(repos)-1) + ")"
+		q += " AND repo_id NOT IN (?" + strings.Repeat(",?", len(repos)-1) + ")"
 	}
 	if _, err := tx.Exec(q, keep...); err != nil {
 		return err

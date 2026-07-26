@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBlocker, useParams, useSearchParams } from 'react-router-dom';
+import { useBlocker, useParams } from 'react-router-dom';
 import { useNav } from '../state/nav';
 import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useFileAtHead, useFileQuery, useMe, usePresence, useSaveFile } from '../api/hooks';
+import { useFileAtHead, useFileQuery, useSaveFile } from '../api/hooks';
 import { api, rawUrl, uploadAsset } from '../api/client';
-import { useCollabSession } from '../collab/useCollabSession';
-import { userColor } from '../collab/session';
 import { esc, isReservedMd, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
 import { assemble } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
@@ -28,7 +26,7 @@ import { MilkdownEditor, MilkdownApi } from '../editors/MilkdownEditor';
 import { SourceEditor } from '../editors/SourceEditor';
 import { PropertiesForm } from '../editors/PropertiesForm';
 import { ExcalidrawModal } from '../editors/ExcalidrawModal';
-import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconImage, IconLink, IconUserPlus, IconLock, IconMenu } from '../components/icons';
+import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconImage, IconLink, IconLock, IconMenu } from '../components/icons';
 
 
 
@@ -102,9 +100,7 @@ export function EditorView() {
     branch: app.branch,
     path,
     file,
-    // md edit mode is room-driven (the collab session owns persistence);
-    // source mode and non-md files keep the PUT autosave path
-    enabled: !readOnly && !generated && !app.isProtectedBranch && !(mode === 'edit' && kind === 'md'),
+    enabled: !readOnly && !generated && !app.isProtectedBranch,
     onRecovered: () => toasts.push({ text: `Recovered unsaved changes for ${name}`, kind: 'info' }),
     beforePersist: () => {
       const fresh = editorApi.current?.flush();
@@ -119,77 +115,7 @@ export function EditorView() {
   // committed baseline for the source-mode changed-line gutter
   const headBaseline = useFileAtHead(fileRepo, app.branch, path, mode === 'source' && !readOnly && !generated && !app.isProtectedBranch);
 
-  // ---- real-time co-editing (markdown, edit mode, writable branch) ----
-  const me = useMe();
-  // source mode leaves the CRDT room — while others are still live in it the
-  // room owns the file (PUTs 409), so source becomes read-only
-  const presence = usePresence(mode === 'source' && !readOnly ? fileRepo : undefined);
-  const othersInRoom = mode === 'source' && (presence.data || []).some(
-    (r) => r.branch === app.branch && r.path === path && !r.orphaned &&
-      r.users.some((u) => u.userId !== (me.data?.id ?? -1)),
-  );
-  const collabEligible = mode === 'edit' && kind === 'md' && !readOnly && !generated && !app.isProtectedBranch;
-  // note: no !file.isFetching here — flush acks invalidate the file query,
-  // and dropping the session on every refetch remounts the editor/toolbar
-  const session = useCollabSession({
-    enabled: collabEligible && !!file.data,
-    repo: fileRepo,
-    branch: app.branch,
-    path,
-    baseSha: file.data?.sha,
-    initialFm: file.data ? stripFrontmatter(file.data.content).fm : '',
-    me: me.data ? { id: me.data.id, name: me.data.name } : undefined,
-  });
-  const collabReady = session !== null && (session.status === 'synced' || session.status === 'seeding');
-  // room flushes write to the worktree outside the PUT path — refresh the
-  // dirty-files status when a flush ack lands
   const qc = useQueryClient();
-  // the session serializes through the live editor for flushes
-  useEffect(() => {
-    if (!session) return;
-    session.setSerializer(() => editorApi.current?.serialize() ?? null);
-    // flush acks refresh git status + the file query (view/source read it);
-    // deliberately NOT cleared on unmount — the final flush acks after the
-    // view releases the session
-    session.onFlushed = () => {
-      qc.invalidateQueries({ queryKey: ['status', fileRepo, app.branch] });
-      qc.invalidateQueries({ queryKey: ['file', fileRepo, app.branch, path] });
-    };
-    return () => session.setSerializer(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
-  // frontmatter lives in the room's Y.Map while a session is active
-  const [fmGen, setFmGen] = useState(0);
-  useEffect(() => {
-    if (!session) return;
-    return session.onFmChange(() => setFmGen((g) => g + 1));
-  }, [session]);
-  const collabFm = session && fmGen >= 0 ? session.getFm() : '';
-
-  // invite links deep-link into a live document on another branch
-  const [searchParams, setSearchParams] = useSearchParams();
-  useEffect(() => {
-    const inviteBranch = searchParams.get('branch');
-    if (!searchParams.has('invite') || !inviteBranch) return;
-    setSearchParams({}, { replace: true });
-    if (inviteBranch === app.branch) {
-      void enterEdit();
-      return;
-    }
-    toasts.push({
-      text: `You've been invited to co-edit ${name} on ${inviteBranch}`,
-      kind: 'info',
-      duration: 15_000,
-      action: {
-        label: 'Switch & join',
-        onClick: () => {
-          app.switchBranch(inviteBranch, { carryDraft: true });
-          setTimeout(() => void enterEdit(), 300);
-        },
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
 
   const { fm, body } = useMemo(() => stripFrontmatter(draft.raw), [draft.raw]);
   const title = kind === 'md' ? scalar(fm, 'title') || name : name;
@@ -399,38 +325,7 @@ export function EditorView() {
             <span style={sx('width:1px;height:20px;background:var(--border)')} />
           </>
         )}
-        {collabEligible && session && (
-          <>
-            {/* who's here */}
-            <span style={sx('display:inline-flex;align-items:center')}>
-              {session.peers.map((p, i) => (
-                <span key={p.connId} title={p.name}
-                  style={{ ...sx('width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:9.5px;font-weight:700;border:2px solid var(--surface)'), background: userColor(p.userId), marginLeft: i === 0 ? 0 : -6 }}>
-                  {p.name.split(/[\s._-]+/).slice(0, 2).map((w) => w[0]).join('')}
-                </span>
-              ))}
-            </span>
-            <button
-              onClick={() => {
-                const link = `${location.origin}/p/${app.repoId}/editor/${path}?branch=${encodeURIComponent(app.branch)}&invite=1`;
-                void navigator.clipboard.writeText(link);
-                toasts.push({ text: 'Invite link copied — anyone opening it joins this document live', kind: 'success' });
-              }}
-              title="Invite someone to co-edit this document"
-              style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--ai-line);border-radius:7px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer')}>
-              <IconUserPlus /> Invite
-            </button>
-            <span data-sync={session.dirty ? 'saving' : session.savedSha ? 'saved' : 'clean'}
-              style={sx("flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;min-width:64px;" +
-                (session.status === 'offline' ? 'color:var(--del)' : session.dirty ? 'color:var(--text-3)' : 'color:var(--data)'))}>
-              {session.status === 'offline' ? 'offline — reconnecting'
-                : session.status === 'error' ? session.errorMsg
-                : session.dirty ? 'Saving…'
-                : session.savedSha ? 'Saved ✓' : 'live'}
-            </span>
-          </>
-        )}
-        {!readOnly && !(collabEligible && session) && syncState !== 'clean' && (
+        {!readOnly && syncState !== 'clean' && (
           <span data-sync={syncState} style={sx("display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;" +
             (syncState === 'saved' ? 'color:var(--data)' : syncState === 'error' || syncState === 'conflict' ? 'color:var(--del)' : 'color:var(--text-3)'))}>
             {syncState === 'saved' ? 'Saved ✓'
@@ -624,10 +519,10 @@ export function EditorView() {
           </div>
         )}
 
-        {/* ---- Edit: WYSIWYG + properties form (room-driven when collab) ---- */}
-        {effMode === 'edit' && ready && editable && (!collabEligible || collabReady) && (
+        {/* ---- Edit: WYSIWYG + properties form ---- */}
+        {effMode === 'edit' && ready && editable && (
           <div style={sx('max-width:820px;margin:0 auto')}>
-            {(session ? collabFm : fm) && (
+            {fm && (
               <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
                 <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
@@ -638,40 +533,30 @@ export function EditorView() {
                 </div>
                 {propsOpen && (
                   <PropertiesForm
-                    fm={session ? collabFm : fm}
+                    fm={fm}
                     schema={app.schema}
                     files={app.files}
-                    onChange={session ? (nextFm) => session.setFm(nextFm) : onFmChange}
+                    onChange={onFmChange}
                     onOpenPath={openPath}
                   />
                 )}
               </div>
             )}
             <MilkdownEditor
-              key={path + ':' + (session ? 'room:' + sketchGen : draft.gen + ':' + sketchGen) + ':' + app.theme + (conflict ? ':c' : '')}
-              body={session && file.data ? stripFrontmatter(file.data.content).body : body}
+              key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
+              body={body}
               docPath={path}
               files={app.files}
-              collab={session ? { doc: session.doc, awareness: session.awareness, seedGranted: session.seedGranted } : undefined}
-              // collab: the room owns persistence — routing serialized text
-              // into the draft would create a second (stale) source of truth
-              // that blocks adopting flushed content after the room closes
-              onChange={session ? () => {} : onBodyChange}
-              onDirty={session ? () => session.markUserEdited() : markDirty}
+              onChange={onBodyChange}
+              onDirty={markDirty}
               onOpenPath={openPath}
               onOpenExcalidraw={setExcalidrawPath}
               onReady={(api) => { editorApi.current = api; }}
-              onCollabTeardown={session ? (md) => session.flushSerialized(md) : undefined}
               resolveAsset={resolveAsset}
               onUploadImage={uploadImage}
               onRequestImage={() => imagePicker.current?.click()}
               onRequestSketch={() => void insertSketch()}
             />
-            {collabEligible && session && session.peers.length > 1 && (
-              <div style={sx("margin-top:10px;font-size:11px;color:var(--text-3);font-family:'JetBrains Mono',monospace")}>
-                co-editing live with {session.peers.filter((p) => p.name !== me.data?.name).map((p) => p.name).join(', ')} — everyone lands as Co-authored-by on commit
-              </div>
-            )}
             {suggestions.length > 0 && (
               <div style={sx('margin-top:20px;border:1px solid var(--prod-line);border-radius:10px;overflow:hidden;background:var(--surface)')}>
                 <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--prod-bg)')}>
@@ -698,16 +583,11 @@ export function EditorView() {
 
         {effMode === 'source' && ready && (
           <div style={sx('max-width:960px;margin:0 auto')}>
-            {othersInRoom && (
-              <div style={sx('margin-bottom:10px;padding:8px 12px;border:1px solid var(--border-2);border-radius:9px;font-size:12px;color:var(--text-2);background:var(--surface)')}>
-                Source is read-only while others are co-editing this file live — switch to <b>Edit</b> to collaborate.
-              </div>
-            )}
             <SourceEditor
               value={draft.raw}
               lang={kind === 'md' ? 'markdown' : kind === 'yaml' ? 'yaml' : 'text'}
               onChange={onRawChange}
-              readOnly={readOnly || generated || othersInRoom}
+              readOnly={readOnly || generated}
               baseline={headBaseline.data?.content}
             />
           </div>

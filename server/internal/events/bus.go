@@ -1,6 +1,6 @@
 // Package events is a tiny in-process pub/sub bus. Phase 1 only publishes
-// (fetch/save/commit/merge/pull/workspace); Phase 2's collab hub and a future
-// websocket push subscribe to it.
+// (fetch/save/commit/merge/pull/workspace); a future websocket push
+// subscribes to it.
 package events
 
 import "sync"

@@ -29,12 +29,8 @@ server/           Go single binary (specquill)
   internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
                     opaque session cookies in the store
   internal/store    embedded SQLite (modernc, cgo-free) at <data_dir>/specquill.db:
-                    users, sessions, per-repo grants, workspace claims,
-                    collab room logs — content never leaves git
-  internal/collab   real-time co-editing relay: the server is a dumb Yjs
-                    update log (no server-side CRDT) — rooms per
-                    (branch, path), seed handshake, replay to joiners,
-                    leader-snapshot compaction, flush-to-worktree
+                    users, sessions, per-repo grants, workspace claims —
+                    content never leaves git
   internal/api      REST under /api + embedded SPA (embed.FS)
 web/              React + Vite + TypeScript SPA
   src/lib/model.ts  frontmatter/link parsing → workspace model (all client-side)
@@ -42,8 +38,6 @@ web/              React + Vite + TypeScript SPA
                     excalidraw embeds), CodeMirror 6 source mode,
                     schema-driven PropertiesForm (yaml Document API),
                     @excalidraw/excalidraw modal
-  src/collab/       CollabSession (Y.Doc + awareness + websocket provider,
-                    cached across remounts), Milkdown collab binding
 repo/             demo "trading-specs" workspace (fixture source)
 ```
 
@@ -58,13 +52,12 @@ Key properties:
   switches and navigation (localStorage recovery + unload keepalive), and an explicit
   Commit turns them into history. Tree badges are real `git status`; merging
   prompts to commit pending changes first.
-- **Real-time co-editing (CRDT).** Editing a markdown file in WYSIWYG mode joins a Yjs
-  room per (branch, file): live text sync, named cursors, presence dots in the tree,
-  invite links ("Switch & join"). The room owns the file while live — direct PUTs 409,
-  pulls/ffs are refused on roomed branches — and the leader client flushes the merged
-  doc to the worktree. Commits run a flush barrier and append `Co-authored-by:`
-  trailers for every room contributor. Unflushed sessions (crash) are surfaced as
-  orphaned rooms and recovered on next open.
+- **State lives in git; the database is bookkeeping.** Drafts are uncommitted
+  changes on a per-branch worktree, history is git commits — SQLite holds
+  identity, sessions, grants and workspace claims, never documents. Concurrent
+  saves of the same file are guarded by a `baseSha` precondition: the later
+  writer gets a 409 and a "file changed — reload" prompt instead of silently
+  clobbering.
 - **Direct merges, no review ceremony.** A workspace branch lands on the protected
   default branch through a previewed merge (diff + conflict check + dirty-worktree
   refusal); `git merge-tree` does the work as a merge commit or squash, conflicts
@@ -73,7 +66,7 @@ Key properties:
   `push`/`fetch` sync the plain remote with a token from the environment.
 - **Honest git identity.** The logged-in user is both **author and committer** on every
   commit and merge; the SpecQuill service identity is recorded as a `Co-authored-by:`
-  trailer instead, alongside trailers for live co-editing contributors.
+  trailer instead.
 - **Byte-fidelity editing.** Untouched documents save byte-identical; frontmatter edits
   go through the `yaml` Document API (comments/formatting preserved); WYSIWYG edits
   normalize markdown to house style (covered by a golden round-trip suite).
@@ -167,10 +160,6 @@ persistent directory, a reverse proxy.
 
 ## Notes & future work
 
-- Collab protocol notes: never mutate a Y.Doc before its socket is open (pre-sync local
-  items never transmit and every later edit references clock ranges peers never
-  received); the seeder initializes shared metadata after the seed grant and pushes
-  full state.
 - Copilot grounding is whole-snapshot prompting — fine at workspace scale; a retrieval
   index would be needed for large corpora or multi-repo grounding.
 - Read-only repos are browse-only inputs; federating them into the traceability model

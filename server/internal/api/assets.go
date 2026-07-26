@@ -125,10 +125,6 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *project
 func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	p := r.PathValue("path")
 	branch := r.URL.Query().Get("branch")
-	if full, err := repo.MapIn(p); err == nil && s.hub.RoomActive(repo.Key(), repo.ResolveRef(branch), full) {
-		jsonError2(w, http.StatusConflict, "a live co-editing session owns this file", "room_active")
-		return
-	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxAssetSize+1))
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())

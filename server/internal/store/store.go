@@ -1,6 +1,5 @@
-// Package store wraps the SQLite database holding users, sessions, workspace
-// claims and the collab update log. Workspace content never lands here — it
-// stays in git.
+// Package store wraps the SQLite database holding users, sessions and
+// workspace claims. Workspace content never lands here — it stays in git.
 package store
 
 import (

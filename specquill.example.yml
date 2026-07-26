@@ -4,7 +4,7 @@ listen: ":8080"
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
 base_url: https://specquill.example.com
 
-# Store (users, sessions, PR review state, collab logs): an embedded SQLite
+# Store (users, sessions, workspace claims): an embedded SQLite
 # file. Defaults to <data_dir>/specquill.db, so this block is optional — set
 # it only to place the DB on another volume. Back it with persistent storage:
 # unlike data_dir's clones, it is not rebuildable.

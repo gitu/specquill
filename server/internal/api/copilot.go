@@ -302,7 +302,7 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 
 // sourceSnapshot returns a read-only snapshot of a source's default branch,
 // cached by (repo key, head SHA): the content only changes when the branch
-// moves, so a live room's keystrokes never re-snapshot an unchanged source.
+// moves, so repeated requests never re-snapshot an unchanged source.
 // Returns nil on any failure. The returned map must not be mutated (it is
 // shared) — callers filter into a fresh map.
 func (s *Server) sourceSnapshot(key string, repo *gitx.Repo) map[string]string {

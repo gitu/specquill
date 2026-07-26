@@ -24,7 +24,7 @@ from the code.
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.
 - `pkill specquill` matches the wrapper shell (exit 143) — use `pkill -x specquill`.
-- **The store is embedded SQLite** (users, sessions, workspace claims, collab room logs) at
+- **The store is embedded SQLite** (users, sessions, workspace claims) at
   `<data_dir>/specquill.db` = `data/runtime/specquill.db` in dev — no service
   to start, nothing in docker compose. Go tests get a throwaway DB per test
   via `store.OpenTest` and never skip. WAL mode, so `specquill.db-wal` /
@@ -40,7 +40,7 @@ from the code.
   the dev server is up. Survives until the next store reset.
 - Full state reset: `pkill -x specquill; rm -rf data/runtime && ./scripts/dev-fixture.sh`
   — with the store inside `data/runtime`, removing that directory now clears
-  sessions/merge state/collab logs too (the fixture script also deletes the DB, so
+  sessions/merge state too (the fixture script also deletes the DB, so
   fixtures and store can't drift apart).
 - Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
   `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
@@ -55,8 +55,7 @@ from the code.
   running dev server built from the current source (see embedded-SPA note).
 - Screenshot specs are gated behind `SHOT=1`.
 - E2E state discipline: tests self-heal or use unique per-run file names
-  (`scratch-*-<stamp>.md`). Failed collab runs can leave orphaned room logs —
-  presence polls in cleanups must count rooms with `users.length > 0` only.
+  (`scratch-*-<stamp>.md`).
 
 ## Domain model / invariants
 
@@ -94,12 +93,11 @@ from the code.
   worktree; explicit Commit turns them into history.
 - **Commit identity**: the logged-in user is **author AND committer**; the
   service identity (`git.committer_name/email`) is appended as a
-  `Co-authored-by:` trailer, alongside trailers for collab contributors.
-- **CRDT co-editing**: markdown files in edit mode join a Yjs room per
-  (branch, path). The server is a dumb relay (`internal/collab`) — opaque
-  update log in the store, replay to joiners, leader flushes serialized markdown
-  to the worktree. While a room is live it OWNS the file: direct PUTs 409
-  (`room_active`), pulls/workspace-ffs on that branch are withheld.
+  `Co-authored-by:` trailer.
+- **Single-editor saves**: every save carries a `baseSha` precondition
+  (`SaveFile` → 409 `ErrStale` on mismatch); the conflict banner in the
+  editor is the whole concurrency story. Real-time co-editing (Yjs rooms)
+  was removed in July 2026.
 - **Byte fidelity**: untouched documents save byte-identical; only real user
   edits normalize markdown.
 - **Sketches**: `*.excalidraw.png` — PNGs with the excalidraw scene embedded
@@ -120,25 +118,12 @@ from the code.
 
 ## Hard-won gotchas (do not rediscover these)
 
-- **Yjs pre-open mutation trap**: never mutate a Y.Doc before its websocket
-  is open (and, for joiners, before replay applied). Pre-open local items
-  never transmit; every later edit references clock ranges peers never got —
-  held as `pendingStructs` forever, silent one-way divergence. The seeder
-  initializes shared metadata in its seed-grant handler and pushes
-  `encodeStateAsUpdate` afterwards.
 - **Never replace ProseMirror node-view DOM** (e.g. `img.replaceWith(...)`):
   PM re-parses and deletes the node from the document. Mutate the existing
   element (swap `src`, add classes) instead.
 - **Milkdown listener debounce**: even `listener.updated` is debounced; the
   undebounced truth for "user typed" is a DOM `input` listener on the
   contenteditable.
-- **Slash/tooltip providers + collab**: y-sync echoes no-op transactions after
-  every keystroke; the providers' lodash debounce keeps only the LAST call's
-  args and their `isSame` guard then discards the real edit. Filter no-op
-  transactions before calling `provider.update` (see `richtools.ts`).
-- **Session acquisition must live in an effect** (`useCollabSession`):
-  acquiring during render leaks a refcount on aborted renders → websocket and
-  server-side room stay alive forever.
 - **Toolbar flex**: every control cluster needs `flex:none`; otherwise the
   overflowing toolbar silently crushes the weakest item to ~2px. The path
   label is the designated shrink/ellipsis element.

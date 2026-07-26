@@ -10,10 +10,10 @@ Constraints, wherever it runs:
 - **Content lives in git.** Documents are only ever markdown in the
   configured remotes.
 - **The server's own state is a SQLite file in `data_dir`** (users, sessions,
-  review state, collab logs), so `data_dir` needs persistent storage and is
+  workspace claims), so `data_dir` needs persistent storage and is
   what you back up.
-- **Exactly one instance** runs at a time: the collab hub is in-process, the
-  worktrees are on local disk, and SQLite takes a single writer.
+- **Exactly one instance** runs at a time: the worktrees are on local disk,
+  and SQLite takes a single writer.
 
 ## Removed: the Cloud Run pipeline (2026-07-25)
 
@@ -26,7 +26,7 @@ The reasoning, so it does not get rediscovered: the store is now an embedded
 SQLite file, and Cloud Run has no persistent disk (SQLite is unsafe on its
 GCS-FUSE and NFS volume mounts, neither of which gives it real file locking).
 Keeping Cloud Run would have meant carrying a second storage backend
-indefinitely — and since the collab hub already forces `--max-instances=1`
+indefinitely — and since the single-writer store already forces `--max-instances=1`
 with a warm minimum instance, that deployment was paying Cloud Run's
 statelessness constraint without getting its elasticity in return. Any host
 with a real disk (a small VM, or a container platform with volumes) runs the

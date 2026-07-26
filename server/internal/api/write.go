@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"specquill/server/internal/project"
-	"strings"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
@@ -50,11 +49,6 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *project.P
 		jsonError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if full, err := repo.MapIn(r.PathValue("path")); err == nil && s.hub.RoomActive(repo.Key(), branch, full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
-		return
-	}
 	sha, err := repo.SaveFile(r.URL.Query().Get("branch"), r.PathValue("path"), body.Content, body.BaseSha)
 	if errors.Is(err, gitx.ErrStale) {
 		jsonError(w, http.StatusConflict, err.Error())
@@ -69,10 +63,6 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *project.P
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if full, err := repo.MapIn(r.PathValue("path")); err == nil && s.hub.RoomActive(repo.Key(), repo.ResolveRef(r.URL.Query().Get("branch")), full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited", "room_active")
-		return
-	}
 	if err := repo.DeleteFile(r.URL.Query().Get("branch"), r.PathValue("path")); err != nil {
 		gitFail(w, err)
 		return
@@ -89,10 +79,6 @@ func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if full, err := repo.MapIn(body.From); err == nil && s.hub.RoomActive(repo.Key(), branch, full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
-		return
-	}
 	if err := repo.MoveFile(r.URL.Query().Get("branch"), body.From, body.To); err != nil {
 		gitFail(w, err)
 		return
@@ -121,38 +107,11 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *projec
 	}
 	u := auth.UserFrom(r.Context())
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-
-	// commit barrier: live co-editing rooms flush their docs first, and every
-	// contributor besides the author lands as a Co-authored-by trailer.
-	// Hub/store key rooms by FULL repo paths — map the request's
-	// project-relative paths in.
-	fullPaths := make([]string, 0, len(body.Paths))
-	for _, rel := range body.Paths {
-		if full, err := repo.MapIn(rel); err == nil {
-			fullPaths = append(fullPaths, full)
-		}
-	}
-	_ = s.hub.FlushBranch(r.Context(), repo.Key(), branch, fullPaths)
-	message := body.Message
-	if contributors, err := s.store.Contributors(repo.Key(), branch, fullPaths); err == nil {
-		trailers := ""
-		for _, c := range contributors {
-			if c.ID == u.ID {
-				continue
-			}
-			trailers += "\nCo-authored-by: " + c.Name + " <" + c.Email + ">"
-		}
-		if trailers != "" {
-			message = strings.TrimRight(message, "\n") + "\n" + trailers
-		}
-	}
-
-	sha, err := repo.Commit(branch, message, u.Name, u.Email, body.Paths)
+	sha, err := repo.Commit(branch, body.Message, u.Name, u.Email, body.Paths)
 	if err != nil {
 		gitFail(w, err)
 		return
 	}
-	_ = s.store.ClearContributors(repo.Key(), branch, fullPaths)
 	s.publish("commit", repo.Key(), branch)
 	jsonOK(w, map[string]string{"commitSha": sha})
 }
