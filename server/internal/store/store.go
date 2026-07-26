@@ -172,12 +172,3 @@ func (s *Store) DeleteSession(sessionID string) error {
 }
 
 func (s *Store) DB() *sql.DB { return s.db }
-
-// repeat builds the ",?..." tail of an IN (?,...) placeholder list.
-func repeat(s string, n int) string {
-	out := ""
-	for i := 0; i < n; i++ {
-		out += s
-	}
-	return out
-}

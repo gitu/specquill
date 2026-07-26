@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -55,7 +56,7 @@ func (s *Store) SyncProjects(projects []Project) error {
 	}
 	q := "DELETE FROM projects WHERE managed_by = 'config'"
 	if len(projects) > 0 {
-		q += " AND project_id NOT IN (?" + repeat(",?", len(projects)-1) + ")"
+		q += " AND project_id NOT IN (?" + strings.Repeat(",?", len(projects)-1) + ")"
 	}
 	if _, err := tx.Exec(q, keep...); err != nil {
 		return err
@@ -131,7 +132,7 @@ func (s *Store) SyncSources(sources []Source) error {
 	}
 	q := "DELETE FROM sources WHERE managed_by = 'config'"
 	if len(sources) > 0 {
-		q += " AND name NOT IN (?" + repeat(",?", len(sources)-1) + ")"
+		q += " AND name NOT IN (?" + strings.Repeat(",?", len(sources)-1) + ")"
 	}
 	if _, err := tx.Exec(q, keep...); err != nil {
 		return err
