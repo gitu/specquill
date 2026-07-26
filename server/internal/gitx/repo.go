@@ -16,12 +16,33 @@ import (
 
 type Manager struct {
 	dataDir   string
+	reposRoot string // clones live here, one dir per repo id
 	committer config.GitConfig
 	mu        sync.RWMutex // guards repos/order (AddRepo happens at runtime)
 	repos     map[string]*Repo
 	order     []string
 	// Notify, when set, receives coarse change hints (kind, repoKey, branch).
 	Notify func(kind, repo, branch string)
+
+	// patToken is the forge PAT of the manager's user (per-user managers in
+	// forge-PAT mode; empty on the shared manager, which falls back to the
+	// repo's token_env). Refreshed from the session vault on every request.
+	patMu    sync.RWMutex
+	patToken string
+}
+
+// SetToken applies the caller's forge PAT to all of this manager's git
+// operations (clone/fetch/push credentials).
+func (m *Manager) SetToken(token string) {
+	m.patMu.Lock()
+	m.patToken = token
+	m.patMu.Unlock()
+}
+
+func (m *Manager) token() string {
+	m.patMu.RLock()
+	defer m.patMu.RUnlock()
+	return m.patToken
 }
 
 func (m *Manager) notify(kind, repo, branch string) {
@@ -45,12 +66,16 @@ type Repo struct {
 	lastFetchL sync.Mutex
 	lastFetch  time.Time
 
+	ensureMu sync.Mutex
+	ensured  bool // clone verified present — EnsureCloned's fast path
+
 	done chan struct{} // closed by Manager.RemoveRepo; stops the sync loop
 }
 
 func NewManager(cfg *config.Config) (*Manager, error) {
 	m := &Manager{
 		dataDir:   cfg.DataDir,
+		reposRoot: filepath.Join(cfg.DataDir, "repos"),
 		committer: cfg.Git,
 		repos:     map[string]*Repo{},
 	}
@@ -60,10 +85,27 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	return m, nil
 }
 
+// NewUserManager builds a manager whose clones live under a per-user scope
+// directory (forge-PAT mode: each user fetches with their own token, so no
+// clone may be shared). Repos are registered but NOT cloned — EnsureCloned
+// runs lazily, with the user's token, on first access.
+func NewUserManager(cfg *config.Config, scope string) *Manager {
+	m := &Manager{
+		dataDir:   cfg.DataDir,
+		reposRoot: filepath.Join(cfg.DataDir, "repos", scope),
+		committer: cfg.Git,
+		repos:     map[string]*Repo{},
+	}
+	for _, rc := range cfg.Repos {
+		m.add(rc)
+	}
+	return m
+}
+
 // add registers a repo without cloning (see ensure/Init).
 func (m *Manager) add(rc config.RepoConfig) *Repo {
 	key := rc.ID
-	root := filepath.Join(m.dataDir, "repos", rc.ID)
+	root := filepath.Join(m.reposRoot, rc.ID)
 	r := &Repo{
 		Cfg:       rc,
 		key:       key,
@@ -88,12 +130,22 @@ func (m *Manager) AddRepo(rc config.RepoConfig) (*Repo, error) {
 		return r, nil
 	}
 	r := m.add(rc)
-	if err := r.ensure(); err != nil {
+	if err := r.EnsureCloned(); err != nil {
 		m.RemoveRepo(r.key)
-		return nil, fmt.Errorf("repo %s: %w", r.key, err)
+		return nil, err
 	}
 	m.startSyncLoop(r)
 	return r, nil
+}
+
+// RegisterRepo registers a repo without cloning and without a sync loop — the
+// forge-PAT path, where clones are lazy (EnsureCloned with the user's token)
+// and fetches happen on user activity only. Idempotent per id.
+func (m *Manager) RegisterRepo(rc config.RepoConfig) *Repo {
+	if r, ok := m.Repo(rc.ID); ok {
+		return r
+	}
+	return m.add(rc)
 }
 
 // RemoveRepo drops a repo from the registry and stops its sync loop. The
@@ -118,8 +170,8 @@ func (m *Manager) RemoveRepo(key string) {
 // Init clones any missing repos and prunes stale worktrees. Call at startup.
 func (m *Manager) Init() error {
 	for _, r := range m.Repos() {
-		if err := r.ensure(); err != nil {
-			return fmt.Errorf("repo %s: %w", r.key, err)
+		if err := r.EnsureCloned(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -172,9 +224,24 @@ func (r *Repo) lockBranch(branch string) *sync.Mutex {
 	return mu
 }
 
+// EnsureCloned makes sure the bare clone exists, cloning with the manager's
+// current credentials when it does not. Cheap after the first success.
+func (r *Repo) EnsureCloned() error {
+	r.ensureMu.Lock()
+	defer r.ensureMu.Unlock()
+	if r.ensured {
+		return nil
+	}
+	if err := r.ensure(); err != nil {
+		return fmt.Errorf("repo %s: %w", r.key, err)
+	}
+	return nil
+}
+
 func (r *Repo) ensure() error {
 	if _, err := os.Stat(filepath.Join(r.gitDir, "HEAD")); err == nil {
 		_, _ = run(r.gitDir, nil, "worktree", "prune")
+		r.ensured = true
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(r.gitDir), 0o755); err != nil {
@@ -186,10 +253,12 @@ func (r *Repo) ensure() error {
 		_, err := run("", nil, "init", "--bare", "-b", r.Cfg.DefaultBranch, r.gitDir)
 		if err == nil {
 			r.setLastFetch(time.Now())
+			r.ensured = true
 		}
 		return err
 	}
-	if _, err := run("", nil, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir); err != nil {
+	args, env := r.credentialArgsEnv()
+	if _, err := run("", env, append(args, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir)...); err != nil {
 		return err
 	}
 	// Writable repos keep local heads authoritative; remote state is tracked
@@ -209,6 +278,7 @@ func (r *Repo) ensure() error {
 		}
 	}
 	r.setLastFetch(time.Now())
+	r.ensured = true
 	return nil
 }
 

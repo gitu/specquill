@@ -7,13 +7,17 @@ import (
 	"time"
 )
 
-// credentialEnvArgs configures git to take credentials from the child-process
+// credentialArgsEnv configures git to take credentials from the child-process
 // environment only — the token never appears on argv or in any config file.
-// This is the single credentials seam: the repo's token_env names the env var
-// holding the token for its remote.
+// This is the single credentials seam. The manager's PAT (forge-PAT mode:
+// the requesting user's own token, refreshed per request) wins; otherwise
+// the repo's token_env names the env var holding the deployment token.
 func (r *Repo) credentialArgsEnv() (args []string, env []string) {
 	token := ""
-	if r.Cfg.TokenEnv != "" {
+	if r.mgr != nil {
+		token = r.mgr.token()
+	}
+	if token == "" && r.Cfg.TokenEnv != "" {
 		token = os.Getenv(r.Cfg.TokenEnv)
 	}
 	if token == "" {
