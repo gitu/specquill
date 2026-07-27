@@ -522,26 +522,25 @@ export function EditorView() {
         {/* ---- Edit: WYSIWYG + properties form ---- */}
         {effMode === 'edit' && ready && editable && (
           <div style={sx('max-width:820px;margin:0 auto')}>
-            {fm && (
-              <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
-                <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
-                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
-                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· editable</span>
-                </div>
-                {propsOpen && (
-                  <PropertiesForm
-                    fm={fm}
-                    schema={app.schema}
-                    files={app.files}
-                    onChange={onFmChange}
-                    onOpenPath={openPath}
-                  />
-                )}
+            {/* no-frontmatter docs still get the box: the add-property row can create the block */}
+            <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
+              <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Properties</span>
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· editable</span>
               </div>
-            )}
+              {propsOpen && (
+                <PropertiesForm
+                  fm={fm}
+                  schema={app.schema}
+                  files={app.files}
+                  onChange={onFmChange}
+                  onOpenPath={openPath}
+                />
+              )}
+            </div>
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
               body={body}

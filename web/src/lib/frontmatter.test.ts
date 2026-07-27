@@ -55,4 +55,18 @@ describe('setFmValue', () => {
     const next = setFmValue(fm, 'owner', undefined);
     expect(fmToJS(next).owner).toBeUndefined();
   });
+
+  it('appends a new key at the end, preserving the rest', () => {
+    const next = setFmValue(fm, 'jurisdiction', 'EU');
+    expect(next.trimEnd().endsWith('jurisdiction: EU')).toBe(true);
+    expect(next).toContain('value_statement: "Avoids MiFID RTS 22 reporting fines');
+    expect(next).toContain('  - type: regulatory');
+  });
+
+  it('creates frontmatter from scratch for a doc without any', () => {
+    const { fm: none, body } = stripFrontmatter('# Title\n\nbody\n');
+    expect(none).toBe('');
+    const next = setFmValue(none, 'status', 'draft');
+    expect(assemble(next, body)).toBe('---\nstatus: draft\n---\n# Title\n\nbody\n');
+  });
 });
