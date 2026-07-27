@@ -73,13 +73,15 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
                 onOpenPath={onOpenPath}
               />
             </div>
-            <span
+            <button
+              type="button"
               title={'remove ' + key}
+              aria-label={'remove ' + key}
               onClick={() => set(key, undefined)}
-              style={sx('flex:none;cursor:pointer;color:var(--text-3);font-size:13px;line-height:1;padding:0 2px')}
+              style={sx('flex:none;cursor:pointer;color:var(--text-3);font-size:13px;line-height:1;padding:0 2px;border:none;background:none;font-family:inherit')}
             >
               ×
-            </span>
+            </button>
           </div>
         );
       })}
