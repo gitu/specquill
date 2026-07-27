@@ -1,22 +1,30 @@
 import { useMemo, useState } from 'react';
 import { sx } from '../lib/sx';
 import { fmToJS, setFmValue } from '../lib/frontmatter';
-import { parseTaxonomy } from '../lib/derive';
+import { PAL, collectFieldValues, parseTaxonomy } from '../lib/derive';
 import { useApp } from '../state/AppContext';
 import type { PropertySchema } from '../state/AppContext';
 
-const PAL: Record<string, { fg: string; bg: string }> = {
-  green: { fg: 'var(--data)', bg: 'var(--data-bg)' }, amber: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
-  blue: { fg: 'var(--prod)', bg: 'var(--prod-bg)' }, violet: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
-  slate: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
-};
+type FieldDef = { label?: string; type?: string; values?: Record<string, string> };
 
 const INPUT = "height:26px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;outline:none";
 
+const LABEL = "width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px";
+
+// YAML-safe top-level key (same shape parseProps recognizes)
+const KEY_RE = /^[A-Za-z_][\w-]*$/;
+
+const enterBlurs = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === 'Enter') e.currentTarget.blur();
+};
+
 /**
  * Schema-driven frontmatter editor: each row edits one top-level key and
- * writes through setFmValue (comment/format-preserving). Complex values
- * (lists of maps like `drivers`) render read-only.
+ * writes through setFmValue (comment/format-preserving). Categorical fields
+ * (schema `values` map, config statuses, or values already used across the
+ * workspace) render as comboboxes with free entry; the trailing row adds a
+ * known or custom property. Complex values (lists of maps like `drivers`)
+ * render read-only.
  */
 export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
   fm: string;
@@ -25,7 +33,10 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
   onChange: (nextFm: string) => void;
   onOpenPath: (path: string) => void;
 }) {
+  const app = useApp();
   const values = useMemo(() => fmToJS(fm), [fm]);
+  const corpus = useMemo(() => collectFieldValues(files || {}), [files]);
+  const statuses = useMemo(() => parseTaxonomy(app.configYml || '').statuses, [app.configYml]);
   const order = schema?.order || [];
   const keys = [
     ...order.filter((k) => k in values),
@@ -34,36 +45,60 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
 
   const set = (key: string, v: unknown) => onChange(setFmValue(fm, key, v));
 
+  // combobox options: schema values first (statuses as the status fallback),
+  // then whatever the rest of the workspace already uses for this key
+  const optionsFor = (key: string, def: FieldDef): string[] => {
+    const base = def.values ? Object.keys(def.values) : key === 'status' ? statuses : [];
+    const extra = (corpus[key] || []).filter((v) => !base.some((b) => b.toLowerCase() === v.toLowerCase()));
+    return [...base, ...extra];
+  };
+
   return (
     <>
       {keys.map((key) => {
-        const def = schema?.fields?.[key] || {};
+        const def: FieldDef = schema?.fields?.[key] || {};
         const label = def.label || key.replace(/_/g, ' ');
         return (
           <div key={key} style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
-            <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px")}>{label}</span>
+            <span style={sx(LABEL)}>{label}</span>
             <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
               <Field
                 fieldKey={key}
                 type={def.type || 'text'}
                 enumValues={def.values}
+                options={optionsFor(key, def)}
                 value={values[key]}
                 files={files}
                 onSet={(v) => set(key, v)}
                 onOpenPath={onOpenPath}
               />
             </div>
+            <span
+              title={'remove ' + key}
+              onClick={() => set(key, undefined)}
+              style={sx('flex:none;cursor:pointer;color:var(--text-3);font-size:13px;line-height:1;padding:0 2px')}
+            >
+              ×
+            </span>
           </div>
         );
       })}
+      <AddPropertyRow
+        schema={schema}
+        presentKeys={Object.keys(values)}
+        corpusKeys={Object.keys(corpus)}
+        optionsFor={optionsFor}
+        onAdd={set}
+      />
     </>
   );
 }
 
-function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: {
+function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpenPath }: {
   fieldKey: string;
   type: string;
   enumValues?: Record<string, string>;
+  options: string[];
   value: unknown;
   files: Record<string, string> | undefined;
   onSet: (v: unknown) => void;
@@ -99,18 +134,27 @@ function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: 
     return <ListField fieldKey={fieldKey} type={type} items={value.map(String)} files={files} onSet={onSet} onOpenPath={onOpenPath} />;
   }
 
-  if (type === 'enum') {
-    const current = String(value ?? '');
-    const color = PAL[enumValues?.[current.toLowerCase()] || 'slate'] || PAL.slate;
+  const current = String(value ?? '');
+  const commit = (el: HTMLInputElement) => { if (el.value !== current) onSet(el.value); };
+
+  // categorical (schema values map): colored-pill combobox, free entry allowed
+  if (enumValues) {
+    const color = PAL[enumValues[current.toLowerCase()] || 'slate'] || PAL.slate;
+    const listId = 'fmopt-' + fieldKey;
     return (
-      <select
-        value={current}
-        onChange={(e) => onSet(e.target.value)}
-        style={{ ...sx(INPUT), background: color.bg, color: color.fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20, textTransform: 'capitalize' }}
-      >
-        {!(current.toLowerCase() in (enumValues || {})) && <option value={current}>{current}</option>}
-        {Object.keys(enumValues || {}).map((v) => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}
-      </select>
+      <>
+        <input
+          key={current}
+          defaultValue={current}
+          list={listId}
+          onBlur={(e) => commit(e.target)}
+          onKeyDown={enterBlurs}
+          style={{ ...sx(INPUT), width: Math.max(110, current.length * 8 + 36), background: color.bg, color: color.fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20, textTransform: 'capitalize' }}
+        />
+        <datalist id={listId}>
+          {options.map((v) => <option key={v} value={v} />)}
+        </datalist>
+      </>
     );
   }
   if (type === 'percent') {
@@ -128,22 +172,132 @@ function Field({ fieldKey, type, enumValues, value, files, onSet, onOpenPath }: 
       </span>
     );
   }
-  if (type === 'text' && String(value ?? '').length > 60) {
+  if (type === 'text' && current.length > 60) {
     return (
       <textarea
-        defaultValue={String(value ?? '')}
+        defaultValue={current}
         rows={2}
-        onBlur={(e) => { if (e.target.value !== String(value ?? '')) onSet(e.target.value); }}
+        onBlur={(e) => { if (e.target.value !== current) onSet(e.target.value); }}
         style={sx('flex:1;min-width:260px;padding:6px 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;line-height:1.5;resize:vertical;outline:none')}
       />
     );
   }
+  // plain scalar — categorical in practice when the workspace already uses
+  // values for this key (owner, type, jurisdiction, …): same input, plus
+  // datalist suggestions
+  const listId = options.length ? 'fmopt-' + fieldKey : undefined;
   return (
-    <input
-      defaultValue={String(value ?? '')}
-      onBlur={(e) => { if (e.target.value !== String(value ?? '')) onSet(e.target.value); }}
-      style={{ ...sx(INPUT), minWidth: 180 }}
-    />
+    <>
+      <input
+        key={current}
+        defaultValue={current}
+        list={listId}
+        onBlur={(e) => commit(e.target)}
+        onKeyDown={enterBlurs}
+        style={{ ...sx(INPUT), minWidth: 180 }}
+      />
+      {listId && (
+        <datalist id={listId}>
+          {options.map((v) => <option key={v} value={v} />)}
+        </datalist>
+      )}
+    </>
+  );
+}
+
+// AddPropertyRow appends a frontmatter key: pick a known key (schema ∪ corpus)
+// or type a custom one, then provide the value — nothing is written until a
+// non-empty value is committed, so cancel paths never touch the document.
+function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, onAdd }: {
+  schema: PropertySchema | undefined;
+  presentKeys: string[];
+  corpusKeys: string[];
+  optionsFor: (key: string, def: FieldDef) => string[];
+  onAdd: (key: string, value: unknown) => void;
+}) {
+  const [stage, setStage] = useState<'idle' | 'key' | 'value'>('idle');
+  const [keyDraft, setKeyDraft] = useState('');
+  const [key, setKey] = useState('');
+  const [val, setVal] = useState('');
+
+  const knownKeys = [...new Set([...(schema?.order || []), ...Object.keys(schema?.fields || {}), ...corpusKeys])]
+    .filter((k) => k !== 'title' && !presentKeys.includes(k)).sort();
+  const keyOk = (k: string) => KEY_RE.test(k) && !presentKeys.includes(k);
+  const def: FieldDef = schema?.fields?.[key] || {};
+
+  const reset = () => { setStage('idle'); setKeyDraft(''); setKey(''); setVal(''); };
+  const commitKey = () => {
+    const k = keyDraft.trim();
+    if (keyOk(k)) { setKey(k); setStage('value'); }
+  };
+  const commitValue = () => {
+    const t = val.trim();
+    if (!t) { reset(); return; }
+    let v: unknown = t;
+    if (def.type === 'percent') { const n = Math.max(0, Math.min(100, parseFloat(t) || 0)); v = Math.round(n <= 1 ? n * 100 : n) / 100; }
+    else if (def.type === 'links' || def.type === 'anchors') v = [t];
+    onAdd(key, v);
+    reset();
+  };
+
+  if (stage === 'idle') {
+    return (
+      <div style={sx('padding:7px 14px;border-top:1px solid var(--border)')}>
+        <button onClick={() => setStage('key')} style={{ ...sx(INPUT), borderStyle: 'dashed', cursor: 'pointer' }}>
+          + add property
+        </button>
+      </div>
+    );
+  }
+
+  if (stage === 'key') {
+    const draftBad = keyDraft.trim() !== '' && !keyOk(keyDraft.trim());
+    return (
+      <div style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
+        <span style={sx(LABEL)}>new property</span>
+        <input
+          autoFocus
+          placeholder="property name ⏎"
+          value={keyDraft}
+          list="fmkey-new"
+          onChange={(e) => setKeyDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitKey();
+            if (e.key === 'Escape') reset();
+          }}
+          onBlur={reset}
+          style={{ ...sx(INPUT), minWidth: 180, borderColor: draftBad ? 'var(--reg)' : undefined }}
+        />
+        <datalist id="fmkey-new">
+          {knownKeys.map((k) => <option key={k} value={k} />)}
+        </datalist>
+      </div>
+    );
+  }
+
+  const color = def.values ? PAL[def.values[val.trim().toLowerCase()] || 'slate'] || PAL.slate : undefined;
+  return (
+    <div style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
+      <span style={sx(LABEL)}>{def.label || key.replace(/_/g, ' ')}</span>
+      <input
+        autoFocus
+        placeholder="value ⏎"
+        value={val}
+        list="fmval-new"
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitValue();
+          if (e.key === 'Escape') reset();
+        }}
+        onBlur={commitValue}
+        style={color
+          ? { ...sx(INPUT), minWidth: 140, background: color.bg, color: color.fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20 }
+          : { ...sx(INPUT), minWidth: 180 }}
+      />
+      <datalist id="fmval-new">
+        {optionsFor(key, def).map((v) => <option key={v} value={v} />)}
+      </datalist>
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@
 // build*/renderVals methods. Styles are composed as strings (rendered via sx())
 // exactly like the design; navigation is carried as paths, not callbacks.
 
-import { Change, DataField, PropEntry, Requirement, WorkspaceModel, isReservedMd, parseProps } from './model';
+import { Change, DataField, PropEntry, Requirement, WorkspaceModel, isReservedMd, parseProps, stripFrontmatter } from './model';
 import type { EntityDef } from './entities';
 import type { PropertySchema } from '../state/AppContext';
 
@@ -101,10 +101,15 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
 export interface PropItem { text: string; style: string; openPath?: string }
 export interface PropRow { key: string; items: PropItem[] }
 
-const PAL: Record<string, { fg: string; bg: string }> = {
+// schema.json `values` colors — the second row aliases the css-var names some
+// workspaces use (e.g. the specquill product repo) onto the same palette
+export const PAL: Record<string, { fg: string; bg: string }> = {
   green: { fg: 'var(--data)', bg: 'var(--data-bg)' }, amber: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
   blue: { fg: 'var(--prod)', bg: 'var(--prod-bg)' }, violet: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
   slate: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
+  data: { fg: 'var(--data)', bg: 'var(--data-bg)' }, reg: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
+  prod: { fg: 'var(--prod)', bg: 'var(--prod-bg)' }, ai: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
+  text: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
 };
 
 export function buildProps(fm: string | undefined, schema: PropertySchema | undefined): PropRow[] {
@@ -135,7 +140,7 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
     let items: PropItem[];
     if (e.type === 'scalar') {
       const v = e.value;
-      if (type === 'enum') { const cn = (def.values || {})[String(v).toLowerCase()] || 'slate'; items = [{ text: v, style: badge(PAL[cn] || PAL.slate) }]; }
+      if (type === 'enum' || def.values) { const cn = (def.values || {})[String(v).toLowerCase()] || 'slate'; items = [{ text: v, style: badge(PAL[cn] || PAL.slate) }]; }
       else if (type === 'percent') { const n = parseFloat(v) || 0; const pct = Math.round(n <= 1 ? n * 100 : n); const c = pct > 80 ? 'var(--data)' : pct > 60 ? 'var(--prod)' : 'var(--reg)'; items = [{ text: pct + '%', style: 'display:inline-flex;padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:var(--surface-2);color:' + c }]; }
       else if (type === 'user') items = [{ text: v, style: chip('var(--surface-2)', 'var(--text)', true) }];
       else if (type === 'code') items = [{ text: v, style: chip('var(--surface-2)', 'var(--text-2)', true) }];
@@ -147,6 +152,28 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
     }
     return { key: label, items };
   });
+}
+
+/**
+ * Distinct scalar frontmatter values per key across the workspace's concept
+ * documents — the option pool behind the properties-form comboboxes. Keys
+ * whose values are lists or prose (long strings) still get an entry with no
+ * values, so the add-property row can offer them as known keys.
+ */
+export function collectFieldValues(files: Record<string, string>): Record<string, string[]> {
+  const sets: Record<string, Set<string>> = {};
+  for (const p of Object.keys(files)) {
+    if (!p.endsWith('.md') || isReservedMd(p)) continue;
+    const { fm } = stripFrontmatter(files[p]);
+    if (!fm) continue;
+    for (const e of parseProps(fm)) {
+      const set = (sets[e.key] = sets[e.key] || new Set());
+      if (e.type === 'scalar' && e.value && e.value.length <= 40) set.add(e.value);
+    }
+  }
+  const out: Record<string, string[]> = {};
+  for (const k of Object.keys(sets).sort()) out[k] = [...sets[k]].sort();
+  return out;
 }
 
 // ---------------------------------------------------------------- changes
