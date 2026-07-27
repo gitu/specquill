@@ -72,8 +72,11 @@ from the code.
   `EffectiveReferences` = selection ∩ catalog.
 - **Forge-PAT mode flips stage 1** (`auth.forge`, July 2026): no server-side
   catalog or credentials — `.specquill/config.yml` gains `sources:` DEFINITIONS
-  (git, https-only remotes) and `EffectiveReferencesInRepo` resolves references
-  against them. Safe because every user gets their OWN clones under
+  (git; https-only, no userinfo, host must be on the allowlist = forge ∪
+  project hosts ∪ `auth.forge.allowed_source_hosts`) and
+  `EffectiveReferencesInRepo` resolves references against them. The git
+  credential helper is HOST-SCOPED (`SPECQUILL_GIT_HOST`): the token is only
+  released to the repo's own remote host — redirects get nothing. Safe because every user gets their OWN clones under
   `data/runtime/repos/u<id>/`, fetched lazily with their own PAT
   (`gitx.Fleet`/`NewUserManager`; `api/pat.go` is the mode's plumbing) — a
   defined source a user's token cannot fetch 502s for them and nothing lands on

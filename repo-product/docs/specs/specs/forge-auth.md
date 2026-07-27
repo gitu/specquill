@@ -73,9 +73,26 @@ isolation is the security argument for in-repo source definitions
 *you*, with *your* token, into *your* storage. A source your token cannot
 fetch is a 502 for you and nothing lands on disk.
 
-In-repo `sources:` remotes are restricted to `http(s)` — the config file is
-ordinary repo content, and a filesystem path there could read arbitrary
-local repos on the server.
+### Source remotes are hostile input
+
+The in-repo config is ordinary repo content — anyone with push access can
+edit it — so `sources:` remotes are validated like untrusted input:
+
+- **http(s) only** — a filesystem path could read arbitrary local repos on
+  the server.
+- **no embedded credentials** (`https://user:pass@…` is rejected).
+- **host allowlist** — the remote's hostname must be the forge itself, one
+  of the configured project remotes' hosts, or an entry in
+  `auth.forge.allowed_source_hosts`. Without this fence a definition could
+  point at an attacker's server (which would then be *offered users'
+  tokens* by git's credential machinery) or probe internal network
+  services. Rejected definitions never register and surface as project
+  warnings naming the reason.
+- **host-scoped credentials** — independent of the allowlist, the git
+  credential helper only releases the token to the exact `host[:port]` of
+  the repo's own configured remote. A same-host remote that redirects
+  elsewhere gets a credential-less request: the redirect target sees no
+  token, the clone fails.
 
 ## Proposing instead of merging
 

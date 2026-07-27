@@ -81,6 +81,11 @@ auth:
     base_url: https://gitlab.example.com   # self-hosted web base; omit for gitlab.com/github.com
     # token_create_url: …            # override the login page's "create a token" link
     # scopes: [api]                  # override the scopes it asks for (defaults: gitlab api / github repo)
+    # In-repo source remotes may only name the forge and project hosts —
+    # list extra hosts here to allow references beyond that perimeter
+    # (e.g. a public mirror). Tokens are still only ever sent to each
+    # repo's own remote host.
+    # allowed_source_hosts: [mirror.example.org]
   local:
     enabled: true                    # fallback login page; add users with `specquill user add`
 

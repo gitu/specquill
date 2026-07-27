@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,9 +24,29 @@ func (r *Repo) credentialArgsEnv() (args []string, env []string) {
 	if token == "" {
 		return nil, nil
 	}
-	helper := `!f(){ echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; };f`
-	env = []string{"SPECQUILL_GIT_TOKEN=" + token}
+	// The helper is HOST-SCOPED: git tells it which host is asking (the
+	// credential protocol's host= line), and it answers only for the repo's
+	// own remote host — a redirect or rewrite to any other host gets nothing.
+	// Without this, the token would be offered to whatever host challenges.
+	helper := `!f(){ h=""; while IFS= read -r l; do case "$l" in host=*) h="${l#host=}";; esac; done; ` +
+		`if [ -z "$SPECQUILL_GIT_HOST" ] || [ "$h" = "$SPECQUILL_GIT_HOST" ]; then ` +
+		`echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; fi; };f`
+	env = []string{
+		"SPECQUILL_GIT_TOKEN=" + token,
+		"SPECQUILL_GIT_HOST=" + remoteHost(r.Cfg.Remote),
+	}
 	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, env
+}
+
+// remoteHost is the host[:port] an http(s) remote's credentials are scoped
+// to; "" (helper answers unconditionally) for ssh/path remotes, where the
+// token is never used anyway.
+func remoteHost(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return strings.ToLower(u.Host)
 }
 
 // Fetch updates remote-tracking state (writable) or heads (read-only).

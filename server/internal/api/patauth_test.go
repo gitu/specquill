@@ -21,6 +21,7 @@ import (
 	"specquill/server/internal/config"
 	"specquill/server/internal/forge"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 	"testing/fstest"
 )
@@ -102,7 +103,11 @@ type patEnv struct {
 
 // patServer boots a forge-PAT-mode server: mock forge, a main project whose
 // in-repo config defines a token-gated reference source, and no boot clone.
-func patServer(t *testing.T) patEnv {
+func patServer(t *testing.T) patEnv { return patServerSources(t, "") }
+
+// patServerSources additionally appends raw `sources:` entries (yaml lines)
+// to the fixture's in-repo config.
+func patServerSources(t *testing.T, extraSources string) patEnv {
 	t.Helper()
 	tmp := t.TempDir()
 
@@ -131,6 +136,7 @@ func patServer(t *testing.T) patEnv {
 	// user-writable repo content — it must never register
 	cfgYml := "version: 2\nsources:\n  - name: refsrc\n    remote: " + refSrv.URL + "/ref.git\n" +
 		"  - name: evil\n    remote: " + refBare + "\n" +
+		extraSources +
 		"references:\n  - source: refsrc\n    grounding: true\n"
 	for p, c := range map[string]string{
 		".specquill/config.yml": cfgYml,
@@ -484,6 +490,90 @@ func TestScopeWarning(t *testing.T) {
 		w := scopeWarning(c.wanted, c.got)
 		if (c.want == "" && w != "") || (c.want != "" && !strings.Contains(w, c.want)) {
 			t.Fatalf("case %d: got %q, want %q", i, w, c.want)
+		}
+	}
+}
+
+// A source remote on the deployment's own host that REDIRECTS elsewhere must
+// not leak the token: the credential helper is scoped to the remote's exact
+// host:port, so the redirect target gets a credential-less request.
+func TestPatRedirectNeverLeaksToken(t *testing.T) {
+	var leaked []string
+	catcher := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := r.Header.Get("Authorization"); a != "" {
+			leaked = append(leaked, a)
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		http.Error(w, "auth required", http.StatusUnauthorized)
+	}))
+	defer catcher.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, catcher.URL+r.URL.Path, http.StatusMovedPermanently)
+	}))
+	defer redirector.Close()
+
+	env := patServerSources(t, "  - name: sneaky\n    remote: "+redirector.URL+"/ref.git\n")
+	session, _ := patLogin(t, env.h, "tok-a")
+
+	// both servers are 127.0.0.1 (allowed host), so the source registers and
+	// the clone is attempted — and must fail without surrendering the token
+	rec := patDo(env.h, "GET", "/api/repos/sneaky/tree", session, "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("redirected clone: want 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(leaked) != 0 {
+		t.Fatalf("redirect target received credentials: %v", leaked)
+	}
+}
+
+// A source remote naming a host outside the allowlist never registers, and
+// /api/projects explains why.
+func TestPatForeignHostSourceRejected(t *testing.T) {
+	env := patServerSources(t, "  - name: offsite\n    remote: https://evil.example.com/x.git\n")
+	session, _ := patLogin(t, env.h, "tok-a")
+
+	rec := patDo(env.h, "GET", "/api/repos", session, "")
+	if strings.Contains(rec.Body.String(), `"offsite"`) {
+		t.Fatalf("foreign-host source must not be listed: %s", rec.Body.String())
+	}
+	rec = patDo(env.h, "GET", "/api/repos/offsite/tree", session, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("foreign-host source: want 404, got %d", rec.Code)
+	}
+	rec = patDo(env.h, "GET", "/api/projects", session, "")
+	if !strings.Contains(rec.Body.String(), "evil.example.com is not allowed") {
+		t.Fatalf("rejection should surface as a project warning: %s", rec.Body.String())
+	}
+}
+
+func TestSourceDefValidation(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{Forge: config.ForgeAuthConfig{
+			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.com",
+			AllowedSourceHosts: []string{"mirror.example.org"},
+		}},
+		Projects: []config.ProjectConfig{{ID: "w", Remote: "https://gitlab.example.com/acme/specs.git"}},
+	}
+	srv := &Server{cfg: cfg}
+	cases := []struct {
+		name, remote, want string
+	}{
+		{"ok", "https://gitlab.example.com/acme/reg.git", ""},
+		{"mirror", "https://mirror.example.org/reg.git", ""}, // via allowed_source_hosts
+		{"Bad Name", "https://gitlab.example.com/x.git", "name"},
+		{"creds", "https://user:pass@gitlab.example.com/x.git", "credentials"},
+		{"scheme", "ssh://git@gitlab.example.com/x.git", "http(s)"},
+		{"path", "/srv/git/x.git", "http(s)"},
+		{"offsite", "https://evil.example.com/x.git", "not allowed"},
+		{"subdomain", "https://gitlab.example.com.evil.io/x.git", "not allowed"},
+	}
+	for _, c := range cases {
+		err := srv.sourceDefError(project.SourceDef{Name: c.name, Remote: c.remote})
+		if c.want == "" && err != "" {
+			t.Errorf("%s: unexpected error %q", c.name, err)
+		}
+		if c.want != "" && !strings.Contains(err, c.want) {
+			t.Errorf("%s: got %q, want containing %q", c.name, err, c.want)
 		}
 	}
 }

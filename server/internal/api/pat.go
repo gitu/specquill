@@ -8,7 +8,7 @@ package api
 
 import (
 	"net/http"
-	"strings"
+	"net/url"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
@@ -63,20 +63,38 @@ func (s *Server) registerUserSources(mgr *gitx.Manager) {
 			continue
 		}
 		for _, sd := range cfg.Sources {
-			registerSourceDef(mgr, sd)
+			s.registerSourceDef(mgr, sd)
 		}
 	}
 }
 
-// registerSourceDef validates and registers one in-repo source definition.
-// Only http(s) remotes are accepted: the config file is user-writable repo
-// content, and a filesystem path here would let it read arbitrary local git
-// repos on the server.
-func registerSourceDef(mgr *gitx.Manager, sd project.SourceDef) {
+// sourceDefError validates one in-repo source definition. The config file is
+// user-writable repo content, so its remotes are treated as hostile input:
+// http(s) only (a filesystem path could read arbitrary local git repos on
+// the server), no embedded credentials, and the host must be on the
+// deployment's allowlist (the forge, project remotes,
+// auth.forge.allowed_source_hosts) — anything else could be offered users'
+// tokens or probe the internal network. Returns "" when acceptable.
+func (s *Server) sourceDefError(sd project.SourceDef) string {
 	if sd.Name == "" || !idRe.MatchString(sd.Name) {
-		return
+		return "name must be lowercase alphanumeric with ._-"
 	}
-	if !strings.HasPrefix(sd.Remote, "https://") && !strings.HasPrefix(sd.Remote, "http://") {
+	u, err := url.Parse(sd.Remote)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "remote must be an http(s) URL"
+	}
+	if u.User != nil {
+		return "remote must not embed credentials"
+	}
+	if !s.cfg.SourceHostAllowed(u.Hostname()) {
+		return "remote host " + u.Hostname() + " is not allowed (forge, project hosts, or auth.forge.allowed_source_hosts)"
+	}
+	return ""
+}
+
+// registerSourceDef registers one validated in-repo source definition.
+func (s *Server) registerSourceDef(mgr *gitx.Manager, sd project.SourceDef) {
+	if s.sourceDefError(sd) != "" {
 		return
 	}
 	if _, exists := mgr.Repo(sd.Name); exists {

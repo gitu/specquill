@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,10 @@ type ForgeAuthConfig struct {
 	// Scopes the login page asks the user to grant; defaulted per kind
 	// (gitlab: api; github: repo).
 	Scopes []string `yaml:"scopes"`
+	// AllowedSourceHosts extends the hosts in-repo `sources:` remotes may
+	// name beyond the forge and the project remotes — e.g. a public mirror
+	// host references are allowed to read from.
+	AllowedSourceHosts []string `yaml:"allowed_source_hosts"`
 }
 
 func (f ForgeAuthConfig) Enabled() bool { return f.Kind != "" }
@@ -369,6 +374,54 @@ func (c *Config) ForgeScopes() []string {
 		return []string{"repo"}
 	}
 	return nil
+}
+
+// SourceHostAllowed reports whether an in-repo source remote may name this
+// hostname. The allowlist is the deployment's own perimeter: the forge, every
+// configured project remote's host, and auth.forge.allowed_source_hosts. The
+// in-repo config is ordinary repo content — without this fence it could point
+// a source at an attacker host (which would then be offered users' tokens) or
+// at internal network services.
+func (c *Config) SourceHostAllowed(host string) bool {
+	host = strings.ToLower(host)
+	if host == "" {
+		return false
+	}
+	for _, h := range c.sourceHostAllowlist() {
+		if host == h {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) sourceHostAllowlist() []string {
+	var hosts []string
+	add := func(h string) {
+		if h = strings.ToLower(h); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	if u, err := url.Parse(c.Auth.Forge.BaseURL); err == nil {
+		add(u.Hostname())
+	}
+	if c.Auth.Forge.BaseURL == "" {
+		switch c.Auth.Forge.Kind {
+		case forge.KindGitLab:
+			add("gitlab.com")
+		case forge.KindGitHub:
+			add("github.com")
+		}
+	}
+	for _, p := range c.Projects {
+		if u, err := url.Parse(p.Remote); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+			add(u.Hostname())
+		}
+	}
+	for _, h := range c.Auth.Forge.AllowedSourceHosts {
+		add(h)
+	}
+	return hosts
 }
 
 // cleanContentRoot normalizes a project subfolder: slash-separated, no

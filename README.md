@@ -162,7 +162,7 @@ and credential-free; access rides each user's own token:
 
 | lives in server YAML | lives in `.specquill/config.yml` (in the repo) | lives with the user |
 |---|---|---|
-| forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote, branch) | the PAT (browser localStorage + RAM-only session vault) |
+| forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote on an allowlisted host, branch) | the PAT (browser localStorage + RAM-only session vault) |
 | the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, copilot grounding) | identity + git author (forge `/user`) |
 | optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema, AI skills (as before) | deployment role (forge permission on the main project, refreshed each login) |
 | **no tokens, no source catalog** (a top-level `sources:` block is rejected) | | per-user clones under `data/…/repos/u<id>/` |

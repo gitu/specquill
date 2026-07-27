@@ -82,6 +82,13 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 						// references resolve against the config's own sources:
 						// definitions — each user's token bounds real access
 						refs, warnings = project.EffectiveReferencesInRepo(cfg)
+						// a definition that failed validation is otherwise
+						// invisible (never registered) — say why here
+						for _, sd := range cfg.Sources {
+							if msg := s.sourceDefError(sd); msg != "" {
+								warnings = append(warnings, "source "+sd.Name+": "+msg)
+							}
+						}
 					} else {
 						refs, warnings = project.EffectiveReferences(cfg, kinds)
 					}
