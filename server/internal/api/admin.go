@@ -65,6 +65,10 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy, References: []project.EffectiveReference{}}
 		if repo, ok := mgr.Repo(p.RepoID); ok {
+			if s.patMode() && repo.EnsureCloned() != nil {
+				out = append(out, info) // unclonable with this token — listed bare
+				continue
+			}
 			info.DefaultBranch = repo.Cfg.DefaultBranch
 			info.Protected = repo.Cfg.ProtectedBranches
 			proj := project.New(repo, p.ProjectID, p.ContentRoot, false)

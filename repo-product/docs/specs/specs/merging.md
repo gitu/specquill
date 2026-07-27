@@ -12,7 +12,7 @@ How [REQ-008](../requirements/REQ-008.md) is realized; it is the landing
 counterpart to the branch mechanics in
 [workspace-branches.md](workspace-branches.md).
 
-## Direct merges
+## Direct merges (local-auth mode)
 
 The default branch is never edited directly ([REQ-001](../requirements/REQ-001.md)),
 so a merge commit from a workspace branch is the only way it moves. That
@@ -23,6 +23,18 @@ merges it.
 Reviewed merges are not abandoned, they are **delegated**: push the branch and
 open a merge request on the forge (GitLab, GitHub), where review already has
 a mature home. SpecQuill deliberately does not reimplement that.
+
+## Proposals (forge-PAT mode)
+
+In forge-PAT deployments ([forge-auth.md](forge-auth.md),
+[REQ-024](../requirements/REQ-024.md)) the delegation is total: the in-app
+merge is disabled (403 `merge_via_forge`) and "landing" means **propose** —
+push the workspace branch with the user's own token and open a merge
+request / pull request via the forge API. The action is idempotent (an
+open request for the branch is re-used; re-proposing pushes new commits
+onto it), keeps the same preview and dirty-worktree refusal as the direct
+merge, and the merged default branch returns via fetch. Everything below
+this section applies to direct merges only.
 
 ## Preview
 

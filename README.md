@@ -152,6 +152,33 @@ Requirements: `git` ≥ 2.38 on the server (checked at startup). Exactly one `wr
 repo plus any number of `readonly` ones. The forge identity's `name`/`email` become
 the git author on every commit.
 
+## Configuration — what lives where
+
+Two auth modes, two splits. The rule of thumb: **credentials and identity follow the
+mode; content-shaped settings live in the repo.**
+
+**Forge-PAT mode (`auth.forge`, the v1 deployment)** — the server config is minimal
+and credential-free; access rides each user's own token:
+
+| lives in server YAML | lives in `.specquill/config.yml` (in the repo) | lives with the user |
+|---|---|---|
+| forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote, branch) | the PAT (browser localStorage + RAM-only session vault) |
+| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, copilot grounding) | identity + git author (forge `/user`) |
+| optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema, AI skills (as before) | deployment role (forge permission on the main project, refreshed each login) |
+| **no tokens, no source catalog** (a top-level `sources:` block is rejected) | | per-user clones under `data/…/repos/u<id>/` |
+
+**Local-auth mode (`auth.local`, the v2 developer setup)** — the server owns shared
+credentials, so source definitions must stay server-side: the YAML carries the source
+**catalog** (git + url/openapi/confluence importers) with `token_env` env-var
+credentials, and the in-repo config only **selects** cataloged sources by name
+(selection ∩ catalog — in-repo config can never mint access). In-app merges,
+boot clones and background sync loops exist only in this mode.
+
+The authoritative version of this table is
+[`specs/forge-auth.md`](repo-product/docs/specs/specs/forge-auth.md); the
+authorization reasoning is [`REQ-004`](repo-product/docs/specs/requirements/REQ-004.md)
+and [`REQ-024`](repo-product/docs/specs/requirements/REQ-024.md).
+
 ## Verify
 
 ```sh

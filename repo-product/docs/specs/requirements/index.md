@@ -23,3 +23,4 @@
 - [Four-level repository roles with a protected-merge gate](REQ-021.md)
 - [Tenant-scoped URLs and a first-class config tenant](REQ-022.md)
 - [Encrypted tenant credentials for repo connection](REQ-023.md)
+- [Bring-your-own-token forge authentication](REQ-024.md)

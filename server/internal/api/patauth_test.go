@@ -43,6 +43,14 @@ func mockGitLab(t *testing.T, roles map[string]int, mrCreated *bool) *httptest.S
 			fmt.Fprintf(w, `{"id":%d,"username":"user-%s","name":"User %s","email":"%s@test.local","commit_email":""}`,
 				100+level, tok, tok, tok)
 		case strings.HasSuffix(r.URL.Path, "/merge_requests") && r.Method == http.MethodGet:
+			// main carries a token-marked MR (per-user cache assertions);
+			// workspace branches have none (propose creates one)
+			if r.URL.Query().Get("source_branch") == "main" {
+				fmt.Fprintf(w, `[{"iid":9,"title":"mr-for-%s","state":"opened","web_url":"u","author":{"username":"x"}}]`, tok)
+			} else {
+				fmt.Fprint(w, `[]`)
+			}
+		case strings.Contains(r.URL.Path, "/merge_requests/9/notes"):
 			fmt.Fprint(w, `[]`)
 		case strings.HasSuffix(r.URL.Path, "/merge_requests") && r.Method == http.MethodPost:
 			if mrCreated != nil {
@@ -119,7 +127,10 @@ func patServer(t *testing.T) patEnv {
 	if err := os.MkdirAll(filepath.Join(src, ".specquill"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// the evil entry is the attack REQ-004.6 forbids: a filesystem remote in
+	// user-writable repo content — it must never register
 	cfgYml := "version: 2\nsources:\n  - name: refsrc\n    remote: " + refSrv.URL + "/ref.git\n" +
+		"  - name: evil\n    remote: " + refBare + "\n" +
 		"references:\n  - source: refsrc\n    grounding: true\n"
 	for p, c := range map[string]string{
 		".specquill/config.yml": cfgYml,
@@ -133,8 +144,9 @@ func patServer(t *testing.T) patEnv {
 	gitOut(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
 
 	var mrCreated bool
-	// tok-a is a developer (30 → editor); tok-b only a reporter (20 → viewer)
-	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-b": 20}, &mrCreated)
+	// tok-a is a developer (30 → editor); tok-b only a reporter (20 → viewer);
+	// tok-none authenticates but has no access to the project at all
+	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-b": 20, "tok-none": 0}, &mrCreated)
 	t.Cleanup(forgeSrv.Close)
 
 	cfg := &config.Config{
@@ -230,6 +242,8 @@ func TestPatLoginRoleAndMergeMode(t *testing.T) {
 
 func TestPatLoginRejectsBadTokenAndNoAccess(t *testing.T) {
 	env := patServer(t)
+
+	// a token the forge does not know: 401
 	body, _ := json.Marshal(map[string]string{"token": "tok-unknown"})
 	req := httptest.NewRequest("POST", "/auth/pat/login", bytes.NewReader(body))
 	req.Header.Set("X-SpecQuill", "1")
@@ -237,6 +251,43 @@ func TestPatLoginRejectsBadTokenAndNoAccess(t *testing.T) {
 	env.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unknown token: want 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// a valid token without access to the main project: 403 (REQ-024.2)
+	body, _ = json.Marshal(map[string]string{"token": "tok-none"})
+	req = httptest.NewRequest("POST", "/auth/pat/login", bytes.NewReader(body))
+	req.Header.Set("X-SpecQuill", "1")
+	rec = httptest.NewRecorder()
+	env.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "no_project_access") {
+		t.Fatalf("no-access token: want 403 no_project_access, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// /auth/providers must carry what the login page needs to guide token
+// creation: kind, scopes, and the prefilled deep link (REQ-024.6).
+func TestPatProvidersPayload(t *testing.T) {
+	env := patServer(t)
+	rec := patDo(env.h, "GET", "/auth/providers", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("providers: %d", rec.Code)
+	}
+	var resp struct {
+		Local bool `json:"local"`
+		Forge *struct {
+			Kind           string   `json:"kind"`
+			TokenCreateURL string   `json:"tokenCreateUrl"`
+			Scopes         []string `json:"scopes"`
+		} `json:"forge"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Forge == nil || resp.Forge.Kind != "gitlab" || len(resp.Forge.Scopes) != 1 || resp.Forge.Scopes[0] != "api" {
+		t.Fatalf("forge provider: %+v", resp.Forge)
+	}
+	if !strings.Contains(resp.Forge.TokenCreateURL, "personal_access_tokens") {
+		t.Fatalf("token link: %q", resp.Forge.TokenCreateURL)
 	}
 }
 
@@ -355,5 +406,84 @@ func TestPatProposeFlow(t *testing.T) {
 	rec = patDo(env.h, "POST", "/api/repos/w/merge", session, `{"source":"`+ws.Branch+`"}`)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "merge_via_forge") {
 		t.Fatalf("merge gate: want 403 merge_via_forge, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPatInRepoSourceRemoteMustBeHTTP(t *testing.T) {
+	env := patServer(t)
+	session, _ := patLogin(t, env.h, "tok-a")
+
+	// the config.yml defines "evil" with a filesystem remote — it must not
+	// surface in the repo list and must not resolve
+	rec := patDo(env.h, "GET", "/api/repos", session, "")
+	if strings.Contains(rec.Body.String(), `"evil"`) {
+		t.Fatalf("path-remote source must not be listed: %s", rec.Body.String())
+	}
+	rec = patDo(env.h, "GET", "/api/repos/evil/tree", session, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("path-remote source: want 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPatProjectsListInRepoReferences(t *testing.T) {
+	env := patServer(t)
+	session, _ := patLogin(t, env.h, "tok-a")
+	rec := patDo(env.h, "GET", "/api/projects", session, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("projects: %d %s", rec.Code, rec.Body.String())
+	}
+	var infos []struct {
+		ID         string `json:"id"`
+		References []struct {
+			Source    string `json:"source"`
+			Kind      string `json:"kind"`
+			Grounding bool   `json:"grounding"`
+		} `json:"references"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || len(infos[0].References) != 1 {
+		t.Fatalf("projects: %+v", infos)
+	}
+	ref := infos[0].References[0]
+	if ref.Source != "refsrc" || ref.Kind != "git" || !ref.Grounding {
+		t.Fatalf("reference: %+v", ref)
+	}
+}
+
+// The forge review cache must be per-user: with per-user tokens, a cached
+// entry keyed only by repo+branch would show one user the MR view of another.
+func TestPatForgeRequestCachePerUser(t *testing.T) {
+	env := patServer(t)
+	sessA, _ := patLogin(t, env.h, "tok-a")
+	sessB, _ := patLogin(t, env.h, "tok-b")
+
+	recA := patDo(env.h, "GET", "/api/repos/w/forge/request?branch=main", sessA, "")
+	if recA.Code != http.StatusOK || !strings.Contains(recA.Body.String(), "mr-for-tok-a") {
+		t.Fatalf("user A forge view: %d %s", recA.Code, recA.Body.String())
+	}
+	// B asks within A's cache TTL — and must still see B's own answer
+	recB := patDo(env.h, "GET", "/api/repos/w/forge/request?branch=main", sessB, "")
+	if recB.Code != http.StatusOK || !strings.Contains(recB.Body.String(), "mr-for-tok-b") {
+		t.Fatalf("user B forge view leaked A's cache: %d %s", recB.Code, recB.Body.String())
+	}
+}
+
+func TestScopeWarning(t *testing.T) {
+	cases := []struct {
+		wanted, got []string
+		want        string
+	}{
+		{[]string{"repo"}, nil, ""},                          // forge disclosed nothing: stay quiet
+		{[]string{"repo"}, []string{"repo", "read:org"}, ""}, // covered
+		{[]string{"api"}, []string{"read_api"}, "missing the api scope"},
+	}
+	for i, c := range cases {
+		w := scopeWarning(c.wanted, c.got)
+		if (c.want == "" && w != "") || (c.want != "" && !strings.Contains(w, c.want)) {
+			t.Fatalf("case %d: got %q, want %q", i, w, c.want)
+		}
 	}
 }

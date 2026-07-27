@@ -58,7 +58,7 @@ repos:
 func TestShippedConfigsLoad(t *testing.T) {
 	cases := map[string]struct{ projects, sources int }{
 		"specquill.dev.yml":     {2, 2}, // trading-specs + specquill-docs; regulations (git) + platform-api (openapi)
-		"specquill.example.yml": {1, 1},
+		"specquill.example.yml": {1, 0}, // forge-PAT example: sources live in-repo
 	}
 	for f, want := range cases {
 		cfg, err := Load(filepath.Join("..", "..", "..", f))
@@ -163,5 +163,77 @@ projects:
 	}
 	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "forge.kind") {
 		t.Fatalf("unknown forge kind should be rejected, got %v", err)
+	}
+}
+
+// Forge-PAT mode config surface: forge alone satisfies the auth requirement,
+// the kind is validated, a server-side source catalog is rejected, and the
+// deployment forge propagates onto every project.
+func TestForgeAuthMode(t *testing.T) {
+	cfg := load(t, `
+projects: [{id: specs, remote: "https://gitlab.example.com/acme/specs.git"}]
+git: { committer_name: svc, committer_email: svc@t }
+auth: { forge: { kind: gitlab, base_url: "https://gitlab.example.com" } }
+data_dir: ./data
+`)
+	if !cfg.Auth.Forge.Enabled() {
+		t.Fatal("forge auth should be enabled")
+	}
+	// the deployment forge becomes the project's forge (kind + derived API base)
+	p := cfg.Projects[0]
+	if p.Forge.Kind != "gitlab" || p.Forge.BaseURL != "https://gitlab.example.com/api/v4" {
+		t.Fatalf("project forge: %+v", p.Forge)
+	}
+	// token guidance: defaults per kind, deep link derived from the web base
+	if s := cfg.ForgeScopes(); len(s) != 1 || s[0] != "api" {
+		t.Fatalf("gitlab scopes: %v", s)
+	}
+	link := cfg.TokenCreateLink()
+	if !strings.HasPrefix(link, "https://gitlab.example.com/-/user_settings/personal_access_tokens") ||
+		!strings.Contains(link, "scopes=api") {
+		t.Fatalf("token link: %q", link)
+	}
+}
+
+func TestForgeAuthModeGitHubDefaults(t *testing.T) {
+	cfg := load(t, `
+projects: [{id: specs, remote: "https://github.com/acme/specs.git"}]
+git: { committer_name: svc, committer_email: svc@t }
+auth: { forge: { kind: github } }
+data_dir: ./data
+`)
+	if s := cfg.ForgeScopes(); len(s) != 1 || s[0] != "repo" {
+		t.Fatalf("github scopes: %v", s)
+	}
+	if link := cfg.TokenCreateLink(); !strings.HasPrefix(link, "https://github.com/settings/tokens/new") {
+		t.Fatalf("token link: %q", link)
+	}
+}
+
+func TestForgeAuthValidation(t *testing.T) {
+	cases := []struct{ yml, want string }{
+		// no auth at all
+		{`projects: [{id: a, remote: r}]
+git: { committer_name: s, committer_email: s@t }
+data_dir: ./d`, "at least one auth method"},
+		// bad kind
+		{`projects: [{id: a, remote: r}]
+git: { committer_name: s, committer_email: s@t }
+auth: { forge: { kind: bitbucket } }
+data_dir: ./d`, "auth.forge.kind"},
+		// server-side catalog is a local-mode feature
+		{`projects: [{id: a, remote: r}]
+sources: [{name: s, kind: git, remote: r2}]
+git: { committer_name: s, committer_email: s@t }
+auth: { forge: { kind: gitlab } }
+data_dir: ./d`, "sources are defined in-repo"},
+	}
+	for i, c := range cases {
+		p := filepath.Join(t.TempDir(), "c.yml")
+		_ = os.WriteFile(p, []byte(c.yml), 0o644)
+		_, err := Load(p)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("case %d: want error containing %q, got %v", i, c.want, err)
+		}
 	}
 }
