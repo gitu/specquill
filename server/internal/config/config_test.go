@@ -237,3 +237,32 @@ data_dir: ./d`, "sources are defined in-repo"},
 		}
 	}
 }
+
+// The GitHub API base is chosen by EXACT host: GitHub Enterprise installs
+// whose hostname merely ends in "github.com" must not be routed to
+// api.github.com.
+func TestForgeAPIBaseExactHost(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com":            "https://api.github.com",
+		"https://github.com/":           "https://api.github.com",
+		"https://mygithub.com":          "https://mygithub.com/api/v3",
+		"https://enterprise-github.com": "https://enterprise-github.com/api/v3",
+		"https://github.mycompany.com":  "https://github.mycompany.com/api/v3",
+		"https://ghe.internal:8443":     "https://ghe.internal:8443/api/v3",
+	}
+	for base, want := range cases {
+		if got := forgeAPIBase("github", base); got != want {
+			t.Errorf("github %s → %q, want %q", base, got, want)
+		}
+	}
+	// gitlab is always /api/v4 on the given base
+	for base, want := range map[string]string{
+		"https://gitlab.com":          "https://gitlab.com/api/v4",
+		"https://gitlab.example.com/": "https://gitlab.example.com/api/v4",
+		"https://git.internal:8443":   "https://git.internal:8443/api/v4",
+	} {
+		if got := forgeAPIBase("gitlab", base); got != want {
+			t.Errorf("gitlab %s → %q, want %q", base, got, want)
+		}
+	}
+}

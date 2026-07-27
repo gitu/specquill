@@ -22,22 +22,35 @@ export const clearStoredPat = () => localStorage.removeItem(PAT_KEY);
 let reauth: Promise<boolean> | null = null;
 
 /** Re-establish the session from the stored PAT. Resolves false when there is
- * no stored token or the forge rejected it (token revoked/expired). */
-async function reloginWithPat(): Promise<boolean> {
-  if (!reauth) {
-    reauth = (async () => {
-      const token = getStoredPat();
-      if (!token) return false;
+ * no stored token or the login failed.
+ *
+ * The token is only forgotten when the forge itself rejects it (401 invalid,
+ * 403 no access) — a 5xx or a dead network means "try again later", and
+ * discarding the token there would force everyone to re-mint one over a
+ * transient outage. */
+function reloginWithPat(): Promise<boolean> {
+  if (reauth) return reauth; // a login is already in flight — join it
+  const attempt = (async () => {
+    const token = getStoredPat();
+    if (!token) return false;
+    try {
       const res = await fetch('/auth/pat/login', {
         method: 'POST',
         headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       });
-      if (!res.ok && res.status !== 500) clearStoredPat();
+      if (res.status === 401 || res.status === 403) clearStoredPat();
       return res.ok;
-    })().finally(() => { setTimeout(() => { reauth = null; }, 0); });
-  }
-  return reauth;
+    } catch {
+      return false; // offline/aborted — keep the token, retry on the next 401
+    }
+  })();
+  reauth = attempt;
+  // released as soon as it settles: callers already in flight hold the
+  // promise itself, and a LATER 401 deserves a fresh attempt rather than
+  // this one's stale verdict
+  void attempt.finally(() => { if (reauth === attempt) reauth = null; });
+  return attempt;
 }
 
 /** fetch + session care: a 401 triggers one silent PAT re-login and retry;

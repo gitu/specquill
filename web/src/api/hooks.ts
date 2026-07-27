@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Branch, FileResp, RepoInfo, SnapshotResp, TreeEntry } from './client';
+import { ForgeKind } from '../lib/forge';
 
 export interface StatusResp {
   branch: string;
@@ -116,12 +117,17 @@ export function useMerge(repo: string | undefined) {
 }
 
 
+export interface ProposeResp {
+  number: number; url: string; title: string; created: boolean;
+  kind?: ForgeKind; // names the object the way the host does (MR vs PR)
+}
+
 /** Forge mode: push the branch and open (or re-use) a merge request there. */
 export function usePropose(repo: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { source: string; title?: string; body?: string }) =>
-      api<{ number: number; url: string; title: string; created: boolean }>(
+      api<ProposeResp>(
         `/api/repos/${repo}/propose`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: (_, { source }) => {
       qc.invalidateQueries({ queryKey: ['forge', repo, source] });
@@ -140,6 +146,7 @@ export interface ForgeRequest {
 }
 export interface ForgeResp {
   enabled: boolean;
+  kind?: ForgeKind;                // gitlab | github — drives MR/PR wording
   request?: ForgeRequest | null;   // null = the branch has no open merge request
   error?: string;                  // forge unreachable/misconfigured — panel degrades
 }

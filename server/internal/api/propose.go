@@ -56,7 +56,7 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request, repo *proje
 		return
 	}
 
-	if err := repo.Push(body.Source); err != nil {
+	if err := repo.Push(body.Source, s.tok(r)); err != nil {
 		gitFail(w, err)
 		return
 	}
@@ -73,5 +73,6 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request, repo *proje
 	s.publish("propose", repo.Key(), body.Source)
 	jsonOK(w, map[string]any{
 		"number": req.Number, "url": req.URL, "title": req.Title, "created": created,
+		"kind": cfg.Kind, // the client names it a merge request or a pull request
 	})
 }

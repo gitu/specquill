@@ -35,7 +35,7 @@ func TestGroundingRequiresCatalogEntry(t *testing.T) {
 	}
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "reg")
-	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: reg, DefaultBranch: "main"}); err != nil {
+	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: reg, DefaultBranch: "main"}, ""); err != nil {
 		t.Fatal(err)
 	}
 

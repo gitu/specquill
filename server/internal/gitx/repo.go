@@ -23,26 +23,6 @@ type Manager struct {
 	order     []string
 	// Notify, when set, receives coarse change hints (kind, repoKey, branch).
 	Notify func(kind, repo, branch string)
-
-	// patToken is the forge PAT of the manager's user (per-user managers in
-	// forge-PAT mode; empty on the shared manager, which falls back to the
-	// repo's token_env). Refreshed from the session vault on every request.
-	patMu    sync.RWMutex
-	patToken string
-}
-
-// SetToken applies the caller's forge PAT to all of this manager's git
-// operations (clone/fetch/push credentials).
-func (m *Manager) SetToken(token string) {
-	m.patMu.Lock()
-	m.patToken = token
-	m.patMu.Unlock()
-}
-
-func (m *Manager) token() string {
-	m.patMu.RLock()
-	defer m.patMu.RUnlock()
-	return m.patToken
 }
 
 func (m *Manager) notify(kind, repo, branch string) {
@@ -123,14 +103,15 @@ func (m *Manager) add(rc config.RepoConfig) *Repo {
 	return r
 }
 
-// AddRepo registers a repo at runtime, clones it, and starts its sync loop.
-// Idempotent per id: an existing registration is returned as-is.
-func (m *Manager) AddRepo(rc config.RepoConfig) (*Repo, error) {
+// AddRepo registers a repo at runtime, clones it with token (empty = the
+// repo's token_env), and starts its sync loop. Idempotent per id: an existing
+// registration is returned as-is.
+func (m *Manager) AddRepo(rc config.RepoConfig, token string) (*Repo, error) {
 	if r, ok := m.Repo(rc.ID); ok {
 		return r, nil
 	}
 	r := m.add(rc)
-	if err := r.EnsureCloned(); err != nil {
+	if err := r.EnsureCloned(token); err != nil {
 		m.RemoveRepo(r.key)
 		return nil, err
 	}
@@ -167,10 +148,12 @@ func (m *Manager) RemoveRepo(key string) {
 	}
 }
 
-// Init clones any missing repos and prunes stale worktrees. Call at startup.
+// Init clones any missing repos and prunes stale worktrees. Call at startup —
+// local/dev mode only, where credentials come from token_env (forge-PAT
+// deployments clone lazily, per user, with that user's token).
 func (m *Manager) Init() error {
 	for _, r := range m.Repos() {
-		if err := r.EnsureCloned(); err != nil {
+		if err := r.EnsureCloned(""); err != nil {
 			return err
 		}
 	}
@@ -224,21 +207,21 @@ func (r *Repo) lockBranch(branch string) *sync.Mutex {
 	return mu
 }
 
-// EnsureCloned makes sure the bare clone exists, cloning with the manager's
-// current credentials when it does not. Cheap after the first success.
-func (r *Repo) EnsureCloned() error {
+// EnsureCloned makes sure the bare clone exists, cloning with token (empty =
+// the repo's token_env) when it does not. Cheap after the first success.
+func (r *Repo) EnsureCloned(token string) error {
 	r.ensureMu.Lock()
 	defer r.ensureMu.Unlock()
 	if r.ensured {
 		return nil
 	}
-	if err := r.ensure(); err != nil {
+	if err := r.ensure(token); err != nil {
 		return fmt.Errorf("repo %s: %w", r.key, err)
 	}
 	return nil
 }
 
-func (r *Repo) ensure() error {
+func (r *Repo) ensure(token string) error {
 	if _, err := os.Stat(filepath.Join(r.gitDir, "HEAD")); err == nil {
 		_, _ = run(r.gitDir, nil, "worktree", "prune")
 		r.ensured = true
@@ -257,7 +240,7 @@ func (r *Repo) ensure() error {
 		}
 		return err
 	}
-	args, env := r.credentialArgsEnv()
+	args, env := r.credentialArgs(token)
 	if _, err := run("", env, append(args, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir)...); err != nil {
 		return err
 	}
@@ -273,7 +256,7 @@ func (r *Repo) ensure() error {
 	}
 	// populate refs/remotes/origin/* so ahead/behind works from the start
 	if r.Writable() {
-		if err := r.Fetch(); err != nil {
+		if err := r.Fetch(token); err != nil {
 			return err
 		}
 	}

@@ -57,10 +57,21 @@ matching users to admin.
 
 The token's persistent home is the **browser** (localStorage). Server-side
 it exists only in a RAM vault keyed by session id: written at login, read
-per request, deleted at logout, gone on restart. A session whose vault
-entry is missing answers 401, and the SPA silently re-plays login with the
-stored token and retries — restarts and session expiry are invisible while
-the token remains valid. Nothing token-shaped ever reaches SQLite or disk.
+per request, deleted at logout, gone on restart. Entries are also dropped
+when a request arrives on a session that no longer resolves, and swept when
+untouched for longer than the session's idle lifetime — a browser that never
+comes back cannot pin a token forever. A session whose vault entry is
+missing answers 401, and the SPA silently re-plays login with the stored
+token and retries — restarts and session expiry are invisible while the
+token remains valid. The browser only discards its token when the forge
+itself rejects it (401/403); a 5xx or a dead network keeps it, so an outage
+never forces everyone to mint new tokens. Nothing token-shaped ever reaches
+SQLite or disk.
+
+From the vault the token travels **per operation**: every git call takes it
+as an argument rather than reading it from shared state, so two sessions of
+the same user holding different tokens can run concurrently without one
+borrowing the other's credential.
 
 ## Per-user clones
 
@@ -105,4 +116,14 @@ merge itself happen on the forge ([merging.md](merging.md)); the moved
 default branch arrives back via fetch, and the
 [forge-review panel](forge-review.md) shows the request's thread — with its
 60-second cache keyed **per user**, since visibility now follows each
-user's own token.
+user's own token. Both surfaces name the object the way the host does
+(GitLab *merge request* `!12`, GitHub *pull request* `#12`), driven by the
+`kind` the API reports alongside each request.
+
+## Share links in this mode
+
+A [share link](share-links.md) is downloaded without a session, so nothing
+can clone at download time. Minting is therefore the moment the clone is
+materialized — with the creator's token, the last point one is available —
+and the download serves from that user's storage. A link whose clone has
+since gone answers 404 rather than surfacing a git error.

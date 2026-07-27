@@ -130,7 +130,7 @@ func (s *Server) postBranch(w http.ResponseWriter, r *http.Request, repo *projec
 }
 
 func (s *Server) postPush(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if err := repo.Push(r.URL.Query().Get("branch")); err != nil {
+	if err := repo.Push(r.URL.Query().Get("branch"), s.tok(r)); err != nil {
 		gitFail(w, err)
 		return
 	}
@@ -138,7 +138,7 @@ func (s *Server) postPush(w http.ResponseWriter, r *http.Request, repo *project.
 }
 
 func (s *Server) postFetch(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if err := repo.Fetch(); err != nil {
+	if err := repo.Fetch(s.tok(r)); err != nil {
 		gitFail(w, err)
 		return
 	}

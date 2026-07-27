@@ -70,7 +70,7 @@ func (s *Server) getForgeRequest(w http.ResponseWriter, r *http.Request, repo *p
 	u := auth.UserFrom(r.Context())
 	key := strconv.FormatInt(u.ID, 10) + "\x00" + repo.Repo.Key() + "\x00" + branch
 	if e, ok := s.forgeCache.get(key); ok {
-		writeForge(w, e)
+		writeForge(w, e, cfg.Kind)
 		return
 	}
 
@@ -87,7 +87,7 @@ func (s *Server) getForgeRequest(w http.ResponseWriter, r *http.Request, repo *p
 		e.err = err.Error()
 	}
 	s.forgeCache.put(key, e)
-	writeForge(w, e)
+	writeForge(w, e, cfg.Kind)
 }
 
 // forgeToken picks the forge API credential for this request: the caller's
@@ -102,8 +102,10 @@ func (s *Server) forgeToken(r *http.Request, cfg forge.Config) string {
 	return ""
 }
 
-func writeForge(w http.ResponseWriter, e forgeEntry) {
-	out := map[string]any{"enabled": true, "request": e.req}
+// kind rides along so the client can name things the way the host does
+// (GitLab merge request !12, GitHub pull request #12).
+func writeForge(w http.ResponseWriter, e forgeEntry, kind string) {
+	out := map[string]any{"enabled": true, "kind": kind, "request": e.req}
 	if e.err != "" {
 		out["error"] = e.err
 	}

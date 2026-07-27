@@ -273,7 +273,7 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 	var refs []project.EffectiveReference
 	if s.patMode() {
 		refs, _ = project.EffectiveReferencesInRepo(cfg)
-		s.registerUserSources(mgr)
+		s.registerUserSources(mgr, s.tok(r))
 	} else {
 		catalog, err := s.store.Sources()
 		if err != nil || len(catalog) == 0 {
@@ -294,7 +294,7 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 		if !ok {
 			continue
 		}
-		if s.patMode() && repo.EnsureCloned() != nil {
+		if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
 			continue // token cannot reach this source — ground without it
 		}
 		snap := s.sourceSnapshot(ref.Source, repo)
@@ -407,7 +407,7 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 		jsonError(w, http.StatusInternalServerError, "project repo not initialized")
 		return nil, false
 	}
-	if !s.cloneReady(w, repo) {
+	if !s.cloneReady(w, repo, s.tok(r)) {
 		return nil, false
 	}
 	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true

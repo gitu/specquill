@@ -16,7 +16,10 @@ export function LoginView() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
-  const [error, setError] = useState('');
+  // one error state per form: a failed local login must not surface under the
+  // PAT field (and vice versa), and each form must show its own failure
+  const [patError, setPatError] = useState('');
+  const [localError, setLocalError] = useState('');
   const [warning, setWarning] = useState('');
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<Providers | null>(null);
@@ -30,7 +33,7 @@ export function LoginView() {
   const submitPat = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setError('');
+    setPatError('');
     try {
       const resp = await api<{ warning?: string }>('/auth/pat/login', {
         method: 'POST', body: JSON.stringify({ token: token.trim() }),
@@ -45,7 +48,7 @@ export function LoginView() {
         window.location.href = '/';
       }
     } catch (err) {
-      setError(String((err as Error).message || err));
+      setPatError(String((err as Error).message || err));
     } finally {
       setBusy(false);
     }
@@ -54,12 +57,12 @@ export function LoginView() {
   const submitLocal = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setError('');
+    setLocalError('');
     try {
       await api('/auth/local/login', { method: 'POST', body: JSON.stringify({ username, password }) });
       window.location.href = '/';
     } catch (err) {
-      setError(String((err as Error).message || err));
+      setLocalError(String((err as Error).message || err));
     } finally {
       setBusy(false);
     }
@@ -98,7 +101,7 @@ export function LoginView() {
               </a>
               <br />The token stays in this browser — the server never stores it.
             </div>
-            {error && <div style={sx('margin-bottom:12px;color:var(--del);font-size:12px')}>{error}</div>}
+            {patError && <div style={sx('margin-bottom:12px;color:var(--del);font-size:12px')}>{patError}</div>}
             <button type="submit" disabled={busy || !token.trim()} style={sx(button)}>
               {busy ? 'Signing in…' : 'Sign in with ' + forgeName}
             </button>
@@ -119,7 +122,7 @@ export function LoginView() {
             <label style={sx(label)}>Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
               style={sx(input + ';margin-bottom:16px')} />
-            {!forge && error && <div style={sx('margin-bottom:12px;color:var(--del);font-size:12px')}>{error}</div>}
+            {localError && <div style={sx('margin-bottom:12px;color:var(--del);font-size:12px')}>{localError}</div>}
             <button type="submit" disabled={busy} style={sx(button)}>
               {busy ? 'Signing in…' : 'Sign in'}
             </button>

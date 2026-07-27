@@ -327,7 +327,9 @@ func forgeAPIBase(kind, webBase string) string {
 	base := strings.TrimSuffix(webBase, "/")
 	switch kind {
 	case forge.KindGitHub:
-		if strings.HasSuffix(base, "github.com") {
+		// exact host, not a suffix: mygithub.com and enterprise-github.com are
+		// GitHub Enterprise installs and serve the API under /api/v3
+		if u, err := url.Parse(base); err == nil && strings.EqualFold(u.Hostname(), "github.com") {
 			return "https://api.github.com"
 		}
 		return base + "/api/v3"

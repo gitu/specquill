@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,6 +96,7 @@ func gitOut(t *testing.T, args ...string) string {
 
 type patEnv struct {
 	h         http.Handler
+	srv       *Server
 	st        *store.Store
 	dataDir   string
 	mainSrc   string // the project's origin (push target)
@@ -151,8 +153,11 @@ func patServerSources(t *testing.T, extraSources string) patEnv {
 
 	var mrCreated bool
 	// tok-a is a developer (30 → editor); tok-b only a reporter (20 → viewer);
-	// tok-none authenticates but has no access to the project at all
-	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-b": 20, "tok-none": 0}, &mrCreated)
+	// tok-none authenticates but has no access to the project at all.
+	// tok-a2 shares tok-a's level, so the mock reports the same forge user id:
+	// the SAME user holding a SECOND, different token (which the reference
+	// server rejects) — the concurrency fixture.
+	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-a2": 30, "tok-b": 20, "tok-none": 0, "tok-maint": 40}, &mrCreated)
 	t.Cleanup(forgeSrv.Close)
 
 	cfg := &config.Config{
@@ -178,12 +183,12 @@ func patServerSources(t *testing.T, extraSources string) patEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(cfg, git, Options{
+	h, srv := NewServer(cfg, git, Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
 		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
-	return patEnv{h: h, st: st, dataDir: cfg.DataDir, mainSrc: src, mrCreated: &mrCreated}
+	return patEnv{h: h, srv: srv, st: st, dataDir: cfg.DataDir, mainSrc: src, mrCreated: &mrCreated}
 }
 
 func patLogin(t *testing.T, h http.Handler, token string) (*http.Cookie, map[string]any) {
@@ -575,5 +580,131 @@ func TestSourceDefValidation(t *testing.T) {
 		if c.want != "" && !strings.Contains(err, c.want) {
 			t.Errorf("%s: got %q, want containing %q", c.name, err, c.want)
 		}
+	}
+}
+
+// Two sessions of the SAME user holding DIFFERENT tokens must never borrow
+// each other's credential. Before tokens were passed per operation, both
+// requests read one mutable field on the shared per-user manager, so a
+// concurrent pair could clone with the wrong token. Run with -race.
+func TestPatConcurrentSessionsDoNotShareToken(t *testing.T) {
+	env := patServerSources(t, "")
+	sessA, respA := patLogin(t, env.h, "tok-a")
+	// a second session of the SAME forge user, holding a token the reference
+	// server rejects
+	sessWrong, respWrong := patLogin(t, env.h, "tok-a2")
+	if respA["id"] != respWrong["id"] {
+		t.Fatalf("fixture: both sessions must be the same user (%v vs %v)", respA["id"], respWrong["id"])
+	}
+
+	// materialize the clone once (cloning is credentialed only on first use)
+	if rec := patDo(env.h, "GET", "/api/repos/refsrc/tree", sessA, ""); rec.Code != http.StatusOK {
+		t.Fatalf("initial clone with the valid token: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// fetch re-authenticates on EVERY call, so each round is a real credential
+	// decision: the valid session must always succeed, the wrong-token session
+	// must always fail. Any crossover means one request used the other's token.
+	const rounds = 12
+	var mu sync.Mutex
+	var goodOK, badOK int
+	var wg sync.WaitGroup
+	for i := 0; i < rounds; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			rec := patDo(env.h, "POST", "/api/repos/refsrc/fetch", sessA, "{}")
+			mu.Lock()
+			if rec.Code == http.StatusOK {
+				goodOK++
+			}
+			mu.Unlock()
+		}()
+		go func() {
+			defer wg.Done()
+			rec := patDo(env.h, "POST", "/api/repos/refsrc/fetch", sessWrong, "{}")
+			mu.Lock()
+			if rec.Code == http.StatusOK {
+				badOK++
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if goodOK != rounds {
+		t.Errorf("the valid token failed %d/%d fetches — it borrowed the other session's token", rounds-goodOK, rounds)
+	}
+	if badOK != 0 {
+		t.Errorf("the rejected token succeeded %d/%d times — it borrowed the valid session's token", badOK, rounds)
+	}
+}
+
+// A request on a session that no longer resolves must not leave its token
+// behind: closing the browser is the common case, and the entry would
+// otherwise sit in RAM until the sweeper ran.
+func TestPatExpiredSessionDropsVaultEntry(t *testing.T) {
+	env := patServer(t)
+	session, _ := patLogin(t, env.h, "tok-a")
+	if env.srv.vault.Len() != 1 {
+		t.Fatalf("vault should hold the login's token, len=%d", env.srv.vault.Len())
+	}
+
+	// the session disappears server-side (idle expiry / explicit delete)
+	if err := env.st.DeleteSession(session.Value); err != nil {
+		t.Fatal(err)
+	}
+	rec := patDo(env.h, "GET", "/api/me", session, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("dead session: want 401, got %d", rec.Code)
+	}
+	if env.srv.vault.Len() != 0 {
+		t.Fatalf("token outlived its session: len=%d", env.srv.vault.Len())
+	}
+}
+
+// Logout clears the vault entry too (no lingering credential).
+func TestPatLogoutClearsVault(t *testing.T) {
+	env := patServer(t)
+	session, _ := patLogin(t, env.h, "tok-a")
+	if rec := patDo(env.h, "POST", "/auth/logout", session, "{}"); rec.Code != http.StatusOK {
+		t.Fatalf("logout: %d", rec.Code)
+	}
+	if env.srv.vault.Len() != 0 {
+		t.Fatalf("logout left %d token(s) behind", env.srv.vault.Len())
+	}
+}
+
+// Share links are downloaded without a session, so nothing can clone at that
+// moment: minting must materialize the creator's clone, and a link with no
+// clone behind it must 404 rather than 500 with a git error.
+func TestPatShareLinkServesWithoutSession(t *testing.T) {
+	env := patServer(t)
+	session, _ := patLogin(t, env.h, "tok-maint") // minting needs maintainer
+
+	rec := patDo(env.h, "POST", "/api/repos/w/share", session, "{}")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mint share link: %d %s", rec.Code, rec.Body.String())
+	}
+	var link struct{ URL string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &link); err != nil || link.URL == "" {
+		t.Fatalf("share response: %s (%v)", rec.Body.String(), err)
+	}
+
+	// public download: no cookie at all
+	rec = patDo(env.h, "GET", link.URL, nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public download: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("content type: %q", ct)
+	}
+	if body := rec.Body.Bytes(); len(body) < 4 || string(body[:2]) != "PK" {
+		t.Fatalf("expected a zip archive, got %d bytes", len(body))
+	}
+
+	// an unknown token stays a 404
+	if rec := patDo(env.h, "GET", "/share/deadbeef/x.zip", nil, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown share token: want 404, got %d", rec.Code)
 	}
 }

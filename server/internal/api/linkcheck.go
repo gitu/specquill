@@ -83,7 +83,7 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 			var names []string
 			if s.patMode() {
 				// forge-PAT mode: the in-repo sources: definitions are the set
-				s.registerUserSources(mgr)
+				s.registerUserSources(mgr, s.tok(r))
 				if cfg := inRepoConfig(repo); cfg != nil {
 					for _, sd := range cfg.Sources {
 						names = append(names, sd.Name)
@@ -124,7 +124,7 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 				if !ok {
 					continue
 				}
-				if s.patMode() && gr.EnsureCloned() != nil {
+				if s.patMode() && gr.EnsureCloned(s.tok(r)) != nil {
 					continue // unreachable with this token — links to it stay unverified
 				}
 				if snap := s.sourceSnapshot(n, gr); snap != nil {

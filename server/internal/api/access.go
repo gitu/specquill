@@ -72,7 +72,7 @@ func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*projec
 			jsonError(w, http.StatusNotFound, "project repo not initialized")
 			return nil, false
 		}
-		if !s.cloneReady(w, repo) {
+		if !s.cloneReady(w, repo, s.tok(r)) {
 			return nil, false
 		}
 		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
@@ -81,7 +81,7 @@ func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*projec
 	if !ok && s.patMode() {
 		// in-repo `sources:` register lazily — a first request for a source
 		// may arrive before anything else listed it
-		s.registerUserSources(mgr)
+		s.registerUserSources(mgr, s.tok(r))
 		repo, ok = mgr.Repo(id)
 	}
 	if !ok {
@@ -91,7 +91,7 @@ func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*projec
 	if repo.Writable() {
 		// a writable repo without a project row (test fixtures, migration
 		// gaps) still resolves as a root project
-		if !s.cloneReady(w, repo) {
+		if !s.cloneReady(w, repo, s.tok(r)) {
 			return nil, false
 		}
 		return project.New(repo, id, "", false), true
@@ -106,19 +106,19 @@ func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*projec
 			return nil, false
 		}
 	}
-	if !s.cloneReady(w, repo) {
+	if !s.cloneReady(w, repo, s.tok(r)) {
 		return nil, false
 	}
 	return project.New(repo, id, "", true), true
 }
 
-// cloneReady lazily clones in forge-PAT mode (with the caller's token, set on
-// the manager by gitm). Local mode clones at boot, so this is a no-op there.
-func (s *Server) cloneReady(w http.ResponseWriter, repo *gitx.Repo) bool {
+// cloneReady lazily clones in forge-PAT mode with the caller's own token.
+// Local mode clones at boot, so this is a no-op there.
+func (s *Server) cloneReady(w http.ResponseWriter, repo *gitx.Repo, token string) bool {
 	if !s.patMode() {
 		return true
 	}
-	if err := repo.EnsureCloned(); err != nil {
+	if err := repo.EnsureCloned(token); err != nil {
 		jsonError2(w, http.StatusBadGateway, "clone failed: "+err.Error(), "clone_failed")
 		return false
 	}

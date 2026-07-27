@@ -8,6 +8,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 
 	"specquill/server/internal/auth"
@@ -79,6 +80,21 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("repo")
+	// forge-PAT mode: the public download has no session and therefore no
+	// token, so it can only read a clone that already exists. Minting is the
+	// last moment we hold the creator's token — materialize it now, or the
+	// link would 404 later.
+	if s.patMode() {
+		p, ok := s.projectByID(s.gitm(r), id)
+		if !ok {
+			jsonError(w, http.StatusNotFound, "unknown project "+id)
+			return
+		}
+		if err := p.Repo.EnsureCloned(s.tok(r)); err != nil {
+			jsonError2(w, http.StatusBadGateway, "clone failed: "+err.Error(), "clone_failed")
+			return
+		}
+	}
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -133,7 +149,11 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	zip, err := p.ArchiveZip(p.Cfg.DefaultBranch)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
+		// no clone to serve from (evicted, or the creator's storage is gone).
+		// Nothing token-less can fix that, and a raw git error would leak
+		// server paths — the link is simply not servable right now.
+		log.Printf("share download %s: %v", l.ProjectID, err)
+		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")

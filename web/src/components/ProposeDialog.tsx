@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
+import { ProposeResp } from '../api/hooks';
 import { useBranches, useForgeRequest, useMergePreview, usePropose, useStatus } from '../api/hooks';
 import { CommitDialog } from './CommitDialog';
+import { forgeRef, forgeTerms } from '../lib/forge';
 
 /**
  * Forge-mode counterpart of MergeDialog: main only moves on the forge, so
@@ -24,7 +26,11 @@ export function ProposeDialog({ onClose }: { onClose: () => void }) {
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
   const [commitFirst, setCommitFirst] = useState(false);
-  const [result, setResult] = useState<{ number: number; url: string; created: boolean } | null>(null);
+  const [result, setResult] = useState<ProposeResp | null>(null);
+
+  // GitLab and GitHub name this object differently — say it the host's way
+  const kind = result?.kind ?? existing.data?.kind;
+  const terms = forgeTerms(kind);
 
   const dirty = status.data?.dirty.length ?? 0;
   const files = preview.data?.files ?? [];
@@ -62,9 +68,9 @@ export function ProposeDialog({ onClose }: { onClose: () => void }) {
         {result ? (
           <>
             <div style={sx('margin-top:14px;padding:11px 12px;border:1px solid var(--border);background:var(--surface-2);border-radius:9px;font-size:12.5px;line-height:1.5')}>
-              {result.created ? 'Merge request opened' : 'Branch pushed — merge request already open'}:{' '}
+              {result.created ? `${terms.Noun} opened` : `Branch pushed — ${terms.noun} already open`}:{' '}
               <a href={result.url} target="_blank" rel="noreferrer" style={sx('color:var(--brand,var(--text));font-weight:600')}>
-                !{result.number} ↗
+                {forgeRef(kind, result.number)} ↗
               </a>
               <br />Review and merge happen there; the merged result arrives here on the next sync.
             </div>
@@ -90,7 +96,7 @@ export function ProposeDialog({ onClose }: { onClose: () => void }) {
             {open && (
               <div style={sx('margin-top:12px;padding:9px 12px;border:1px solid var(--border);background:var(--surface-2);border-radius:8px;font-size:12px')}>
                 This branch already has an open request:{' '}
-                <a href={open.url} target="_blank" rel="noreferrer" style={sx('color:var(--brand,var(--text));font-weight:600')}>!{open.number} {open.title} ↗</a>
+                <a href={open.url} target="_blank" rel="noreferrer" style={sx('color:var(--brand,var(--text));font-weight:600')}>{forgeRef(kind, open.number)} {open.title} ↗</a>
                 <br />Proposing again pushes your new commits onto it.
               </div>
             )}
@@ -130,7 +136,7 @@ export function ProposeDialog({ onClose }: { onClose: () => void }) {
               <button onClick={onClose} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;cursor:pointer')}>Cancel</button>
               <button onClick={submit} disabled={blocked}
                 style={sx('height:32px;padding:0 15px;border:none;border-radius:8px;background:var(--prod);color:#fff;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;' + (blocked ? 'opacity:.5' : ''))}>
-                {propose.isPending ? 'Proposing…' : open ? 'Push to !' + open.number : 'Propose'}
+                {propose.isPending ? 'Proposing…' : open ? 'Push to ' + forgeRef(kind, open.number) : 'Propose'}
               </button>
             </div>
           </>

@@ -127,8 +127,10 @@ func serve(configPath string, dev bool) error {
 	}
 
 	// api-managed repos (added in-app) survive reconciliation — re-register
-	// them with the manager so their projects resolve after a restart
-	if repos, err := st.RepoRows(); err == nil {
+	// them with the manager so their projects resolve after a restart. Skipped
+	// in forge-PAT mode: there are no deployment credentials to clone with,
+	// and per-user managers pick these rows up lazily (registerStoreRepo).
+	if repos, err := st.RepoRows(); err == nil && !cfg.Auth.Forge.Enabled() {
 		for _, tr := range repos {
 			if tr.ManagedBy != "api" {
 				continue
@@ -141,7 +143,7 @@ func serve(configPath string, dev bool) error {
 				ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
 				SyncInterval:      2 * time.Minute,
 				ProtectedBranches: []string{tr.DefaultBranch},
-			}); err != nil {
+			}, ""); err != nil {
 				log.Printf("api-managed repo %s: %v", tr.RepoID, err)
 			}
 		}

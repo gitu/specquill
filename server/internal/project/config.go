@@ -104,7 +104,7 @@ func EffectiveReferencesInRepo(cfg *Config) (refs []EffectiveReference, warnings
 		}
 		seen[r.Source] = true
 		if !defined[r.Source] {
-			warnings = append(warnings, "reference "+r.Source+" has no matching sources: definition")
+			warnings = append(warnings, "reference "+r.Source+" has no matching source definition in .specquill/config.yml")
 			continue
 		}
 		refs = append(refs, EffectiveReference{

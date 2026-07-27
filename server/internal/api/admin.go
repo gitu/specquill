@@ -65,7 +65,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy, References: []project.EffectiveReference{}}
 		if repo, ok := mgr.Repo(p.RepoID); ok {
-			if s.patMode() && repo.EnsureCloned() != nil {
+			if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
 				out = append(out, info) // unclonable with this token — listed bare
 				continue
 			}
@@ -191,7 +191,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		// with whatever user token the manager saw last
 		rc.SyncInterval = 0
 	}
-	if _, err := s.gitm(r).AddRepo(rc); err != nil {
+	if _, err := s.gitm(r).AddRepo(rc, s.tok(r)); err != nil {
 		jsonError(w, http.StatusBadGateway, "clone failed: "+err.Error())
 		return
 	}

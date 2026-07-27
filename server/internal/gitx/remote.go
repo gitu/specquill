@@ -8,16 +8,16 @@ import (
 	"time"
 )
 
-// credentialArgsEnv configures git to take credentials from the child-process
+// credentialArgs configures git to take credentials from the child-process
 // environment only — the token never appears on argv or in any config file.
-// This is the single credentials seam. The manager's PAT (forge-PAT mode:
-// the requesting user's own token, refreshed per request) wins; otherwise
-// the repo's token_env names the env var holding the deployment token.
-func (r *Repo) credentialArgsEnv() (args []string, env []string) {
-	token := ""
-	if r.mgr != nil {
-		token = r.mgr.token()
-	}
+// This is the single credentials seam.
+//
+// The token is passed PER OPERATION (forge-PAT mode: the requesting user's
+// own token, carried down from the request context) — never stored on the
+// repo or manager, so concurrent requests with different tokens cannot
+// interfere. An empty token falls back to the repo's token_env, which is how
+// local/dev deployments authenticate.
+func (r *Repo) credentialArgs(token string) (args []string, env []string) {
 	if token == "" && r.Cfg.TokenEnv != "" {
 		token = os.Getenv(r.Cfg.TokenEnv)
 	}
@@ -49,14 +49,15 @@ func remoteHost(remote string) string {
 	return strings.ToLower(u.Host)
 }
 
-// Fetch updates remote-tracking state (writable) or heads (read-only).
-func (r *Repo) Fetch() error {
+// Fetch updates remote-tracking state (writable) or heads (read-only),
+// authenticating with token (empty = the repo's token_env).
+func (r *Repo) Fetch(token string) error {
 	if r.Cfg.Mirror {
 		return nil // no remote — the importer.Runner drives mirror updates
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	args, env := r.credentialArgsEnv()
+	args, env := r.credentialArgs(token)
 	if _, err := run(r.gitDir, env, append(args, "fetch", "--prune", "origin")...); err != nil {
 		return err
 	}
@@ -66,12 +67,12 @@ func (r *Repo) Fetch() error {
 
 // Pull fast-forwards branch onto origin/<branch> after a fetch. It never
 // merges: dirty worktrees and diverged branches return typed errors.
-func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
+func (r *Repo) Pull(branch, token string) (head string, updated bool, err error) {
 	branch, err = r.resolveRef(branch)
 	if err != nil {
 		return "", false, err
 	}
-	if err := r.Fetch(); err != nil {
+	if err := r.Fetch(token); err != nil {
 		return "", false, err
 	}
 	cur, err := r.Head(branch)
@@ -96,15 +97,16 @@ func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
 	return remoteSha, true, nil
 }
 
-// Push publishes a branch to origin.
-func (r *Repo) Push(branch string) error {
+// Push publishes a branch to origin, authenticating with token (empty = the
+// repo's token_env).
+func (r *Repo) Push(branch, token string) error {
 	branch, err := r.resolveRef(branch)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	args, env := r.credentialArgsEnv()
+	args, env := r.credentialArgs(token)
 	_, err = run(r.gitDir, env, append(args, "push", "origin", branch)...)
 	return err
 }

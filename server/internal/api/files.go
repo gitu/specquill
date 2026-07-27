@@ -23,14 +23,14 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		DefaultBranch     string   `json:"defaultBranch"`
 		ProtectedBranches []string `json:"protectedBranches"`
 		SyncedAt          string   `json:"syncedAt,omitempty"`
-		Role              string   `json:"role"`      // caller's effective role (viewer|member|admin)
+		Role              string   `json:"role"`      // caller's effective role (viewer|editor|maintainer|admin)
 		MergeMode         string   `json:"mergeMode"` // local (in-app merge) | forge (push + MR/PR)
 	}
 	u := auth.UserFrom(r.Context())
 	mgr := s.gitm(r)
 	// forge-PAT mode: sources come from the in-repo config — register them so
 	// they show up alongside the projects
-	s.registerUserSources(mgr)
+	s.registerUserSources(mgr, s.tok(r))
 	rootOf := map[string]string{}
 	if projects, err := s.store.Projects(); err == nil {
 		for _, p := range projects {

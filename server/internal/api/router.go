@@ -50,11 +50,20 @@ func (s *Server) publish(kind, repo, branch string) {
 	s.bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
 }
 
+// New wires the REST endpoints and the embedded SPA. The Server behind the
+// handler is returned too (NewServer) for callers that need its internals;
+// most callers want just the handler.
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
+	h, _ := NewServer(cfg, git, opts)
+	return h
+}
+
+func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handler, *Server) {
 	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), vault: auth.NewTokenVault()}
 	if cfg.Auth.Forge.Enabled() {
 		s.fleet = gitx.NewFleet(cfg)
 		s.fleet.Notify = func(kind, repo, branch string) { s.publish(kind, repo, branch) }
+		go s.vaultJanitor()
 	}
 	if opts.Dev && cfg.Auth.DevUser != nil {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
@@ -129,7 +138,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 		spa = devViteProxy(spa)
 	}
 	mux.Handle("/", spa)
-	return logMiddleware(csrfGuard(mux))
+	return logMiddleware(csrfGuard(mux)), s
 }
 
 // repoH resolves the {repo} path segment and gates on the effective per-repo

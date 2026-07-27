@@ -66,7 +66,7 @@ func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *pro
 // POST /api/repos/{repo}/pull?branch= — fast-forward onto origin.
 func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	branch := r.URL.Query().Get("branch")
-	head, updated, err := repo.Pull(branch)
+	head, updated, err := repo.Pull(branch, s.tok(r))
 	switch {
 	case errors.Is(err, gitx.ErrDirtyWorktree):
 		jsonError2(w, http.StatusConflict, err.Error(), "dirty")

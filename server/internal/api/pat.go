@@ -7,8 +7,10 @@ package api
 // own token can fetch from the forge.
 
 import (
+	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
@@ -20,16 +22,41 @@ import (
 func (s *Server) patMode() bool { return s.cfg.Auth.Forge.Enabled() }
 
 // gitm returns the git manager serving this request: the shared one in
-// local/dev mode, the caller's own (with the session token applied) in
-// forge-PAT mode.
+// local/dev mode, the caller's own (per-user clones) in forge-PAT mode.
+// Managers hold no credentials — the token travels per operation, see tok.
 func (s *Server) gitm(r *http.Request) *gitx.Manager {
 	if !s.patMode() {
 		return s.git
 	}
 	u := auth.UserFrom(r.Context())
-	mgr := s.fleet.ForUser(u.ID)
-	mgr.SetToken(auth.TokenFrom(r.Context()))
-	return mgr
+	return s.fleet.ForUser(u.ID)
+}
+
+// tok is the git/forge credential for this request: the caller's own PAT in
+// forge-PAT mode, "" in local/dev mode (where gitx falls back to token_env).
+// Passing it per call — rather than parking it on the shared per-user
+// manager — is what keeps concurrent requests with different tokens from
+// interfering.
+func (s *Server) tok(r *http.Request) string {
+	if !s.patMode() {
+		return ""
+	}
+	return auth.TokenFrom(r.Context())
+}
+
+// vaultJanitor reaps tokens whose session has idled out. Sessions slide
+// their own expiry on every request, so an entry untouched for longer than
+// the session TTL belongs to a session that can no longer authenticate.
+func (s *Server) vaultJanitor() {
+	maxIdle := 2 * s.cfg.Session.TTL
+	if maxIdle < 30*time.Minute {
+		maxIdle = 30 * time.Minute
+	}
+	for range time.Tick(10 * time.Minute) {
+		if n := s.vault.PruneIdle(maxIdle); n > 0 {
+			log.Printf("vault: reaped %d idle token(s)", n)
+		}
+	}
 }
 
 // registerUserSources reads every project's in-repo config (default branch
@@ -37,7 +64,7 @@ func (s *Server) gitm(r *http.Request) *gitx.Manager {
 // definitions as read-only repos in the user's manager. Cloning stays lazy —
 // registration only makes the name resolvable. Best-effort: an unreadable
 // project or config just contributes nothing.
-func (s *Server) registerUserSources(mgr *gitx.Manager) {
+func (s *Server) registerUserSources(mgr *gitx.Manager, token string) {
 	if !s.patMode() {
 		return
 	}
@@ -50,7 +77,7 @@ func (s *Server) registerUserSources(mgr *gitx.Manager) {
 		if !ok || !repo.Writable() {
 			continue
 		}
-		if repo.EnsureCloned() != nil {
+		if repo.EnsureCloned(token) != nil {
 			continue
 		}
 		proj := project.New(repo, p.ProjectID, p.ContentRoot, false)

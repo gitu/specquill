@@ -22,6 +22,11 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		u := s.sessions.Resolve(r)
 		if u == nil {
+			// the session is gone (expired or deleted) — drop any token still
+			// held for it rather than pinning it until the sweeper runs
+			if c, err := r.Cookie(auth.SessionCookie); err == nil {
+				s.vault.Delete(c.Value)
+			}
 			jsonError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}

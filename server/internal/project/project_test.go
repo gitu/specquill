@@ -108,8 +108,8 @@ func TestEffectiveReferencesInRepo(t *testing.T) {
 	cfg := &Config{
 		Sources: []SourceDef{
 			{Name: "regulations", Remote: "https://x/reg.git"},
-			{Name: "no-remote"},                       // incomplete: defines nothing
-			{Remote: "https://x/anon.git"},            // incomplete: defines nothing
+			{Name: "no-remote"},                               // incomplete: defines nothing
+			{Remote: "https://x/anon.git"},                    // incomplete: defines nothing
 			{Name: "unreferenced", Remote: "https://x/u.git"}, // browsable, not a reference
 		},
 		References: []Reference{
@@ -128,7 +128,7 @@ func TestEffectiveReferencesInRepo(t *testing.T) {
 		t.Fatalf("warnings: %v", warnings)
 	}
 	for _, w := range warnings {
-		if !strings.Contains(w, "no matching sources: definition") {
+		if !strings.Contains(w, "no matching source definition") {
 			t.Fatalf("warning wording: %q", w)
 		}
 	}

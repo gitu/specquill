@@ -1,5 +1,6 @@
 import { sx } from '../lib/sx';
 import { useForgeRequest } from '../api/hooks';
+import { forgeRef, forgeTerms } from '../lib/forge';
 
 /**
  * Review feedback from the forge (GitLab/GitHub) for the current branch.
@@ -13,11 +14,12 @@ export function ForgeReview({ repo, branch }: { repo: string | undefined; branch
   const forge = useForgeRequest(repo, branch);
   const data = forge.data;
   if (!data?.enabled) return null;
+  const terms = forgeTerms(data.kind);
 
   if (data.error) {
     return (
       <div style={sx('border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:11px;padding:10px 14px;margin-top:18px;font-size:12px;color:var(--reg)')}>
-        Merge request comments unavailable — {data.error}
+        {terms.Noun} comments unavailable — {data.error}
       </div>
     );
   }
@@ -35,7 +37,7 @@ export function ForgeReview({ repo, branch }: { repo: string | undefined; branch
       </div>
       <a href={req.url} target="_blank" rel="noopener noreferrer"
         style={sx('display:flex;align-items:baseline;gap:8px;padding:11px 14px;text-decoration:none;color:var(--text);border-bottom:1px solid var(--border)')}>
-        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-3)")}>!{req.number}</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-3)")}>{forgeRef(data.kind, req.number)}</span>
         <span style={sx('font-size:13px;font-weight:600;flex:1')}>{req.title}</span>
         <span style={sx('font-size:11.5px;color:var(--text-3)')}>opened by {req.author}</span>
       </a>
