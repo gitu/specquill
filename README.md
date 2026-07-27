@@ -26,7 +26,8 @@ server/           Go single binary (specquill)
                     status/commit (user = author & committer, service identity
                     as Co-authored-by), structured diffs, merge-tree merges,
                     env-token push/fetch
-  internal/auth     OIDC (code+PKCE, coreos/go-oidc) + local argon2id fallback,
+  internal/auth     forge-PAT login (GitLab/GitHub personal access tokens,
+                    RAM-only token vault) + local argon2id fallback,
                     opaque session cookies in the store
   internal/store    embedded SQLite (modernc, cgo-free) at <data_dir>/specquill.db:
                     users, sessions, per-repo grants, workspace claims —
@@ -58,12 +59,21 @@ Key properties:
   saves of the same file are guarded by a `baseSha` precondition: the later
   writer gets a 409 and a "file changed — reload" prompt instead of silently
   clobbering.
-- **Direct merges, no review ceremony.** A workspace branch lands on the protected
-  default branch through a previewed merge (diff + conflict check + dirty-worktree
-  refusal); `git merge-tree` does the work as a merge commit or squash, conflicts
-  detected and blocked. There is no in-app PR object — for reviewed merges, push the
-  branch and open a merge request on your forge. No forge API involved here;
-  `push`/`fetch` sync the plain remote with a token from the environment.
+- **Two ways to land on main.** Local-auth deployments merge directly in-app: a
+  workspace branch lands on the protected default branch through a previewed merge
+  (diff + conflict check + dirty-worktree refusal); `git merge-tree` does the work
+  as a merge commit or squash. Forge-PAT deployments instead **propose**: the branch
+  is pushed with the user's own token and a merge request / pull request is opened
+  via the forge API (idempotent — re-proposing pushes onto the open MR); review and
+  the merge happen on the forge, and main comes back via fetch.
+- **Forge-PAT auth (`auth.forge`).** Users sign in with a personal access token from
+  the deployment's GitLab/GitHub; identity comes from the forge `/user` API and the
+  deployment role from the user's actual permission on the main project. The token
+  lives in the browser's localStorage and, per session, in a RAM-only server vault —
+  never in the database. Every user gets **fully independent server-side clones**
+  fetched with their own token, so nothing one token can reach ever leaks to another
+  user. Reference sources are defined in-repo (`.specquill/config.yml` `sources:`) —
+  listing one there grants nothing; the user's own forge permission is the gate.
 - **Honest git identity.** The logged-in user is both **author and committer** on every
   commit and merge; the SpecQuill service identity is recorded as a `Co-authored-by:`
   trailer instead.
@@ -131,16 +141,43 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on 127.0.0.1:5643, pro
 ## Run (production-ish)
 
 ```sh
-cp specquill.example.yml specquill.yml     # point at your remotes, OIDC issuer, data dir
-export SPECQUILL_TOKEN_TRADING=…         # git token, env only
-export SPECQUILL_OIDC_SECRET=…
+cp specquill.example.yml specquill.yml     # point at your remotes + forge, data dir
 make build && ./server/specquill -config specquill.yml
-./server/specquill -config specquill.yml user add flo 'Flo' flo@example.com   # local fallback user
+# forge-PAT mode needs no server-side credentials at all — users bring their own
+# tokens. Local-auth mode instead: export the token_env vars and add users with
+./server/specquill -config specquill.yml user add flo 'Flo' flo@example.com
 ```
 
 Requirements: `git` ≥ 2.38 on the server (checked at startup). Exactly one `writable`
-repo plus any number of `readonly` ones. The user's OIDC `name`/`email` claims become
-the git author on every commit and merge.
+repo plus any number of `readonly` ones. The forge identity's `name`/`email` become
+the git author on every commit.
+
+## Configuration — what lives where
+
+Two auth modes, two splits. The rule of thumb: **credentials and identity follow the
+mode; content-shaped settings live in the repo.**
+
+**Forge-PAT mode (`auth.forge`, the v1 deployment)** — the server config is minimal
+and credential-free; access rides each user's own token:
+
+| lives in server YAML | lives in `.specquill/config.yml` (in the repo) | lives with the user |
+|---|---|---|
+| forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote on an allowlisted host, branch) | the PAT (browser localStorage + RAM-only session vault) |
+| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, copilot grounding) | identity + git author (forge `/user`) |
+| optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema, AI skills (as before) | deployment role (forge permission on the main project, refreshed each login) |
+| **no tokens, no source catalog** (a top-level `sources:` block is rejected) | | per-user clones under `data/…/repos/u<id>/` |
+
+**Local-auth mode (`auth.local`, the v2 developer setup)** — the server owns shared
+credentials, so source definitions must stay server-side: the YAML carries the source
+**catalog** (git + url/openapi/confluence importers) with `token_env` env-var
+credentials, and the in-repo config only **selects** cataloged sources by name
+(selection ∩ catalog — in-repo config can never mint access). In-app merges,
+boot clones and background sync loops exist only in this mode.
+
+The authoritative version of this table is
+[`specs/forge-auth.md`](repo-product/docs/specs/specs/forge-auth.md); the
+authorization reasoning is [`REQ-004`](repo-product/docs/specs/requirements/REQ-004.md)
+and [`REQ-024`](repo-product/docs/specs/requirements/REQ-024.md).
 
 ## Verify
 
@@ -148,7 +185,7 @@ the git author on every commit and merge.
 make test               # Go: gitx/auth/API suites · web: model, frontmatter, Milkdown round-trip
 make e2e                # Playwright against a running dev server: edit → commit → merge
 python3 scripts/verify-write-path.py   # API-level write/commit/push/409 checks
-docker compose -f docker-compose.dev.yml up -d   # dex IdP for exercising real OIDC
+python3 scripts/mock-forge.py &        # mock GitLab for exercising forge-PAT auth
 ```
 
 ## Deploy

@@ -9,8 +9,68 @@ export class ApiError extends Error {
   }
 }
 
+// Forge-PAT deployments keep the personal access token here — it is the
+// credential of record; sessions are just its short-lived server-side shadow.
+const PAT_KEY = 'specquill-pat';
+
+export const getStoredPat = () => localStorage.getItem(PAT_KEY);
+export const storePat = (token: string) => localStorage.setItem(PAT_KEY, token);
+export const clearStoredPat = () => localStorage.removeItem(PAT_KEY);
+
+// One in-flight re-login at a time: a burst of 401s (page load after a server
+// restart) must not fire N parallel logins.
+let reauth: Promise<boolean> | null = null;
+
+/** Re-establish the session from the stored PAT. Resolves false when there is
+ * no stored token or the login failed.
+ *
+ * The token is only forgotten when the forge itself rejects it (401 invalid,
+ * 403 no access) — a 5xx or a dead network means "try again later", and
+ * discarding the token there would force everyone to re-mint one over a
+ * transient outage. */
+function reloginWithPat(): Promise<boolean> {
+  if (reauth) return reauth; // a login is already in flight — join it
+  const attempt = (async () => {
+    const token = getStoredPat();
+    if (!token) return false;
+    try {
+      const res = await fetch('/auth/pat/login', {
+        method: 'POST',
+        headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (res.status === 401 || res.status === 403) clearStoredPat();
+      return res.ok;
+    } catch {
+      return false; // offline/aborted — keep the token, retry on the next 401
+    }
+  })();
+  reauth = attempt;
+  // released as soon as it settles: callers already in flight hold the
+  // promise itself, and a LATER 401 deserves a fresh attempt rather than
+  // this one's stale verdict
+  void attempt.finally(() => { if (reauth === attempt) reauth = null; });
+  return attempt;
+}
+
+/** fetch + session care: a 401 triggers one silent PAT re-login and retry;
+ * without a recoverable session the browser goes to the login page. */
+export async function authFetch(path: string, init: RequestInit): Promise<Response> {
+  let res = await fetch(path, init);
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    if (await reloginWithPat()) {
+      res = await fetch(path, init);
+    }
+    if (res.status === 401) {
+      window.location.href = '/auth/login';
+      throw new ApiError(401, 'unauthenticated');
+    }
+  }
+  return res;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await authFetch(path, {
     ...init,
     headers: {
       'X-SpecQuill': '1',
@@ -19,10 +79,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  if (res.status === 401 && !path.startsWith('/auth/')) {
-    window.location.href = '/auth/login';
-    throw new ApiError(401, 'unauthenticated');
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep statusText */ }
@@ -38,7 +94,7 @@ export function rawUrl(repo: string, ref: string, path: string): string {
 
 /** binary-safe file save (excalidraw PNGs); same baseSha contract as PUT files */
 export async function putRaw(repo: string, branch: string, path: string, body: Blob, baseSha: string): Promise<{ sha: string }> {
-  const res = await fetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
+  const res = await authFetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
     method: 'PUT',
     headers: { 'X-SpecQuill': '1' },
     body,
@@ -74,6 +130,7 @@ export interface RepoInfo {
   protectedBranches: string[];
   syncedAt?: string;
   role?: 'viewer' | 'editor' | 'maintainer' | 'admin'; // the caller's effective role on this repo (REQ-021)
+  mergeMode?: 'local' | 'forge'; // how work lands on main: in-app merge, or push + MR/PR on the forge
 }
 export interface Branch { name: string; head: string; isDefault: boolean; ahead: number; behind: number }
 export interface FileResp { content: string; sha: string }

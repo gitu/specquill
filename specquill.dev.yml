@@ -29,8 +29,8 @@ git:
   committer_email: specquill@dev.local
 
 auth:
-  oidc:
-    enabled: false                 # dev: dex via docker-compose.dev.yml exercises OIDC
+  # forge-PAT mode (the v1 deployment shape) is exercised by the Go tests and
+  # scripts/mock-forge.py — dev runs local auth + the -dev auto-user
   local:
     enabled: true
   dev_user:                        # only honored with the -dev flag

@@ -53,7 +53,7 @@ func (s *Server) copilotProject(r *http.Request) *project.Project {
 			return nil
 		}
 	}
-	repo, ok := s.git.Repo(target.RepoID)
+	repo, ok := s.gitm(r).Repo(target.RepoID)
 	if !ok {
 		return nil
 	}
@@ -260,14 +260,6 @@ func normalizePath(p string, allowed map[string]string) string {
 // boundary — selection is read from the default branch only and can never
 // reach an uncataloged source. Best-effort: any failure yields no grounding.
 func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.GroundingSource {
-	catalog, err := s.store.Sources()
-	if err != nil || len(catalog) == 0 {
-		return nil
-	}
-	kinds := map[string]string{}
-	for _, src := range catalog {
-		kinds[src.Name] = src.Kind
-	}
 	// default branch only (D5): a feature branch cannot change the selection
 	yml, _, err := proj.FileAt(proj.Cfg.DefaultBranch, ".specquill/config.yml")
 	if err != nil {
@@ -277,15 +269,33 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 	if err != nil {
 		return nil
 	}
-	refs, _ := project.EffectiveReferences(cfg, kinds)
+	mgr := s.gitm(r)
+	var refs []project.EffectiveReference
+	if s.patMode() {
+		refs, _ = project.EffectiveReferencesInRepo(cfg)
+		s.registerUserSources(mgr, s.tok(r))
+	} else {
+		catalog, err := s.store.Sources()
+		if err != nil || len(catalog) == 0 {
+			return nil
+		}
+		kinds := map[string]string{}
+		for _, src := range catalog {
+			kinds[src.Name] = src.Kind
+		}
+		refs, _ = project.EffectiveReferences(cfg, kinds)
+	}
 	var out []ai.GroundingSource
 	for _, ref := range refs {
 		if !ref.Grounding {
 			continue
 		}
-		repo, ok := s.git.Repo(ref.Source)
+		repo, ok := mgr.Repo(ref.Source)
 		if !ok {
 			continue
+		}
+		if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
+			continue // token cannot reach this source — ground without it
 		}
 		snap := s.sourceSnapshot(ref.Source, repo)
 		if snap == nil {
@@ -392,9 +402,12 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 		jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
 		return nil, false
 	}
-	repo, ok := s.git.Repo(ps[0].RepoID)
+	repo, ok := s.gitm(r).Repo(ps[0].RepoID)
 	if !ok {
 		jsonError(w, http.StatusInternalServerError, "project repo not initialized")
+		return nil, false
+	}
+	if !s.cloneReady(w, repo, s.tok(r)) {
 		return nil, false
 	}
 	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true

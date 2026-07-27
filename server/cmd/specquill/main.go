@@ -127,8 +127,10 @@ func serve(configPath string, dev bool) error {
 	}
 
 	// api-managed repos (added in-app) survive reconciliation — re-register
-	// them with the manager so their projects resolve after a restart
-	if repos, err := st.RepoRows(); err == nil {
+	// them with the manager so their projects resolve after a restart. Skipped
+	// in forge-PAT mode: there are no deployment credentials to clone with,
+	// and per-user managers pick these rows up lazily (registerStoreRepo).
+	if repos, err := st.RepoRows(); err == nil && !cfg.Auth.Forge.Enabled() {
 		for _, tr := range repos {
 			if tr.ManagedBy != "api" {
 				continue
@@ -141,7 +143,7 @@ func serve(configPath string, dev bool) error {
 				ID: tr.RepoID, Mode: mode, Remote: tr.Remote, DefaultBranch: tr.DefaultBranch,
 				SyncInterval:      2 * time.Minute,
 				ProtectedBranches: []string{tr.DefaultBranch},
-			}); err != nil {
+			}, ""); err != nil {
 				log.Printf("api-managed repo %s: %v", tr.RepoID, err)
 			}
 		}
@@ -150,11 +152,17 @@ func serve(configPath string, dev bool) error {
 	git.Notify = func(kind, repo, branch string) {
 		bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
 	}
-	log.Printf("initializing %d repo(s) under %s", len(cfg.Repos), cfg.DataDir)
-	if err := git.Init(); err != nil {
-		return err
+	if cfg.Auth.Forge.Enabled() {
+		// forge-PAT mode: no deployment credentials — every clone and fetch
+		// happens lazily, per user, with that user's own token
+		log.Printf("forge-PAT auth (%s): per-user clones under %s, no boot clone/sync", cfg.Auth.Forge.Kind, cfg.DataDir)
+	} else {
+		log.Printf("initializing %d repo(s) under %s", len(cfg.Repos), cfg.DataDir)
+		if err := git.Init(); err != nil {
+			return err
+		}
+		git.StartSyncLoops()
 	}
-	git.StartSyncLoops()
 
 	// importer.Runner materializes non-git sources (url/openapi/confluence) into
 	// their mirror repos on a schedule; git.Init() has already created the empty
@@ -167,15 +175,6 @@ func serve(configPath string, dev bool) error {
 		}
 	}
 	imp.Start(context.Background())
-
-	var oidcAuth *auth.OIDC
-	if cfg.Auth.OIDC.Enabled {
-		oidcAuth, err = auth.NewOIDC(context.Background(), cfg)
-		if err != nil {
-			return err
-		}
-		log.Printf("oidc enabled: issuer %s", cfg.Auth.OIDC.Issuer)
-	}
 
 	var aiClient *ai.Client
 	if cfg.AI.Enabled {
@@ -190,7 +189,6 @@ func serve(configPath string, dev bool) error {
 	handler := api.New(cfg, git, api.Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
-		OIDC:     oidcAuth,
 		AI:       aiClient,
 		Bus:      bus,
 		Importer: imp,

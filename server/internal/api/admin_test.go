@@ -95,7 +95,7 @@ func TestSourceBrowsingRequiresCatalogEntry(t *testing.T) {
 			t.Fatalf("git %v: %v: %s", args, err, o)
 		}
 	}
-	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: src, DefaultBranch: "main"}); err != nil {
+	if _, err := git.AddRepo(config.RepoConfig{ID: "reg", Mode: config.ReadOnly, Remote: src, DefaultBranch: "main"}, ""); err != nil {
 		t.Fatal(err)
 	}
 

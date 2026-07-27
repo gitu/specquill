@@ -135,7 +135,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	mustRun(t, tmp, "-c", "user.name=o", "-c", "user.email=o@t", "commit", "-am", "origin edit")
 	mustRun(t, tmp, "push", "-q", "origin", "main")
 
-	head, updated, err := repo.Pull("main")
+	head, updated, err := repo.Pull("main", "")
 	if err != nil || !updated {
 		t.Fatalf("pull: %v updated=%v", err, updated)
 	}
@@ -143,7 +143,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	if content != "from origin\n" {
 		t.Fatalf("pull content: %q", content)
 	}
-	if _, updated, _ = repo.Pull("main"); updated {
+	if _, updated, _ = repo.Pull("main", ""); updated {
 		t.Fatal("second pull should be a no-op")
 	}
 	_ = head
@@ -153,7 +153,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	mustWrite(t, tmp+"/notes.txt", "origin again\n")
 	mustRun(t, tmp, "-c", "user.name=o", "-c", "user.email=o@t", "commit", "-am", "origin edit 2")
 	mustRun(t, tmp, "push", "-q", "origin", "main")
-	if _, _, err := repo.Pull("main"); !errors.Is(err, ErrDirtyWorktree) {
+	if _, _, err := repo.Pull("main", ""); !errors.Is(err, ErrDirtyWorktree) {
 		t.Fatalf("want ErrDirtyWorktree, got %v", err)
 	}
 	// clean up dirt, then diverge locally
@@ -161,7 +161,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	if _, err := repo.Commit("main", "local commit", "J", "j@t", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.Pull("main"); !errors.Is(err, ErrDiverged) {
+	if _, _, err := repo.Pull("main", ""); !errors.Is(err, ErrDiverged) {
 		t.Fatalf("want ErrDiverged, got %v", err)
 	}
 }

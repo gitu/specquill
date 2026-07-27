@@ -52,7 +52,9 @@ func (m *Manager) startSyncLoop(r *Repo) {
 				return
 			default:
 			}
-			if err := r.Fetch(); err != nil {
+			// local/dev mode only (forge-PAT deployments start no sync
+			// loops): credentials come from the repo's token_env
+			if err := r.Fetch(""); err != nil {
 				log.Printf("sync %s: %v", r.Cfg.ID, err)
 				continue
 			}

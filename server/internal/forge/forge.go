@@ -161,11 +161,8 @@ func (c *Client) OpenRequest(ctx context.Context, branch string) (*Request, erro
 	return c.gitlabRequest(ctx, branch)
 }
 
-func (c *Client) getJSON(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
+// authorize attaches the token in the forge's preferred header.
+func (c *Client) authorize(req *http.Request) {
 	if c.token != "" {
 		// GitLab PATs go in PRIVATE-TOKEN; GitHub takes a bearer token
 		if c.kind == KindGitLab {
@@ -177,6 +174,14 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 	if c.kind == KindGitHub {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
+}
+
+func (c *Client) getJSON(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	c.authorize(req)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return err

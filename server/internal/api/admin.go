@@ -14,6 +14,7 @@ import (
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
 	"specquill/server/internal/config"
+	"specquill/server/internal/gitx"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
@@ -59,10 +60,15 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	for _, src := range catalog {
 		kinds[src.Name] = src.Kind
 	}
+	mgr := s.gitm(r)
 	out := []projectInfo{}
 	for _, p := range ps {
 		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy, References: []project.EffectiveReference{}}
-		if repo, ok := s.git.Repo(p.RepoID); ok {
+		if repo, ok := mgr.Repo(p.RepoID); ok {
+			if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
+				out = append(out, info) // unclonable with this token — listed bare
+				continue
+			}
 			info.DefaultBranch = repo.Cfg.DefaultBranch
 			info.Protected = repo.Cfg.ProtectedBranches
 			proj := project.New(repo, p.ProjectID, p.ContentRoot, false)
@@ -70,13 +76,28 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 			// reference selection until merged
 			if yml, _, err := proj.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
 				if cfg, err := project.ParseConfig(yml); err == nil {
-					refs, warnings := project.EffectiveReferences(cfg, kinds)
+					var refs []project.EffectiveReference
+					var warnings []string
+					if s.patMode() {
+						// references resolve against the config's own sources:
+						// definitions — each user's token bounds real access
+						refs, warnings = project.EffectiveReferencesInRepo(cfg)
+						// a definition that failed validation is otherwise
+						// invisible (never registered) — say why here
+						for _, sd := range cfg.Sources {
+							if msg := s.sourceDefError(sd); msg != "" {
+								warnings = append(warnings, "source "+sd.Name+": "+msg)
+							}
+						}
+					} else {
+						refs, warnings = project.EffectiveReferences(cfg, kinds)
+					}
 					if refs != nil {
 						info.References = refs
 					}
 					info.Warnings = warnings
 					for i, ref := range info.References {
-						info.References[i].OKF = s.sourceIsOKF(ref.Source)
+						info.References[i].OKF = s.sourceIsOKF(mgr, ref.Source)
 					}
 				} else {
 					info.Warnings = []string{err.Error()}
@@ -114,8 +135,8 @@ func (s *Server) syncSource(w http.ResponseWriter, r *http.Request) {
 
 // sourceIsOKF reports whether a source's default branch is an OKF bundle
 // (root index.md declaring okf_version).
-func (s *Server) sourceIsOKF(name string) bool {
-	repo, ok := s.git.Repo(name)
+func (s *Server) sourceIsOKF(mgr *gitx.Manager, name string) bool {
+	repo, ok := mgr.Repo(name)
 	if !ok {
 		return false
 	}
@@ -165,7 +186,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		ProtectedBranches: []string{body.DefaultBranch},
 		ContentRoot:       strings.Trim(body.ContentRoot, "/"),
 	}
-	if _, err := s.git.AddRepo(rc); err != nil {
+	if s.patMode() {
+		// no background loops in forge-PAT mode: a loop would keep fetching
+		// with whatever user token the manager saw last
+		rc.SyncInterval = 0
+	}
+	if _, err := s.gitm(r).AddRepo(rc, s.tok(r)); err != nil {
 		jsonError(w, http.StatusBadGateway, "clone failed: "+err.Error())
 		return
 	}
@@ -201,7 +227,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.git.RemoveRepo(tp.RepoID)
+	s.gitm(r).RemoveRepo(tp.RepoID)
 	s.publish("repos-changed", id, "")
 	jsonOK(w, map[string]bool{"ok": true})
 }

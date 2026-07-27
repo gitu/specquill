@@ -8,26 +8,28 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
+	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
 // projectByID resolves a project id without an HTTP context (share downloads
-// have no session). Mirrors resolveProject's writable half; read-only
-// sources are never shareable.
-func (s *Server) projectByID(id string) (*project.Project, bool) {
+// have no session), against an explicit manager. Mirrors resolveProject's
+// writable half; read-only sources are never shareable.
+func (s *Server) projectByID(mgr *gitx.Manager, id string) (*project.Project, bool) {
 	if tp, err := s.store.Project(id); err == nil {
-		repo, ok := s.git.Repo(tp.RepoID)
+		repo, ok := mgr.Repo(tp.RepoID)
 		if !ok {
 			return nil, false
 		}
 		return project.New(repo, tp.ProjectID, tp.ContentRoot, false), true
 	}
-	repo, ok := s.git.Repo(id)
+	repo, ok := mgr.Repo(id)
 	if !ok || !repo.Writable() {
 		return nil, false
 	}
@@ -46,7 +48,7 @@ func shareResp(l *store.ShareLink) map[string]any {
 // would wrongly deny grant-only members).
 func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request, minRole authz.Role) bool {
 	id := r.PathValue("repo")
-	p, ok := s.projectByID(id)
+	p, ok := s.projectByID(s.gitm(r), id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "unknown project "+id)
 		return false
@@ -78,6 +80,21 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("repo")
+	// forge-PAT mode: the public download has no session and therefore no
+	// token, so it can only read a clone that already exists. Minting is the
+	// last moment we hold the creator's token — materialize it now, or the
+	// link would 404 later.
+	if s.patMode() {
+		p, ok := s.projectByID(s.gitm(r), id)
+		if !ok {
+			jsonError(w, http.StatusNotFound, "unknown project "+id)
+			return
+		}
+		if err := p.Repo.EnsureCloned(s.tok(r)); err != nil {
+			jsonError2(w, http.StatusBadGateway, "clone failed: "+err.Error(), "clone_failed")
+			return
+		}
+	}
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -118,14 +135,25 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p, ok := s.projectByID(l.ProjectID)
+	// forge-PAT mode: serve from the minting user's clone — the download has
+	// no session, so the only content it may expose is what the link's
+	// creator could already see
+	mgr := s.git
+	if s.patMode() {
+		mgr = s.fleet.ForUser(l.CreatedBy)
+	}
+	p, ok := s.projectByID(mgr, l.ProjectID)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	zip, err := p.ArchiveZip(p.Cfg.DefaultBranch)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
+		// no clone to serve from (evicted, or the creator's storage is gone).
+		// Nothing token-less can fix that, and a raw git error would leak
+		// server paths — the link is simply not servable right now.
+		log.Printf("share download %s: %v", l.ProjectID, err)
+		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")

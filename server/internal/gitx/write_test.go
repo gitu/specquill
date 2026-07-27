@@ -93,7 +93,7 @@ func TestPushFetch(t *testing.T) {
 	if _, err := repo.Commit("main", "update notes", "Jane", "j@t", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Push("main"); err != nil {
+	if err := repo.Push("main", ""); err != nil {
 		t.Fatal(err)
 	}
 	// origin got the commit
@@ -111,7 +111,7 @@ func TestPushFetch(t *testing.T) {
 	}
 	// readonly clone sees it after fetch
 	ro, _ := m.Repo("ro")
-	if err := ro.Fetch(); err != nil {
+	if err := ro.Fetch(""); err != nil {
 		t.Fatal(err)
 	}
 	content, _, _ := ro.File("main", "notes.txt")

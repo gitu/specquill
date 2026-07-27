@@ -23,23 +23,23 @@ import (
 
 type Server struct {
 	cfg        *config.Config
-	git        *gitx.Manager
+	git        *gitx.Manager // shared manager (local/dev mode git operations)
+	fleet      *gitx.Fleet   // per-user managers (forge-PAT mode git operations)
+	vault      *auth.TokenVault
 	store      *store.Store
 	sessions   *auth.Sessions
-	oidc       *auth.OIDC
 	ai         *ai.Client  // nil when disabled
 	bus        *events.Bus // nil-safe
 	devUser    *store.User
 	srcCache   *srcCache        // grounding source snapshots, keyed by repo key + head SHA
-	forgeCache *forgeCache      // forge review threads, keyed by repo key + branch
+	forgeCache *forgeCache      // forge review threads, keyed by user + repo key + branch
 	importer   *importer.Runner // nil when no non-git sources are configured
 }
 
 type Options struct {
 	Store    *store.Store
 	Sessions *auth.Sessions
-	OIDC     *auth.OIDC  // nil when disabled
-	AI       *ai.Client  // nil when disabled
+	AI       *ai.Client       // nil when disabled
 	Bus      *events.Bus      // nil-safe
 	Importer *importer.Runner // nil when no non-git sources are configured
 	Dist     fs.FS
@@ -50,8 +50,21 @@ func (s *Server) publish(kind, repo, branch string) {
 	s.bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
 }
 
+// New wires the REST endpoints and the embedded SPA. The Server behind the
+// handler is returned too (NewServer) for callers that need its internals;
+// most callers want just the handler.
 func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, oidc: opts.OIDC, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache()}
+	h, _ := NewServer(cfg, git, opts)
+	return h
+}
+
+func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handler, *Server) {
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), vault: auth.NewTokenVault()}
+	if cfg.Auth.Forge.Enabled() {
+		s.fleet = gitx.NewFleet(cfg)
+		s.fleet.Notify = func(kind, repo, branch string) { s.publish(kind, repo, branch) }
+		go s.vaultJanitor()
+	}
 	if opts.Dev && cfg.Auth.DevUser != nil {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
 		if err == nil {
@@ -99,6 +112,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	apiMux.HandleFunc("GET /api/repos/{repo}/merge", s.writableViewH(s.getMergePreview))
 	apiMux.HandleFunc("GET /api/repos/{repo}/forge/request", s.writableViewH(s.getForgeRequest))
 	apiMux.HandleFunc("POST /api/repos/{repo}/merge", s.writableH(s.postMerge))
+	apiMux.HandleFunc("POST /api/repos/{repo}/propose", s.writableH(s.postPropose))
 	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.createShare)
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
@@ -115,16 +129,16 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 	// credential; {name} is the cosmetic filename and is not checked
 	mux.HandleFunc("GET /share/{token}/{name}", s.shareDownload)
 	mux.HandleFunc("GET /auth/login", s.authLogin)
-	mux.HandleFunc("GET /auth/callback", s.authCallback)
 	mux.HandleFunc("GET /auth/providers", s.authProviders)
 	mux.HandleFunc("POST /auth/local/login", s.authLocalLogin)
+	mux.HandleFunc("POST /auth/pat/login", s.authPatLogin)
 	mux.HandleFunc("POST /auth/logout", s.authLogout)
 	var spa http.Handler = spaHandler(opts.Dist, opts.Dev)
 	if opts.Dev {
 		spa = devViteProxy(spa)
 	}
 	mux.Handle("/", spa)
-	return logMiddleware(csrfGuard(mux))
+	return logMiddleware(csrfGuard(mux)), s
 }
 
 // repoH resolves the {repo} path segment and gates on the effective per-repo

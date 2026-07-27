@@ -1,4 +1,4 @@
-// Package auth implements OIDC (code+PKCE), local argon2id users, and opaque
+// Package auth implements forge-PAT login, local argon2id users, and opaque
 // cookie sessions backed by the store.
 package auth
 
@@ -26,10 +26,12 @@ func NewSessions(st *store.Store, cfg *config.Config) *Sessions {
 	return &Sessions{Store: st, TTL: cfg.Session.TTL, Secure: cfg.Session.CookieSecure}
 }
 
-func (s *Sessions) Issue(w http.ResponseWriter, userID int64) error {
+// Issue creates a session, sets its cookie and returns the session id (the
+// vault key in forge-PAT mode).
+func (s *Sessions) Issue(w http.ResponseWriter, userID int64) (string, error) {
 	id, err := s.Store.CreateSession(userID, s.TTL)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// browser-session cookie (no MaxAge): the server enforces the idle
 	// timeout by sliding expires_at on each request — a fixed MaxAge would
@@ -38,7 +40,7 @@ func (s *Sessions) Issue(w http.ResponseWriter, userID int64) error {
 		Name: SessionCookie, Value: id, Path: "/",
 		HttpOnly: true, Secure: s.Secure, SameSite: http.SameSiteLaxMode,
 	})
-	return nil
+	return id, nil
 }
 
 func (s *Sessions) Clear(w http.ResponseWriter, r *http.Request) {

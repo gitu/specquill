@@ -11,9 +11,11 @@ package api
 import (
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
+	"specquill/server/internal/auth"
 	"specquill/server/internal/forge"
 	"specquill/server/internal/project"
 )
@@ -63,16 +65,16 @@ func (s *Server) getForgeRequest(w http.ResponseWriter, r *http.Request, repo *p
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	key := repo.Repo.Key() + "\x00" + branch
+	// keyed per user: with per-user tokens (forge-PAT mode) a shared entry
+	// would leak one user's MR view to another
+	u := auth.UserFrom(r.Context())
+	key := strconv.FormatInt(u.ID, 10) + "\x00" + repo.Repo.Key() + "\x00" + branch
 	if e, ok := s.forgeCache.get(key); ok {
-		writeForge(w, e)
+		writeForge(w, e, cfg.Kind)
 		return
 	}
 
-	var token string
-	if cfg.TokenEnv != "" {
-		token = os.Getenv(cfg.TokenEnv)
-	}
+	token := s.forgeToken(r, cfg)
 	client, err := forge.New(cfg, repo.Repo.Cfg.Remote, token)
 	if err != nil {
 		// misconfiguration (e.g. a local remote) — report it, do not cache
@@ -85,11 +87,25 @@ func (s *Server) getForgeRequest(w http.ResponseWriter, r *http.Request, repo *p
 		e.err = err.Error()
 	}
 	s.forgeCache.put(key, e)
-	writeForge(w, e)
+	writeForge(w, e, cfg.Kind)
 }
 
-func writeForge(w http.ResponseWriter, e forgeEntry) {
-	out := map[string]any{"enabled": true, "request": e.req}
+// forgeToken picks the forge API credential for this request: the caller's
+// own PAT in forge-PAT mode, the configured env token otherwise.
+func (s *Server) forgeToken(r *http.Request, cfg forge.Config) string {
+	if s.patMode() {
+		return auth.TokenFrom(r.Context())
+	}
+	if cfg.TokenEnv != "" {
+		return os.Getenv(cfg.TokenEnv)
+	}
+	return ""
+}
+
+// kind rides along so the client can name things the way the host does
+// (GitLab merge request !12, GitHub pull request #12).
+func writeForge(w http.ResponseWriter, e forgeEntry, kind string) {
+	out := map[string]any{"enabled": true, "kind": kind, "request": e.req}
 	if e.err != "" {
 		out["error"] = e.err
 	}

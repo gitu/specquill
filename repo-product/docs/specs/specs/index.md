@@ -16,6 +16,7 @@
 - [Document creation — guided flow and ID schemes](document-creation.md)
 - [Share links — unauthenticated OKF-bundle downloads](share-links.md)
 - [Authentication — providers, deployment roles](authentication.md)
+- [Forge-PAT auth — tokens, per-user clones, in-repo sources](forge-auth.md)
 - [Credentials — tenant-owned encrypted repo tokens (deprecated)](credentials.md)
 - [Webhooks — push-triggered repository sync (deprecated)](webhooks.md)
 - [Tenants — GitHub App installations, derived roles (deprecated)](tenants.md)

@@ -30,12 +30,15 @@ projects:
 
 # sources are the read-only reference catalog projects may reference and the
 # copilot may ground on. Credentials always come from token_env — never inline.
-sources:
-  # git: a read-only input repo, fetched and never written
-  - name: regulations
-    kind: git
-    remote: https://github.com/acme/regulations.git
-    sync_interval: 5m
+# LOCAL-AUTH DEPLOYMENTS ONLY: with auth.forge enabled, reference sources are
+# defined inside the workspace repo (.specquill/config.yml `sources:`) and
+# fetched with each user's own token — this block must then stay empty.
+# sources:
+#   # git: a read-only input repo, fetched and never written
+#   - name: regulations
+#     kind: git
+#     remote: https://github.com/acme/regulations.git
+#     sync_interval: 5m
 
   # importers mirror non-git sources into read-only repos (materialized locally,
   # refreshed on sync_interval or on demand via POST /api/sources/{name}/sync):
@@ -62,12 +65,27 @@ git:
   committer_email: specquill@example.com   # trailer; the user is author AND committer
 
 auth:
-  oidc:
-    enabled: true
-    issuer: https://login.example.com
-    client_id: specquill
-    client_secret_env: SPECQUILL_OIDC_SECRET
-    scopes: [openid, profile, email]
+  # Forge-PAT auth (recommended): users sign in with a personal access token
+  # from the deployment's git host. The token stays in the user's browser
+  # (and, per session, in server RAM) — the server stores no credentials at
+  # all. Identity, the deployment role (mapped from the user's permission on
+  # the main project) and every git fetch/push/MR call use that token, and
+  # each user gets fully independent server-side clones.
+  #
+  # In this mode reference sources are defined IN the workspace repo
+  # (.specquill/config.yml `sources:` + `references:`), the in-app merge is
+  # replaced by "Propose changes" (push + MR/PR on the forge), and the
+  # top-level sources: block above must be empty.
+  forge:
+    kind: gitlab                     # gitlab | github
+    base_url: https://gitlab.example.com   # self-hosted web base; omit for gitlab.com/github.com
+    # token_create_url: …            # override the login page's "create a token" link
+    # scopes: [api]                  # override the scopes it asks for (defaults: gitlab api / github repo)
+    # In-repo source remotes may only name the forge and project hosts —
+    # list extra hosts here to allow references beyond that perimeter
+    # (e.g. a public mirror). Tokens are still only ever sent to each
+    # repo's own remote host.
+    # allowed_source_hosts: [mirror.example.org]
   local:
     enabled: true                    # fallback login page; add users with `specquill user add`
 
