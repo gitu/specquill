@@ -6,9 +6,6 @@ authority: ESMA
 jurisdiction: EU
 status: active
 anchors: [rts-22-art-26]
-drives:
-  - requirements/REQ-042.md
-  - requirements/REQ-051.md
 amendments:
   - id: "2026-06"
     ref: RTS 22 §2

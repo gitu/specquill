@@ -125,6 +125,14 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });
 
+test('driving documents show computed backlinks instead of a drives list', async ({ page }) => {
+  await page.goto('/p/trading-specs/editor/regulations/gdpr.md');
+  // the drives row is computed from the requirements' drivers lists
+  await expect(page.getByText('· backlinks, computed from drivers')).toBeVisible();
+  await page.getByText('REQ-090', { exact: true }).first().click();
+  await expect(page).toHaveURL(/editor\/requirements\/REQ-090\.md/);
+});
+
 test('badge-typed schema fields (product repo) get the combobox too', async ({ page }) => {
   await page.goto('/p/specquill-docs/editor/requirements/REQ-001.md');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();

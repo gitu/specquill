@@ -12,7 +12,8 @@ import { assemble } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
-import { buildProps, defaultDoc } from '../lib/derive';
+import { buildProps, defaultDoc, driverBacklinks, srcMeta } from '../lib/derive';
+import type { DriverBacklink } from '../lib/derive';
 import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
@@ -29,6 +30,35 @@ import { ExcalidrawModal } from '../editors/ExcalidrawModal';
 import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconImage, IconLink, IconLock, IconMenu } from '../components/icons';
 
 
+
+// Computed backlinks row: requirements citing this document as a driver.
+// Read-only by design — the forward `drivers:` lists are the single source
+// of truth, so this can never drift (it replaced the manual `drives:` key).
+function BacklinksRow({ links, nav }: { links: DriverBacklink[]; nav: (p: string) => void }) {
+  return (
+    <div style={sx('display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--border)')}>
+      <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>drives</span>
+      <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
+        {links.map((l) => {
+          const m = srcMeta(l.type);
+          return (
+            <span
+              key={l.from}
+              onClick={() => nav('/editor/' + l.from)}
+              title={'open ' + l.from}
+              style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:6px;font-size:11.5px;cursor:pointer;background:var(--surface-2)')}
+            >
+              <span style={{ color: m.fg }}>{m.icon}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{l.id || l.from.split('/').pop()}</span>
+              <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{l.title}</span>
+            </span>
+          );
+        })}
+        <span style={sx('font-size:10px;color:var(--text-3)')}>· backlinks, computed from drivers</span>
+      </div>
+    </div>
+  );
+}
 
 // docPath keeps the document in the URL across the editor↔graph roundtrip:
 // the editor tab reopens THAT doc, the graph tab carries it as focus context.
@@ -256,6 +286,12 @@ export function EditorView() {
     [kind, fm, app.schema],
   );
 
+  // requirements citing this doc as a driver — shown as a computed row
+  const backlinks = useMemo(
+    () => (kind === 'md' && app.model ? driverBacklinks(app.model)[path] || [] : []),
+    [kind, app.model, path],
+  );
+
   const change = app.model?.changes.find((c) => c.status === 'triage');
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
@@ -477,7 +513,7 @@ export function EditorView() {
                 </button>
               )}
             </div>
-            {viewProps.length > 0 && (
+            {(viewProps.length > 0 || backlinks.length > 0) && (
               <div style={sx('margin:16px 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
                 <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
@@ -496,6 +532,7 @@ export function EditorView() {
                     </div>
                   </div>
                 ))}
+                {propsOpen && backlinks.length > 0 && <BacklinksRow links={backlinks} nav={nav} />}
               </div>
             )}
             {kind === 'excalidraw' && !readOnly ? (
@@ -551,6 +588,7 @@ export function EditorView() {
                   onOpenPath={openFmPath}
                 />
               )}
+              {propsOpen && backlinks.length > 0 && <BacklinksRow links={backlinks} nav={nav} />}
             </div>
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}

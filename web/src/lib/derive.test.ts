@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGraph, buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, focusGraph } from './derive';
+import { buildGraph, buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, driverBacklinks, focusGraph } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 
@@ -140,5 +140,16 @@ describe('focusGraph', () => {
 
   it('falls back to the full graph for docs no node points at', () => {
     expect(focusGraph(g, 'changes/nope.md')).toBe(g);
+  });
+});
+
+describe('driverBacklinks', () => {
+  it('maps driver refs back to the citing requirements, deduped per doc', () => {
+    const files = {
+      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md#x\n  - type: regulatory\n    ref: regulations/a.md#y\n  - type: product\n    ref: Ops prose driver\n---\n',
+    };
+    const b = driverBacklinks(buildModel(files));
+    expect(b['regulations/a.md']).toEqual([{ from: 'requirements/R1.md', type: 'regulatory', id: 'R1', title: 'One' }]);
+    expect(Object.keys(b)).toEqual(['regulations/a.md']); // prose refs backlink nowhere
   });
 });

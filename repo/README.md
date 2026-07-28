@@ -53,4 +53,4 @@ trading-specs/
 | Data-mapping table | `data-mappings/trade.md` |
 | Copilot "change detected" | `changes/2026-06-mifid-rts22.md` |
 | Diff / PR #128 | git diff of the above on `feature/mifid-update` |
-| Traceability graph / matrix | computed from `drives` / `implements` / `maps_to` / `verifies` links |
+| Traceability graph | computed from `drivers` / `implements` / `maps_to` / `verifies` links |

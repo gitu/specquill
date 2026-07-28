@@ -229,6 +229,30 @@ export function docAnchorOptions(body: string): RefTarget[] {
   return out;
 }
 
+// ---------------------------------------------------------------- backlinks
+
+export interface DriverBacklink { from: string; type: string; id: string; title: string }
+
+/**
+ * Reverse of the `drivers:` lists: for every document referenced as a driver
+ * (regulations, products, …), the requirements citing it. This replaces the
+ * manually maintained `drives:` frontmatter — backlinks are computed, so
+ * they can never drift from the forward links.
+ */
+export function driverBacklinks(model: WorkspaceModel): Record<string, DriverBacklink[]> {
+  const out: Record<string, DriverBacklink[]> = {};
+  model.requirements.forEach((r) => {
+    const seen = new Set<string>();
+    r.drivers.forEach((d) => {
+      const p = (d.ref || '').split('#')[0];
+      if (!/\.md$/.test(p) || seen.has(p)) return; // prose refs have no doc to backlink
+      seen.add(p);
+      (out[p] = out[p] || []).push({ from: r.path, type: d.type, id: r.id, title: r.title });
+    });
+  });
+  return out;
+}
+
 // ---------------------------------------------------------------- changes
 
 export interface ChangeItem extends Change {
