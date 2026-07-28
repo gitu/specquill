@@ -141,8 +141,10 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on 127.0.0.1:5643, pro
 ## Run (production-ish)
 
 ```sh
-cp specquill.example.yml specquill.yml     # point at your remotes + forge, data dir
-make build && ./server/specquill -config specquill.yml
+make build && ./server/specquill setup     # interactive wizard writes specquill.yml
+# (or: cp specquill.example.yml specquill.yml and edit — running the server
+#  without any config offers the wizard too)
+./server/specquill -config specquill.yml
 # forge-PAT mode needs no server-side credentials at all — users bring their own
 # tokens. Local-auth mode instead: export the token_env vars and add users with
 ./server/specquill -config specquill.yml user add flo 'Flo' flo@example.com
