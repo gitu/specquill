@@ -120,7 +120,7 @@ export function PropertiesForm({ fm, body, schema, files, onChange, onOpenPath }
  * option on focus and only narrows once the user actually types. Controlled:
  * the caller owns the text; commits fire on blur, Enter, or an option pick.
  */
-function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocus, ariaLabel, onCommit, onEscape }: {
+function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocus, ariaLabel, refFacets, onCommit, onEscape }: {
   text: string;
   onText: (t: string) => void;
   options: (string | RefTarget)[];
@@ -129,27 +129,56 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
   placeholder?: string;
   autoFocus?: boolean;
   ariaLabel: string;
+  refFacets?: boolean; // reference pickers get folder chips + an anchors-only toggle
   onCommit: (v: string, via: 'blur' | 'enter' | 'pick') => void;
   onEscape?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState(false);
   const [hi, setHi] = useState(-1);
+  const [folder, setFolder] = useState<string | null>(null);
+  const [anchorsOnly, setAnchorsOnly] = useState(false);
   const skipBlur = useRef(false);
   const norm: RefTarget[] = options.map((o) => (typeof o === 'string' ? { value: o } : o));
   // every whitespace-separated token must match somewhere in value or hint,
   // so "gdpr erasure" finds regulations/gdpr.md#art-17-erasure
   const toks = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = typed && toks.length
+  let shown = typed && toks.length
     ? norm.filter((o) => {
         const hay = (o.value + ' ' + (o.hint || '')).toLowerCase();
         return toks.every((t) => hay.includes(t));
       })
     : norm;
+  const folders = refFacets
+    ? [...new Set(norm.filter((o) => o.value.includes('/')).map((o) => o.value.split('/')[0]))].sort()
+    : [];
+  if (refFacets) {
+    if (folder) shown = shown.filter((o) => o.value.startsWith(folder + '/'));
+    if (anchorsOnly) shown = shown.filter((o) => o.value.includes('#'));
+  }
   const listId = 'fmlist-' + ariaLabel.replace(/\W+/g, '-');
 
   const settle = () => { skipBlur.current = true; setOpen(false); setHi(-1); setTyped(false); };
   const pick = (o: string) => { settle(); onText(o); onCommit(o, 'pick'); };
+
+  const chip = (label: string, active: boolean, onToggle: () => void) => (
+    <span
+      key={label}
+      role="button"
+      aria-pressed={active}
+      aria-label={'filter ' + label}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => { onToggle(); setHi(-1); }}
+      style={{
+        ...sx("flex:none;padding:2px 8px;border-radius:10px;font-family:'JetBrains Mono',monospace;font-size:10px;cursor:pointer;user-select:none"),
+        background: active ? 'var(--prod-bg)' : 'var(--surface-2)',
+        color: active ? 'var(--prod)' : 'var(--text-3)',
+        border: '1px solid ' + (active ? 'var(--prod-line)' : 'transparent'),
+      }}
+    >
+      {label}
+    </span>
+  );
 
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}>
@@ -163,7 +192,7 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
         placeholder={placeholder}
         autoFocus={autoFocus}
         onChange={(e) => { onText(e.target.value); setTyped(true); setOpen(true); setHi(-1); }}
-        onFocus={() => { setTyped(false); setOpen(true); }}
+        onFocus={() => { setTyped(false); setOpen(true); setFolder(null); setAnchorsOnly(false); }}
         onClick={() => setOpen(true)}
         onBlur={() => {
           if (skipBlur.current) { skipBlur.current = false; return; }
@@ -187,27 +216,39 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
         }}
         style={style}
       />
-      {open && shown.length > 0 && (
-        <div id={listId} role="listbox" style={sx('position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:150px;max-width:520px;max-height:240px;overflow:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow);padding:4px')}>
-          {shown.map((o, i) => (
-            <div
-              key={o.value}
-              role="option"
-              aria-selected={o.value === text}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(o.value)}
-              onMouseEnter={() => setHi(i)}
-              style={{
-                ...sx("display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11.5px;white-space:nowrap;cursor:pointer;color:var(--text)"),
-                background: i === hi ? 'var(--surface-2)' : 'transparent',
-                fontWeight: o.value === text ? 600 : 400,
-              }}
-            >
-              {colorOf && <span style={{ width: 8, height: 8, borderRadius: 4, flex: 'none', background: colorOf(o.value).fg }} />}
-              <span style={sx('flex:none')}>{o.value}</span>
-              {o.hint && <span style={sx('font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;max-width:240px')}>{o.hint}</span>}
+      {open && (shown.length > 0 || refFacets) && (
+        <div style={sx('position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:150px;max-width:520px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow);padding:4px')}>
+          {refFacets && (
+            <div style={sx('display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:3px 5px 6px;border-bottom:1px solid var(--border);margin-bottom:4px')}>
+              {chip('all', !folder, () => setFolder(null))}
+              {folders.map((f) => chip(f, folder === f, () => setFolder(folder === f ? null : f)))}
+              {chip('# anchors', anchorsOnly, () => setAnchorsOnly(!anchorsOnly))}
             </div>
-          ))}
+          )}
+          <div id={listId} role="listbox" style={sx('max-height:240px;overflow:auto')}>
+            {shown.map((o, i) => (
+              <div
+                key={o.value}
+                role="option"
+                aria-selected={o.value === text}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(o.value)}
+                onMouseEnter={() => setHi(i)}
+                style={{
+                  ...sx("display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11.5px;white-space:nowrap;cursor:pointer;color:var(--text)"),
+                  background: i === hi ? 'var(--surface-2)' : 'transparent',
+                  fontWeight: o.value === text ? 600 : 400,
+                }}
+              >
+                {colorOf && <span style={{ width: 8, height: 8, borderRadius: 4, flex: 'none', background: colorOf(o.value).fg }} />}
+                <span style={sx('flex:none')}>{o.value}</span>
+                {o.hint && <span style={sx('font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;max-width:240px')}>{o.hint}</span>}
+              </div>
+            ))}
+            {shown.length === 0 && (
+              <div style={sx("padding:4px 9px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>no matches</div>
+            )}
+          </div>
         </div>
       )}
     </span>
@@ -329,7 +370,7 @@ function Field({ fieldKey, type, enumValues, options, value, refTargets, anchorO
 
   if (Array.isArray(value)) {
     const listOptions = (fieldKey === 'anchors' || type === 'anchors') ? anchorOpts : type === 'links' ? refTargets : [];
-    return <ListField fieldKey={fieldKey} items={value.map(String)} options={listOptions} onSet={onSet} onOpenPath={onOpenPath} />;
+    return <ListField fieldKey={fieldKey} items={value.map(String)} options={listOptions} facets={type === 'links'} onSet={onSet} onOpenPath={onOpenPath} />;
   }
 
   const current = String(value ?? '');
@@ -496,6 +537,7 @@ function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, refTarget
             placeholder={def.type === 'date' ? 'YYYY-MM-DD ⏎' : 'value ⏎'}
             autoFocus
             ariaLabel={'value for ' + key}
+            refFacets={def.type === 'links'}
             colorOf={colorOf}
             style={colorOf
               ? { ...sx(INPUT), minWidth: 140, background: colorOf(val).bg, color: colorOf(val).fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20 }
@@ -580,6 +622,7 @@ function DriverRef({ current, options, onCommit }: {
       options={options}
       placeholder="doc path or free text"
       ariaLabel="driver ref"
+      refFacets
       style={{ ...sx(INPUT), height: 22, width: Math.max(180, text.length * 6.6), border: 'none', background: 'transparent', color: isLink(text) ? 'var(--prod)' : 'var(--text)' }}
       onCommit={(v) => { if (v !== current) onCommit(v); }}
       onEscape={() => setText(current)}
@@ -587,10 +630,11 @@ function DriverRef({ current, options, onCommit }: {
   );
 }
 
-function ListField({ fieldKey, items, options, onSet, onOpenPath }: {
+function ListField({ fieldKey, items, options, facets, onSet, onOpenPath }: {
   fieldKey: string;
   items: string[];
   options: RefTarget[];
+  facets?: boolean;
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
@@ -625,6 +669,7 @@ function ListField({ fieldKey, items, options, onSet, onOpenPath }: {
           options={addable}
           placeholder="+ add"
           ariaLabel={'add ' + fieldKey}
+          refFacets={facets}
           style={{ ...sx(INPUT), width: 160, borderStyle: 'dashed' }}
           onCommit={(v, via) => {
             if (via === 'blur') return;

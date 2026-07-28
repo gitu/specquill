@@ -90,10 +90,19 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('updated: 2026-07-28');
 
-  // the driver ref is a search-picker over workspace docs AND their anchors
+  // the driver ref is a search-picker over workspace docs AND their anchors,
+  // with folder facet chips and an anchors-only toggle
   const driverRef = page.getByRole('combobox', { name: 'driver ref' });
   await driverRef.click();
   await expect(page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ })).toBeVisible();
+  await page.getByRole('button', { name: 'filter products' }).click();
+  await expect(page.getByRole('option', { name: /products\/ops-t1-settlement-sla\.md/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: /regulations\/gdpr/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'filter regulations' }).click();
+  await page.getByRole('button', { name: 'filter # anchors' }).click();
+  const anchorOnly = await page.locator('[role=option]').allTextContents();
+  expect(anchorOnly.length).toBeGreaterThan(0);
+  for (const t of anchorOnly) expect(t).toContain('#');
   await page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ }).click();
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('ref: regulations/gdpr.md#art-17-erasure');
