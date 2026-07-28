@@ -120,3 +120,18 @@ func TestSetupRefusesSilentOverwrite(t *testing.T) {
 		t.Error("declining the overwrite must leave the file untouched")
 	}
 }
+
+func TestDefaultBaseURL(t *testing.T) {
+	cases := map[string]string{
+		":8080":        "http://localhost:8080",
+		"0.0.0.0:9000": "http://localhost:9000",
+		"[::]:9000":    "http://localhost:9000",
+		"10.1.2.3:80":  "http://10.1.2.3:80",
+		"garbage":      "http://localhost:8080",
+	}
+	for in, want := range cases {
+		if got := defaultBaseURL(in); got != want {
+			t.Errorf("defaultBaseURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

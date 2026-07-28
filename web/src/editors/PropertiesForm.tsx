@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { fmToJS, setFmValue } from '../lib/frontmatter';
 import { PAL, collectFieldValues, collectRefTargets, daysAgo, docAnchorOptions, parseTaxonomy } from '../lib/derive';
@@ -156,7 +156,9 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
     if (folder) shown = shown.filter((o) => o.value.startsWith(folder + '/'));
     if (anchorsOnly) shown = shown.filter((o) => o.value.includes('#'));
   }
-  const listId = 'fmlist-' + ariaLabel.replace(/\W+/g, '-');
+  // per-instance id: several rows can share an ariaLabel (every driver ref
+  // chip is "driver ref"), so deriving the id from it would duplicate DOM ids
+  const listId = useId();
 
   const settle = () => { skipBlur.current = true; setOpen(false); setHi(-1); setTyped(false); };
   const pick = (o: string) => { settle(); onText(o); onCommit(o, 'pick'); };

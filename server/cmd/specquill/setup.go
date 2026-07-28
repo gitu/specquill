@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -83,6 +84,20 @@ func yamlv(v string) string {
 	return strings.TrimSpace(string(b))
 }
 
+// defaultBaseURL derives the base-URL prompt default from the listen address:
+// ":8080" → http://localhost:8080; "0.0.0.0:8080" (bind-all) also becomes
+// localhost, a concrete host stays as-is.
+func defaultBaseURL(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		return "http://localhost:8080"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
 // projectIDFromRemote derives a default project id from the repo name:
 // https://host/acme/trading-specs.git → trading-specs.
 func projectIDFromRemote(remote string) string {
@@ -114,7 +129,7 @@ func runSetup(in io.Reader, out io.Writer, configPath string) error {
 
 	fmt.Fprintln(out, "\n== SpecQuill setup — server ==")
 	listen := p.ask("listen address", ":8080")
-	baseURL := p.ask("public base URL", "http://localhost"+listen)
+	baseURL := p.ask("public base URL", defaultBaseURL(listen))
 	dataDir := p.ask("data directory (clones, drafts, store)", "./data")
 
 	fmt.Fprintln(out, "\n== Workspace project ==")
