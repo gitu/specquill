@@ -31,14 +31,19 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 
 
 
-// Computed backlinks row: requirements citing this document as a driver.
-// Read-only by design — the forward `drivers:` lists are the single source
-// of truth, so this can never drift (it replaced the manual `drives:` key).
-function BacklinksRow({ links, nav }: { links: DriverBacklink[]; nav: (p: string) => void }) {
+// Computed backlinks panel: requirements citing this document as a driver.
+// Deliberately its OWN box, not a row in the Properties panel — these are
+// derived from the citing documents' `drivers:` lists and are never stored
+// in this document's frontmatter (they replaced the manual `drives:` key).
+function BacklinksPanel({ links, nav }: { links: DriverBacklink[]; nav: (p: string) => void }) {
   return (
-    <div style={sx('display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--border)')}>
-      <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>drives</span>
-      <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
+    <div style={sx('margin:0 0 30px;border:1px dashed var(--border-2);border-radius:10px')}>
+      <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px dashed var(--border)')}>
+        <span style={sx('color:var(--text-3);font-size:12px')}>↳</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Drives</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· backlinks, computed from drivers — not stored in this document</span>
+      </div>
+      <div style={sx('display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px')}>
         {links.map((l) => {
           const m = srcMeta(l.type);
           return (
@@ -54,7 +59,6 @@ function BacklinksRow({ links, nav }: { links: DriverBacklink[]; nav: (p: string
             </span>
           );
         })}
-        <span style={sx('font-size:10px;color:var(--text-3)')}>· backlinks, computed from drivers</span>
       </div>
     </div>
   );
@@ -513,7 +517,7 @@ export function EditorView() {
                 </button>
               )}
             </div>
-            {(viewProps.length > 0 || backlinks.length > 0) && (
+            {viewProps.length > 0 && (
               <div style={sx('margin:16px 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
                 <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
@@ -532,9 +536,9 @@ export function EditorView() {
                     </div>
                   </div>
                 ))}
-                {propsOpen && backlinks.length > 0 && <BacklinksRow links={backlinks} nav={nav} />}
               </div>
             )}
+            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
             {kind === 'excalidraw' && !readOnly ? (
               <div
                 onClick={() => void ensureWritableBranch().then(() => setExcalidrawPath(path))}
@@ -588,8 +592,8 @@ export function EditorView() {
                   onOpenPath={openFmPath}
                 />
               )}
-              {propsOpen && backlinks.length > 0 && <BacklinksRow links={backlinks} nav={nav} />}
             </div>
+            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
               body={body}

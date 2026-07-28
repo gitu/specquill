@@ -127,8 +127,8 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
 
 test('driving documents show computed backlinks instead of a drives list', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/regulations/gdpr.md');
-  // the drives row is computed from the requirements' drivers lists
-  await expect(page.getByText('· backlinks, computed from drivers')).toBeVisible();
+  // the drives panel sits outside the Properties box and is marked computed
+  await expect(page.getByText('· backlinks, computed from drivers — not stored in this document')).toBeVisible();
   await page.getByText('REQ-090', { exact: true }).first().click();
   await expect(page).toHaveURL(/editor\/requirements\/REQ-090\.md/);
 });
