@@ -523,8 +523,9 @@ export function EditorView() {
         {effMode === 'edit' && ready && editable && (
           <div style={sx('max-width:820px;margin:0 auto')}>
             {/* no-frontmatter docs still get the box: the add-property row can create the block */}
-            <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
-              <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
+            {/* no overflow:hidden here — the combobox popups must escape the box */}
+            <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;background:var(--surface)')}>
+              <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none;border-radius:' + (propsOpen ? '9px 9px 0 0' : '9px'))}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
                   <path d="M9 6l6 6-6 6" />
                 </svg>
