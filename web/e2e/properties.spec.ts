@@ -6,7 +6,9 @@ import { APIRequestContext, expect, test } from '@playwright/test';
 
 const REPO = 'trading-specs';
 const H = { 'X-SpecQuill': '1' };
-const DOC = `scratch-props-${Date.now().toString(36)}.md`;
+// nested on purpose: frontmatter refs are workspace-root-relative, and only
+// a doc inside a folder catches an opener that resolves against the doc dir
+const DOC = `requirements/scratch-props-${Date.now().toString(36)}.md`;
 const BODY = '---\ntitle: Props scratch\nstatus: draft\nupdated: 2026-05-30\nanchors: [props-a]\ndrivers:\n  - type: regulatory\n    ref: regulations/mifid-ii.md#rts-22-art-26\n---\n# Props scratch\n\n## Props anchor {#props-a}\n\n## Retention Rules\n\nbody\n';
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
@@ -104,6 +106,12 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await page.getByRole('option', { name: /retention-rules/ }).click();
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('retention-rules');
+
+  // opening a frontmatter ref must NOT resolve against the doc's folder
+  // (this doc lives in requirements/ — a relative resolve would 404 on
+  // requirements/regulations/gdpr.md)
+  await page.getByTitle('open regulations/gdpr.md').click();
+  await expect(page).toHaveURL(/\/editor\/regulations\/gdpr\.md$/);
 
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

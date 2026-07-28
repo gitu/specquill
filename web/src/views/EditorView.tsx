@@ -126,6 +126,13 @@ export function EditorView() {
     nav('/editor/' + resolveDocHref(dir, rel));
   }, [nav, path]);
 
+  // frontmatter refs are workspace-root-relative by convention (unlike body
+  // links, which resolve against the document's folder) — resolving them via
+  // openPath would prepend the current dir ("regulations/requirements/…")
+  const openFmPath = useCallback((p: string) => {
+    nav('/editor/' + (p.startsWith('~') ? p : p.replace(/^\/+/, '')));
+  }, [nav]);
+
   const onBodyChange = useCallback((md: string) => {
     const curFm = stripFrontmatter(rawRef.current).fm;
     const nl = md.endsWith('\n') ? md : md + '\n';
@@ -539,7 +546,7 @@ export function EditorView() {
                   schema={app.schema}
                   files={app.files}
                   onChange={onFmChange}
-                  onOpenPath={openPath}
+                  onOpenPath={openFmPath}
                 />
               )}
             </div>
