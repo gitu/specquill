@@ -11,7 +11,7 @@
     "id", "type", "authority", "jurisdiction",
     "status", "priority", "business_value", "coverage",
     "owner", "value_statement",
-    "drivers", "implements", "maps_to", "verifies", "drives", "diagrams",
+    "drivers", "implements", "maps_to", "verifies", "diagrams",
     "anchors", "source_system", "target_model", "updated"
   ],
   "fields": {
@@ -29,7 +29,6 @@
     "implements": { "label": "Implements", "type": "links" },
     "maps_to": { "label": "Maps to", "type": "links" },
     "verifies": { "label": "Verified by", "type": "code" },
-    "drives": { "label": "Drives", "type": "links" },
     "diagrams": { "label": "Diagrams", "type": "links" },
     "anchors": { "label": "Anchors", "type": "code" },
     "source_system": { "label": "Source system", "type": "tag" },

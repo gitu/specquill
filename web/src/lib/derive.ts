@@ -99,7 +99,7 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
 // ---------------------------------------------------------------- properties
 
 export interface PropItem { text: string; style: string; openPath?: string }
-export interface PropRow { key: string; items: PropItem[] }
+export interface PropRow { key: string; rawKey: string; items: PropItem[] }
 
 // schema.json `values` colors — the second row aliases the css-var names some
 // workspaces use (e.g. the specquill product repo) onto the same palette
@@ -150,7 +150,7 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
     } else {
       items = e.items.map((it) => (type === 'code' || type === 'anchors') ? { text: it, style: chip('var(--surface-2)', 'var(--text-2)', true) } : linkItem(it));
     }
-    return { key: label, items };
+    return { key: label, rawKey: key, items };
   });
 }
 
@@ -173,6 +173,108 @@ export function collectFieldValues(files: Record<string, string>): Record<string
   }
   const out: Record<string, string[]> = {};
   for (const k of Object.keys(sets).sort()) out[k] = [...sets[k]].sort();
+  return out;
+}
+
+// ---------------------------------------------------------------- ref targets
+
+export interface RefTarget { value: string; hint?: string }
+
+/**
+ * Link targets for the properties-form pickers (drivers, implements, maps_to,
+ * diagrams, …): every non-reserved workspace file, plus `path#anchor` for
+ * anchors a document declares (frontmatter `anchors:`) or carries as explicit
+ * `{#id}` heading attributes, plus `path#field` for data-mapping fields.
+ * Hints carry titles / field names so search can match on them too.
+ */
+export function collectRefTargets(files: Record<string, string>, fields: DataField[] = []): RefTarget[] {
+  const out: RefTarget[] = [];
+  const seen = new Set<string>();
+  const add = (value: string, hint?: string) => {
+    if (!seen.has(value)) { seen.add(value); out.push({ value, hint }); }
+  };
+  for (const p of Object.keys(files).sort()) {
+    if (p.split('/')[0].startsWith('.')) continue;
+    if (!p.endsWith('.md')) { add(p); continue; }
+    if (isReservedMd(p)) continue;
+    const { fm, body } = stripFrontmatter(files[p]);
+    const title = ((fm || '').match(/^title:\s*["']?(.*?)["']?\s*$/m) || [])[1] || '';
+    add(p, title);
+    for (const e of parseProps(fm || '')) {
+      if (e.key !== 'anchors') continue;
+      (e.type === 'list' ? e.items : [e.value]).forEach((a) => a && add(p + '#' + a, title));
+    }
+    for (const m of body.matchAll(/^#{1,6}\s[^\n]*\{#([A-Za-z0-9_-]+)\}/gm)) add(p + '#' + m[1], title);
+  }
+  fields.forEach((f) => add(f.map + '#' + f.name.split('.').pop(), f.name));
+  return out;
+}
+
+/**
+ * Anchor-id options for editing a document's OWN `anchors:` list, derived
+ * from its headings: explicit `{#id}` attributes verbatim, plain headings as
+ * slugs (the hint flags that the heading still lacks the `{#id}` attribute).
+ */
+export function docAnchorOptions(body: string): RefTarget[] {
+  const out: RefTarget[] = [];
+  const seen = new Set<string>();
+  for (const m of body.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)) {
+    const em = m[1].match(/\{#([A-Za-z0-9_-]+)\}\s*$/);
+    const label = m[1].replace(/\s*\{#[A-Za-z0-9_-]+\}\s*$/, '');
+    const id = em ? em[1] : label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ value: id, hint: em ? label : label + ' — no {#id} on the heading yet' });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- backlinks
+
+export interface DocBacklink { from: string; kind: string; type?: string; id: string; title: string }
+
+const BACKLINK_KIND_RANK: Record<string, number> = { driver: 0, implements: 1, 'maps to': 2, verifies: 3, 'in text': 9 };
+
+/**
+ * Every inbound link to a document: driver citations, the other typed
+ * frontmatter lists (implements, maps_to, verifies), and untyped body-text
+ * references. Computed — never stored in the target document (this replaced
+ * the manual `drives:` frontmatter, so backlinks can never drift from the
+ * forward links). A text mention is suppressed when the same source document
+ * already links the target through a typed relation.
+ */
+export function collectBacklinks(model: WorkspaceModel): Record<string, DocBacklink[]> {
+  const meta: Record<string, { id: string; title: string }> = {};
+  [...model.regs, ...model.requirements, ...model.specs, ...model.changes].forEach((d) => { meta[d.path] = { id: d.id, title: d.title }; });
+  model.maps.forEach((m) => { meta[m.path] = { id: m.name.replace(/\.md$/, ''), title: '' }; });
+  const out: Record<string, DocBacklink[]> = {};
+  const seen = new Set<string>();
+  const pairSeen = new Set<string>();
+  const add = (to: string, from: string, kind: string, type?: string, weak = false) => {
+    const p = (to || '').split('#')[0];
+    if (!/\.md$/.test(p) || p === from) return; // prose refs / self-links have no backlink
+    const pair = p + '|' + from;
+    if (weak && pairSeen.has(pair)) return;
+    const key = pair + '|' + kind;
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairSeen.add(pair);
+    const m = meta[from] || { id: '', title: '' };
+    (out[p] = out[p] || []).push({ from, kind, type, id: m.id || from.split('/').pop()!, title: m.title });
+  };
+  model.requirements.forEach((r) => {
+    r.drivers.forEach((d) => add(d.ref, r.path, 'driver', d.type));
+    r.implements.forEach((t) => add(t, r.path, 'implements'));
+    r.maps_to.forEach((t) => add(t, r.path, 'maps to'));
+    r.verifies.forEach((t) => add(t, r.path, 'verifies'));
+  });
+  model.specs.forEach((s) => {
+    s.implements.forEach((t) => add(t, s.path, 'implements'));
+    s.maps_to.forEach((t) => add(t, s.path, 'maps to'));
+  });
+  (model.references || []).forEach((ref) => { if (!ref.external) add(ref.to, ref.from, 'in text', undefined, true); });
+  Object.values(out).forEach((links) =>
+    links.sort((a, b) => (BACKLINK_KIND_RANK[a.kind] ?? 5) - (BACKLINK_KIND_RANK[b.kind] ?? 5) || a.from.localeCompare(b.from)));
   return out;
 }
 
@@ -349,44 +451,41 @@ export function buildGraph(model: WorkspaceModel) {
   return { nodes, edges, H, stats: { s: sources.length, r: reqs.length, sp: specs.length, f: fields.length } };
 }
 
-// ---------------------------------------------------------------- matrix
-
-export function buildMatrix(model: WorkspaceModel) {
-  const specs = model.specs, fields = model.fields, reqs = model.requirements;
-  const CW = 26;
-  const columns: { kind: string; ref: string; label: string; drift?: boolean }[] = [];
-  specs.forEach((s) => columns.push({ kind: 'spec', ref: s.path, label: s.name.replace('.md', '') }));
-  fields.forEach((f) => columns.push({ kind: 'field', ref: f.name, label: f.name.split('.').pop()!, drift: f.drift }));
-  columns.push({ kind: 'test', ref: 'tests', label: 'tests' });
-  const mgroups = [
-    { label: 'Specs', color: 'var(--text-2)', width: specs.length * CW },
-    { label: 'Data fields', color: 'var(--data)', width: fields.length * CW },
-    { label: 'Tests', color: 'var(--prod)', width: CW },
-  ];
-  const sqBase = 'width:15px;height:15px;border-radius:4px;box-sizing:border-box;';
-  const sq = (t: string) =>
-    t === 'linked' ? sqBase + 'background:var(--data);border:1px solid var(--data)'
-    : t === 'drift' ? sqBase + 'background:var(--reg);border:1px solid var(--reg)'
-    : 'width:5px;height:5px;border-radius:50%;background:var(--border-2)';
-  const fieldNameFromRef = (ref: string) => {
-    const a = ref.split('#')[1] || '';
-    const f = fields.find((x) => x.name === a || x.name.endsWith('.' + a));
-    return f ? f.name : null;
-  };
-  const mrows = reqs.map((r) => {
-    const mappedFields = new Set(r.maps_to.map(fieldNameFromRef).filter(Boolean));
-    const cells = columns.map((c) => {
-      let t = 'none';
-      if (c.kind === 'spec') t = r.implements.indexOf(c.ref) >= 0 ? 'linked' : 'none';
-      else if (c.kind === 'field') t = mappedFields.has(c.ref) ? (c.drift ? 'drift' : 'linked') : 'none';
-      else if (c.kind === 'test') t = r.verifies.length ? 'linked' : 'none';
-      return { sq: sq(t) };
-    });
-    const cov = Math.round((r.coverage || 0) * 100);
-    const covC = cov > 80 ? 'var(--data)' : cov > 64 ? 'var(--prod)' : 'var(--reg)';
-    return { id: r.id, name: r.title, cells, cov, covStyle: 'width:' + cov + '%;height:100%;background:' + covC };
+/**
+ * The sub-graph connected to one document: seeds are every node the doc
+ * backs (its own node, source nodes for refs into it, its data fields), and
+ * the whole chain is followed up AND down through every edge kind (drivers,
+ * implements, maps_to, body references). Kept columns are re-spread so a
+ * small focus set doesn't float sparsely in the full graph's layout.
+ * Unknown docs (nothing in the graph points at them) fall back to the full
+ * graph rather than an empty canvas.
+ */
+export function focusGraph(g: ReturnType<typeof buildGraph>, docPath: string): ReturnType<typeof buildGraph> {
+  const keep = new Set(g.nodes.filter((n) => (n.go || '').split('#')[0] === docPath).map((n) => n.id));
+  if (!keep.size) return g;
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const e of g.edges) {
+      const a = keep.has(e.a), b = keep.has(e.b);
+      if (a !== b) { keep.add(e.a); keep.add(e.b); grew = true; }
+    }
+  }
+  const nodes = g.nodes.filter((n) => keep.has(n.id)).map((n) => ({ ...n }));
+  const byCol: Record<number, GraphNode[]> = {};
+  nodes.forEach((n) => (byCol[n.col] = byCol[n.col] || []).push(n));
+  Object.values(byCol).forEach((col) => {
+    col.sort((p, q) => p.y - q.y);
+    const gap = g.H / (col.length + 1);
+    col.forEach((n, i) => { n.y = Math.round(gap * (i + 1)); });
   });
-  return { mgroups, mcolumns: columns, mrows, caption: `${reqs.length} requirements × ${columns.length} artifacts` };
+  const count = (k: string) => nodes.filter((n) => n.kind === k).length;
+  return {
+    ...g,
+    nodes,
+    edges: g.edges.filter((e) => keep.has(e.a) && keep.has(e.b)),
+    stats: { s: count('src'), r: count('req'), sp: count('spec'), f: count('field') },
+  };
 }
 
 // ---------------------------------------------------------------- source view

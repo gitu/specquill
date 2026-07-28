@@ -11,7 +11,7 @@ export interface PropertySchema {
   fields?: Record<string, { label?: string; type?: string; values?: Record<string, string> }>;
 }
 
-export const VIEWS = ['dashboard', 'editor', 'changes', 'graph', 'matrix', 'model'] as const;
+export const VIEWS = ['dashboard', 'editor', 'changes', 'graph', 'model'] as const;
 export type ViewName = (typeof VIEWS)[number];
 
 /** every project-scoped view root a /p/<project> URL may continue with */

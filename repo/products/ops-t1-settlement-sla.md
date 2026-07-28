@@ -5,8 +5,6 @@ type: product_driver
 status: active
 owner: k.osei
 sponsor: Operations
-drives:
-  - requirements/REQ-042.md
 updated: 2026-04-02
 ---
 

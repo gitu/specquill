@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildProps, buildTree, collectFieldValues, defaultDoc } from './derive';
+import { buildGraph, buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, collectBacklinks, focusGraph } from './derive';
+import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 
 describe('buildTree', () => {
@@ -73,5 +74,95 @@ describe('buildProps', () => {
   it('leaves plain text fields unstyled', () => {
     const [row] = buildProps('owner: flo', { order: [], fields: { owner: { label: 'Owner' } } });
     expect(row.items[0].style).not.toContain('border-radius:20px');
+  });
+});
+
+describe('collectRefTargets', () => {
+  const files = {
+    'regulations/mifid-ii.md': '---\ntitle: "MiFID II"\nanchors: [rts-22-art-26]\n---\n## RTS 22 {#rts-22-art-26}\n\n## Art 9 {#art-9}\n',
+    'diagrams/flow.mermaid': 'graph TD;',
+    'requirements/index.md': '# generated\n',
+    '.specquill/schema.json': '{}',
+  };
+  const field = { name: 'trade.venue', source: 'oms.venue_mic', transform: '', status: 'ok', drift: false, map: 'data-mappings/trade.md' };
+
+  it('offers paths, declared + heading anchors, non-md files, and data fields', () => {
+    const vals = collectRefTargets(files, [field]).map((t) => t.value);
+    expect(vals).toContain('regulations/mifid-ii.md');
+    expect(vals).toContain('regulations/mifid-ii.md#rts-22-art-26');
+    expect(vals).toContain('regulations/mifid-ii.md#art-9');
+    expect(vals).toContain('diagrams/flow.mermaid');
+    expect(vals).toContain('data-mappings/trade.md#venue');
+    expect(vals).not.toContain('requirements/index.md');
+    expect(vals.some((v) => v.startsWith('.specquill'))).toBe(false);
+  });
+
+  it('dedupes anchors both declared and carried by a heading, and hints titles', () => {
+    const targets = collectRefTargets(files);
+    expect(targets.filter((t) => t.value === 'regulations/mifid-ii.md#rts-22-art-26')).toHaveLength(1);
+    expect(targets.find((t) => t.value === 'regulations/mifid-ii.md')!.hint).toBe('MiFID II');
+    expect(targets.find((t) => t.value === 'regulations/mifid-ii.md#art-9')!.hint).toBe('MiFID II');
+  });
+});
+
+describe('docAnchorOptions', () => {
+  it('uses explicit {#id} attributes verbatim and slugs plain headings', () => {
+    const opts = docAnchorOptions('# Doc Title\n\n## Reporting window {#reporting-window}\n\n## Data Quality Rules\n');
+    expect(opts.map((o) => o.value)).toEqual(['doc-title', 'reporting-window', 'data-quality-rules']);
+    expect(opts[1].hint).toBe('Reporting window');
+    expect(opts[2].hint).toContain('no {#id}');
+  });
+
+  it('dedupes repeated ids', () => {
+    expect(docAnchorOptions('## A {#x}\n## B {#x}\n')).toHaveLength(1);
+  });
+});
+
+describe('focusGraph', () => {
+  const files = {
+    'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md#x\nimplements:\n  - specs/s1.md\n---\n',
+    'specs/s1.md': '---\nid: S1\ntitle: Spec One\n---\n',
+    'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\ndrivers:\n  - type: product\n    ref: products/p.md\n---\n',
+  };
+  const g = buildGraph(buildModel(files));
+
+  it('keeps only the chain connected to the doc, up and down', () => {
+    const f = focusGraph(g, 'requirements/R1.md');
+    const ids = f.nodes.map((n) => n.id);
+    expect(ids).toContain('req:requirements/R1.md');
+    expect(ids).toContain('spec:specs/s1.md');
+    expect(ids).toContain('src:regulatory|regulations/a.md#x');
+    expect(ids).not.toContain('req:requirements/R2.md');
+    expect(f.stats).toEqual({ s: 1, r: 1, sp: 1, f: 0 });
+    expect(f.edges).toHaveLength(2);
+  });
+
+  it('falls back to the full graph for docs no node points at', () => {
+    expect(focusGraph(g, 'changes/nope.md')).toBe(g);
+  });
+});
+
+describe('collectBacklinks', () => {
+  it('maps driver refs back to the citing requirements, deduped per doc', () => {
+    const files = {
+      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md#x\n  - type: regulatory\n    ref: regulations/a.md#y\n  - type: product\n    ref: Ops prose driver\n---\n',
+    };
+    const b = collectBacklinks(buildModel(files));
+    expect(b['regulations/a.md']).toEqual([{ from: 'requirements/R1.md', kind: 'driver', type: 'regulatory', id: 'R1', title: 'One' }]);
+    expect(Object.keys(b)).toEqual(['regulations/a.md']); // prose refs backlink nowhere
+  });
+
+  it('includes typed relations and body-text mentions, typed suppressing the mention', () => {
+    const files = {
+      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\nimplements:\n  - specs/s1.md\n---\nSee [the spec](../specs/s1.md) and [the reg](../regulations/a.md).\n',
+      'specs/s1.md': '---\nid: S1\ntitle: Spec One\n---\n',
+      'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    };
+    const b = collectBacklinks(buildModel(files));
+    // typed implements wins over the in-text mention of the same pair
+    expect(b['specs/s1.md']).toEqual([{ from: 'requirements/R1.md', kind: 'implements', type: undefined, id: 'R1', title: 'One' }]);
+    // a pure text mention still backlinks
+    expect(b['regulations/a.md']).toEqual([{ from: 'requirements/R1.md', kind: 'in text', type: undefined, id: 'R1', title: 'One' }]);
   });
 });

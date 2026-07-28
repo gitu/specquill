@@ -30,7 +30,9 @@ export function setFmValue(fm: string, key: string, value: unknown): string {
   } else {
     doc.set(key, value);
   }
-  return doc.toString({ lineWidth: 0 }).replace(/\n$/, '');
+  // no flow padding: the workspace convention is `[a, b]`, and padding would
+  // reformat untouched inline lists on every unrelated edit
+  return doc.toString({ lineWidth: 0, flowCollectionPadding: false }).replace(/\n$/, '');
 }
 
 /**

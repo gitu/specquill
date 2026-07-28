@@ -4,7 +4,7 @@
 [OKF bundle](repo-product/docs/specs/specs/okf.md).** A git-native requirements-engineering tool:
 requirements, specs, regulations, data mappings and change records live as
 plain markdown in git; SpecQuill is the editing and review surface on top —
-traceability graph & matrix, change inbox, rich editors, and an in-app
+traceability graph, change inbox, rich editors, and an in-app
 branch-based merge flow, every commit authored by the logged-in user.
 
 The artifact SpecQuill produces is deliberately **not proprietary**: a
@@ -45,7 +45,7 @@ repo/             demo "trading-specs" workspace (fixture source)
 Key properties:
 
 - **The server never parses frontmatter** — it serves files + git operations; the model
-  (graph, matrix, dashboards) is computed in the browser from a `/snapshot` of the branch.
+  (graph, dashboards) is computed in the browser from a `/snapshot` of the branch.
 - **Protected main, personal workspaces.** The default branch is never edited directly:
   the first edit transparently creates/switches to the user's `ws/<user>` branch
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected
@@ -141,8 +141,10 @@ Frontend dev loop with HMR: `cd web && npm run dev` (Vite on 127.0.0.1:5643, pro
 ## Run (production-ish)
 
 ```sh
-cp specquill.example.yml specquill.yml     # point at your remotes + forge, data dir
-make build && ./server/specquill -config specquill.yml
+make build && ./server/specquill setup     # interactive wizard writes specquill.yml
+# (or: cp specquill.example.yml specquill.yml and edit — running the server
+#  without any config offers the wizard too)
+./server/specquill -config specquill.yml
 # forge-PAT mode needs no server-side credentials at all — users bring their own
 # tokens. Local-auth mode instead: export the token_env vars and add users with
 ./server/specquill -config specquill.yml user add flo 'Flo' flo@example.com

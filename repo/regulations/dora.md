@@ -6,8 +6,6 @@ authority: ESAs
 jurisdiction: EU
 status: active
 anchors: [art-19-incident-reporting]
-drives:
-  - requirements/REQ-095.md
 updated: 2026-01-17
 ---
 

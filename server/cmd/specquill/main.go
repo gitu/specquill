@@ -3,7 +3,8 @@
 //
 // Usage:
 //
-//	specquill [-config specquill.yml] [-dev]              serve
+//	specquill [-config specquill.yml] [-dev]              serve (offers setup when no config exists)
+//	specquill [-config specquill.yml] setup               interactive configuration wizard
 //	specquill [-config specquill.yml] user add <username> <name> <email>
 //	specquill init <dir> [-types requirements,specs,…] [-name project]
 //	specquill add <type> [name] [-dir <workspace>]        new document
@@ -44,6 +45,8 @@ func main() {
 	var err error
 	args := flag.Args()
 	switch {
+	case len(args) > 0 && args[0] == "setup":
+		err = setupCmd(*configPath, args[1:])
 	case len(args) > 0 && args[0] == "user":
 		err = userCmd(*configPath, args[1:])
 	case len(args) > 0 && args[0] == "init":
@@ -78,7 +81,21 @@ func serve(configPath string, dev bool) error {
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return err
+		// first run: no config yet — onboard interactively when we have a
+		// terminal, otherwise point at the wizard and the example file
+		if os.IsNotExist(err) {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("no config found at %s — run `specquill setup` (interactive) or copy specquill.example.yml", configPath)
+			}
+			fmt.Fprintf(os.Stderr, "no config found at %s — starting interactive setup\n", configPath)
+			if err := runSetup(os.Stdin, os.Stderr, configPath); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+		if cfg, err = config.Load(configPath); err != nil {
+			return err
+		}
 	}
 	st, err := openStore(cfg)
 	if err != nil {

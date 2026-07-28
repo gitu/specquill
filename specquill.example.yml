@@ -1,4 +1,5 @@
-# specquill server configuration (copy to specquill.yml and adjust)
+# specquill server configuration (copy to specquill.yml and adjust — or run
+# `specquill setup` to generate one interactively)
 
 listen: ":8080"
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
@@ -88,6 +89,16 @@ auth:
     # allowed_source_hosts: [mirror.example.org]
   local:
     enabled: true                    # fallback login page; add users with `specquill user add`
+
+  # Users whose email matches (case-insensitive, any provider) get the admin
+  # role on login. Without this a fresh deployment has no admin and the
+  # management API/UI is unreachable.
+  admin_emails: [ops@example.com]
+
+  # Role every authenticated user is auto-enrolled with:
+  # editor (default, self-host semantics) | viewer | maintainer | admin | none
+  # (none = users only reach repos explicitly granted to them)
+  # default_role: editor
 
 session:
   ttl: 10m

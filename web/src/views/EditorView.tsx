@@ -12,7 +12,9 @@ import { assemble } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
-import { buildProps, defaultDoc } from '../lib/derive';
+import { buildProps, collectBacklinks, defaultDoc, srcMeta } from '../lib/derive';
+import type { DocBacklink } from '../lib/derive';
+import type { EntityDef } from '../lib/entities';
 import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
@@ -30,18 +32,112 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 
 
 
-export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (p: string) => void, dirty?: boolean) {
+// Read-mode chip for a doc-linking frontmatter item (implements, maps_to,
+// diagrams, …): the target family's entity icon in its color, colored left
+// edge, doc name in mono, anchor muted — same language as the driver and
+// backlinks chips.
+function RefChipView({ text, path, docTitle, entities, nav }: {
+  text: string;
+  path: string;
+  docTitle?: string;
+  entities: EntityDef[];
+  nav: (p: string) => void;
+}) {
+  const folder = path.split('/')[0];
+  const meta = entities.find((e) => e.folder.replace(/\/$/, '') === folder);
+  const icon = meta?.icon || '▢';
+  const color = meta?.color || 'var(--text-2)';
+  const anchor = text.includes('#') ? text.split('#')[1] : '';
+  return (
+    <span
+      onClick={() => nav('/editor/' + path)}
+      title={'open ' + path}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + color + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;cursor:pointer')}
+    >
+      <span style={{ color }}>{icon}</span>
+      <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{path.split('/').pop()!.replace(/\.(md|excalidraw|mermaid)$/, '')}</span>
+      {anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+      {docTitle && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{docTitle}</span>}
+    </span>
+  );
+}
+
+// Read-mode driver chip, styled like the backlinks chips: type icon in its
+// color, colored left edge, doc name in mono, anchor muted. parseProps folds
+// each drivers entry to "type · ref"; prose refs render unlinked.
+function DriverChipView({ raw, titles, nav }: { raw: string; titles: Record<string, string>; nav: (p: string) => void }) {
+  const [type, ...rest] = raw.split(' · ');
+  const ref = rest.join(' · ');
+  const m = srcMeta(type);
+  const pm = ref.match(/([\w-]+\/[\w.\/-]+\.md)/);
+  const anchor = ref.includes('#') ? ref.split('#')[1] : '';
+  const docTitle = pm ? titles[pm[1]] : undefined;
+  return (
+    <span
+      onClick={pm ? () => nav('/editor/' + pm[1]) : undefined}
+      title={pm ? 'open ' + pm[1] : undefined}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + m.fg + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;' + (pm ? 'cursor:pointer' : ''))}
+    >
+      <span style={{ color: m.fg }}>{m.icon}</span>
+      {pm
+        ? <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{pm[1].split('/').pop()!.replace(/\.md$/, '')}</span>
+        : <span style={sx('color:var(--text-2)')}>{ref}</span>}
+      {pm && anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+      {docTitle && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{docTitle}</span>}
+    </span>
+  );
+}
+
+// Computed backlinks panel: every inbound link to this document — driver
+// citations, the other typed frontmatter relations, and body-text mentions.
+// Deliberately its OWN box, not a row in the Properties panel — these are
+// derived from the citing documents and are never stored in this one
+// (they replaced the manual `drives:` key).
+function BacklinksPanel({ links, nav }: { links: DocBacklink[]; nav: (p: string) => void }) {
+  return (
+    <div style={sx('margin:0 0 30px;border:1px dashed var(--border-2);border-radius:10px')}>
+      <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px dashed var(--border)')}>
+        <span style={sx('color:var(--text-3);font-size:12px')}>↳</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Backlinks</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· computed from links to this document — not stored in it</span>
+      </div>
+      <div style={sx('display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px')}>
+        {links.map((l) => {
+          const m = l.kind === 'driver' ? srcMeta(l.type || '') : null;
+          return (
+            <span
+              key={l.from + '|' + l.kind}
+              onClick={() => nav('/editor/' + l.from)}
+              title={'open ' + l.from}
+              style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:6px;font-size:11.5px;cursor:pointer;background:var(--surface-2)')}
+            >
+              {m
+                ? <span style={{ color: m.fg }}>{m.icon}</span>
+                : <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)")}>{l.kind}</span>}
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{l.id || l.from.split('/').pop()}</span>
+              {l.title && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{l.title}</span>}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// docPath keeps the document in the URL across the editor↔graph roundtrip:
+// the editor tab reopens THAT doc, the graph tab carries it as focus context.
+export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (p: string) => void, dirty?: boolean, docPath?: string) {
   const tab = (on: boolean) => on
     ? 'background:var(--bg);color:var(--text);border-bottom:2px solid var(--text)'
     : 'background:transparent;color:var(--text-3);border-bottom:2px solid transparent;border-right:1px solid var(--border)';
   return (
     <div style={sx('height:38px;flex:none;display:flex;align-items:stretch;background:var(--panel);border-bottom:1px solid var(--border);padding-left:2px')}>
-      <div onClick={() => nav('/editor')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'editor'))}>
+      <div onClick={() => nav(docPath ? '/editor/' + docPath : '/editor')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'editor'))}>
         <span style={sx('color:var(--reg)')}>◈</span>
         <span style={sx('font-size:12.5px;font-weight:600')}>{docName}</span>
         {dirty && <span style={sx('width:5px;height:5px;border-radius:50%;background:var(--reg)')} />}
       </div>
-      <div onClick={() => nav('/graph')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'graph'))}>
+      <div onClick={() => nav(docPath ? '/graph/' + docPath : '/graph')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'graph'))}>
         <IconTrace size={13} width={1.9} />
         <span style={sx('font-size:12.5px;font-weight:600')}>Impact Graph</span>
       </div>
@@ -125,6 +221,13 @@ export function EditorView() {
     const dir = path.split('/').slice(0, -1).join('/');
     nav('/editor/' + resolveDocHref(dir, rel));
   }, [nav, path]);
+
+  // frontmatter refs are workspace-root-relative by convention (unlike body
+  // links, which resolve against the document's folder) — resolving them via
+  // openPath would prepend the current dir ("regulations/requirements/…")
+  const openFmPath = useCallback((p: string) => {
+    nav('/editor/' + (p.startsWith('~') ? p : p.replace(/^\/+/, '')));
+  }, [nav]);
 
   const onBodyChange = useCallback((md: string) => {
     const curFm = stripFrontmatter(rawRef.current).fm;
@@ -247,6 +350,23 @@ export function EditorView() {
     [kind, fm, app.schema],
   );
 
+  // every inbound link to this doc — shown as a computed panel
+  const backlinks = useMemo(
+    () => (kind === 'md' && app.model ? collectBacklinks(app.model)[path] || [] : []),
+    [kind, app.model, path],
+  );
+
+  // path → frontmatter title, for the link chips' secondary text
+  const docTitles = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [p, raw] of Object.entries(app.files || {})) {
+      if (!p.endsWith('.md')) continue;
+      const t = (stripFrontmatter(raw).fm.match(/^title:\s*["']?(.*?)["']?\s*$/m) || [])[1];
+      if (t) m[p] = t;
+    }
+    return m;
+  }, [app.files]);
+
   const change = app.model?.changes.find((c) => c.status === 'triage');
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
@@ -265,7 +385,13 @@ export function EditorView() {
       if (/^```/.test(line.trim())) { fence = !fence; continue; }
       if (fence) continue;
       const m = line.match(/^(#{1,3})[ \t]+(.+?)\s*$/);
-      if (m) out.push({ level: m[1].length, text: m[2].replace(/\s*\{#[\w-]+\}\s*$/, '') });
+      if (m) {
+        const text = m[2]
+          .replace(/\s*\{#[\w-]+\}\s*$/, '')
+          .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links → their text
+          .replace(/[*_`~]/g, ''); // inline emphasis/code markers
+        out.push({ level: m[1].length, text });
+      }
     }
     return out;
   }, [body, kind]);
@@ -287,7 +413,7 @@ export function EditorView() {
 
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
-      {!narrow && docTabsStrip('editor', name, nav, draft.dirty)}
+      {!narrow && docTabsStrip('editor', name, nav, draft.dirty, raw0)}
       <div style={sx('height:40px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 ' + (narrow ? '10px' : '16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'overflow-x:auto;overflow-y:hidden' : ''))}>
         <div style={sx("display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
           <span style={sx('color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{path}</span>
@@ -383,8 +509,11 @@ export function EditorView() {
               style={sx('display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb, var(--surface) 92%, transparent);backdrop-filter:blur(4px);color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;' + (outlineOpen ? 'color:var(--text)' : ''))}>
               <IconMenu /> Outline
             </button>
+            {/* the list's flex:none is load-bearing: the height:0 sticky wrapper
+                is a flex column, and an overflow-y:auto child has no automatic
+                minimum size — without it the list gets crushed to a sliver */}
             {outlineOpen && (
-              <div data-outline-list style={sx('margin-top:6px;width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
+              <div data-outline-list style={sx('flex:none;margin-top:6px;width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
                 {outline.map((h, i) => (
                   <div key={i} onClick={() => jumpToHeading(i)}
                     style={{ ...sx('padding:3px 8px;border-radius:6px;font-size:11.5px;color:var(--text-2);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), paddingLeft: 8 + (h.level - 1) * 11 }}>
@@ -481,14 +610,19 @@ export function EditorView() {
                   <div key={p.key} style={sx('display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--border)')}>
                     <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
-                      {p.items.map((it, i) => (
-                        <span key={i} onClick={it.openPath ? () => nav('/editor/' + it.openPath) : undefined} style={sx(it.style)}>{it.text}</span>
-                      ))}
+                      {p.rawKey === 'drivers'
+                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} titles={docTitles} nav={nav} />)
+                        : p.items.map((it, i) => (
+                          it.openPath
+                            ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
+                            : <span key={i} style={sx(it.style)}>{it.text}</span>
+                        ))}
                     </div>
                   </div>
                 ))}
               </div>
             )}
+            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
             {kind === 'excalidraw' && !readOnly ? (
               <div
                 onClick={() => void ensureWritableBranch().then(() => setExcalidrawPath(path))}
@@ -523,8 +657,9 @@ export function EditorView() {
         {effMode === 'edit' && ready && editable && (
           <div style={sx('max-width:820px;margin:0 auto')}>
             {/* no-frontmatter docs still get the box: the add-property row can create the block */}
-            <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)')}>
-              <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none')}>
+            {/* no overflow:hidden here — the combobox popups must escape the box */}
+            <div style={sx('margin:0 0 30px;border:1px solid var(--border);border-radius:10px;background:var(--surface)')}>
+              <div onClick={() => setPropsOpen((v) => !v)} style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-2);cursor:pointer;user-select:none;border-radius:' + (propsOpen ? '9px 9px 0 0' : '9px'))}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.6" style={{ transform: propsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }}>
                   <path d="M9 6l6 6-6 6" />
                 </svg>
@@ -534,13 +669,15 @@ export function EditorView() {
               {propsOpen && (
                 <PropertiesForm
                   fm={fm}
+                  body={body}
                   schema={app.schema}
                   files={app.files}
                   onChange={onFmChange}
-                  onOpenPath={openPath}
+                  onOpenPath={openFmPath}
                 />
               )}
             </div>
+            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
               body={body}

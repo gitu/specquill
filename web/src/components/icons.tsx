@@ -30,9 +30,6 @@ export const IconTrace = ({ size = 19, width = 1.8 }: { size?: number; width?: n
   <circle cx="6" cy="6" r="2.3" /><circle cx="18" cy="6" r="2.3" /><circle cx="12" cy="18" r="2.3" />
   <P d="M7.5 7.4l3.3 8.4M16.5 7.4l-3.3 8.4M8 6h8" /></>);
 
-export const IconMatrix = () => svg(19, 'currentColor', 1.8, <>
-  <rect x="3" y="4" width="18" height="16" rx="1.6" /><P d="M3 9h18M3 14h18M9 4v16M15 4v16" /></>);
-
 export const IconModel = () => svg(19, 'currentColor', 1.8, <>
   <P d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><P d="M12 3v18M4 7.5l8 4.5 8-4.5" /></>);
 
