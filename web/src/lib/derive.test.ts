@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProps, buildTree, collectFieldValues, defaultDoc } from './derive';
+import { buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions } from './derive';
 import { BUILTIN_ENTITIES } from './entities';
 
 describe('buildTree', () => {
@@ -73,5 +73,46 @@ describe('buildProps', () => {
   it('leaves plain text fields unstyled', () => {
     const [row] = buildProps('owner: flo', { order: [], fields: { owner: { label: 'Owner' } } });
     expect(row.items[0].style).not.toContain('border-radius:20px');
+  });
+});
+
+describe('collectRefTargets', () => {
+  const files = {
+    'regulations/mifid-ii.md': '---\ntitle: "MiFID II"\nanchors: [rts-22-art-26]\n---\n## RTS 22 {#rts-22-art-26}\n\n## Art 9 {#art-9}\n',
+    'diagrams/flow.mermaid': 'graph TD;',
+    'requirements/index.md': '# generated\n',
+    '.specquill/schema.json': '{}',
+  };
+  const field = { name: 'trade.venue', source: 'oms.venue_mic', transform: '', status: 'ok', drift: false, map: 'data-mappings/trade.md' };
+
+  it('offers paths, declared + heading anchors, non-md files, and data fields', () => {
+    const vals = collectRefTargets(files, [field]).map((t) => t.value);
+    expect(vals).toContain('regulations/mifid-ii.md');
+    expect(vals).toContain('regulations/mifid-ii.md#rts-22-art-26');
+    expect(vals).toContain('regulations/mifid-ii.md#art-9');
+    expect(vals).toContain('diagrams/flow.mermaid');
+    expect(vals).toContain('data-mappings/trade.md#venue');
+    expect(vals).not.toContain('requirements/index.md');
+    expect(vals.some((v) => v.startsWith('.specquill'))).toBe(false);
+  });
+
+  it('dedupes anchors both declared and carried by a heading, and hints titles', () => {
+    const targets = collectRefTargets(files);
+    expect(targets.filter((t) => t.value === 'regulations/mifid-ii.md#rts-22-art-26')).toHaveLength(1);
+    expect(targets.find((t) => t.value === 'regulations/mifid-ii.md')!.hint).toBe('MiFID II');
+    expect(targets.find((t) => t.value === 'regulations/mifid-ii.md#art-9')!.hint).toBe('MiFID II');
+  });
+});
+
+describe('docAnchorOptions', () => {
+  it('uses explicit {#id} attributes verbatim and slugs plain headings', () => {
+    const opts = docAnchorOptions('# Doc Title\n\n## Reporting window {#reporting-window}\n\n## Data Quality Rules\n');
+    expect(opts.map((o) => o.value)).toEqual(['doc-title', 'reporting-window', 'data-quality-rules']);
+    expect(opts[1].hint).toBe('Reporting window');
+    expect(opts[2].hint).toContain('no {#id}');
+  });
+
+  it('dedupes repeated ids', () => {
+    expect(docAnchorOptions('## A {#x}\n## B {#x}\n')).toHaveLength(1);
   });
 });

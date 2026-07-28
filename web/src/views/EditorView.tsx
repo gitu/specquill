@@ -535,6 +535,7 @@ export function EditorView() {
               {propsOpen && (
                 <PropertiesForm
                   fm={fm}
+                  body={body}
                   schema={app.schema}
                   files={app.files}
                   onChange={onFmChange}

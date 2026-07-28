@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { fmToJS, setFmValue } from '../lib/frontmatter';
-import { PAL, collectFieldValues, daysAgo, parseTaxonomy } from '../lib/derive';
+import { PAL, collectFieldValues, collectRefTargets, daysAgo, docAnchorOptions, parseTaxonomy } from '../lib/derive';
+import type { RefTarget } from '../lib/derive';
 import { useApp } from '../state/AppContext';
 import type { PropertySchema } from '../state/AppContext';
 
@@ -36,8 +37,9 @@ const isValidDateStr = (s: string): boolean => {
  * adds a known or custom property. Complex values (lists of maps like
  * `drivers`) render read-only.
  */
-export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
+export function PropertiesForm({ fm, body, schema, files, onChange, onOpenPath }: {
   fm: string;
+  body?: string; // current editor body — anchor options come from its headings
   schema: PropertySchema | undefined;
   files: Record<string, string> | undefined;
   onChange: (nextFm: string) => void;
@@ -47,6 +49,8 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
   const values = useMemo(() => fmToJS(fm), [fm]);
   const corpus = useMemo(() => collectFieldValues(files || {}), [files]);
   const statuses = useMemo(() => parseTaxonomy(app.configYml || '').statuses, [app.configYml]);
+  const refTargets = useMemo(() => collectRefTargets(files || {}, app.model?.fields || []), [files, app.model]);
+  const anchorOpts = useMemo(() => docAnchorOptions(body || ''), [body]);
   const order = schema?.order || [];
   const keys = [
     ...order.filter((k) => k in values),
@@ -78,7 +82,8 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
                 enumValues={def.values}
                 options={optionsFor(key, def)}
                 value={values[key]}
-                files={files}
+                refTargets={refTargets}
+                anchorOpts={anchorOpts}
                 onSet={(v) => set(key, v)}
                 onOpenPath={onOpenPath}
               />
@@ -100,7 +105,8 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
         presentKeys={Object.keys(values)}
         corpusKeys={Object.keys(corpus)}
         optionsFor={optionsFor}
-        files={files}
+        refTargets={refTargets}
+        anchorOpts={anchorOpts}
         onAdd={set}
       />
     </>
@@ -117,7 +123,7 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
 function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocus, ariaLabel, onCommit, onEscape }: {
   text: string;
   onText: (t: string) => void;
-  options: string[];
+  options: (string | RefTarget)[];
   colorOf?: (v: string) => { fg: string; bg: string };
   style: React.CSSProperties;
   placeholder?: string;
@@ -130,8 +136,16 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
   const [typed, setTyped] = useState(false);
   const [hi, setHi] = useState(-1);
   const skipBlur = useRef(false);
-  const q = text.trim().toLowerCase();
-  const shown = typed && q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+  const norm: RefTarget[] = options.map((o) => (typeof o === 'string' ? { value: o } : o));
+  // every whitespace-separated token must match somewhere in value or hint,
+  // so "gdpr erasure" finds regulations/gdpr.md#art-17-erasure
+  const toks = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = typed && toks.length
+    ? norm.filter((o) => {
+        const hay = (o.value + ' ' + (o.hint || '')).toLowerCase();
+        return toks.every((t) => hay.includes(t));
+      })
+    : norm;
   const listId = 'fmlist-' + ariaLabel.replace(/\W+/g, '-');
 
   const settle = () => { skipBlur.current = true; setOpen(false); setHi(-1); setTyped(false); };
@@ -161,7 +175,7 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
           else if (e.key === 'ArrowUp' && shown.length) { e.preventDefault(); setOpen(true); setHi((h) => (h <= 0 ? shown.length - 1 : h - 1)); }
           else if (e.key === 'Enter') {
             const el = e.currentTarget;
-            if (open && hi >= 0 && shown[hi] !== undefined) pick(shown[hi]);
+            if (open && hi >= 0 && shown[hi] !== undefined) pick(shown[hi].value);
             else { settle(); onCommit(text, 'enter'); }
             el.blur();
           } else if (e.key === 'Escape') {
@@ -174,23 +188,24 @@ function Combobox({ text, onText, options, colorOf, style, placeholder, autoFocu
         style={style}
       />
       {open && shown.length > 0 && (
-        <div id={listId} role="listbox" style={sx('position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:150px;max-height:240px;overflow:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow);padding:4px')}>
+        <div id={listId} role="listbox" style={sx('position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:150px;max-width:520px;max-height:240px;overflow:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow);padding:4px')}>
           {shown.map((o, i) => (
             <div
-              key={o}
+              key={o.value}
               role="option"
-              aria-selected={o === text}
+              aria-selected={o.value === text}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(o)}
+              onClick={() => pick(o.value)}
               onMouseEnter={() => setHi(i)}
               style={{
                 ...sx("display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11.5px;white-space:nowrap;cursor:pointer;color:var(--text)"),
                 background: i === hi ? 'var(--surface-2)' : 'transparent',
-                fontWeight: o === text ? 600 : 400,
+                fontWeight: o.value === text ? 600 : 400,
               }}
             >
-              {colorOf && <span style={{ width: 8, height: 8, borderRadius: 4, flex: 'none', background: colorOf(o).fg }} />}
-              {o}
+              {colorOf && <span style={{ width: 8, height: 8, borderRadius: 4, flex: 'none', background: colorOf(o.value).fg }} />}
+              <span style={sx('flex:none')}>{o.value}</span>
+              {o.hint && <span style={sx('font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;max-width:240px')}>{o.hint}</span>}
             </div>
           ))}
         </div>
@@ -275,13 +290,14 @@ function DateField({ fieldKey, value, onSet }: {
   );
 }
 
-function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpenPath }: {
+function Field({ fieldKey, type, enumValues, options, value, refTargets, anchorOpts, onSet, onOpenPath }: {
   fieldKey: string;
   type: string;
   enumValues?: Record<string, string>;
   options: string[];
   value: unknown;
-  files: Record<string, string> | undefined;
+  refTargets: RefTarget[];
+  anchorOpts: RefTarget[];
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
@@ -290,7 +306,7 @@ function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpe
     return (
       <DriversField
         items={value as { type?: string; ref?: string }[]}
-        files={files}
+        refTargets={refTargets}
         onSet={onSet}
         onOpenPath={onOpenPath}
       />
@@ -312,7 +328,8 @@ function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpe
   }
 
   if (Array.isArray(value)) {
-    return <ListField fieldKey={fieldKey} type={type} items={value.map(String)} files={files} onSet={onSet} onOpenPath={onOpenPath} />;
+    const listOptions = (fieldKey === 'anchors' || type === 'anchors') ? anchorOpts : type === 'links' ? refTargets : [];
+    return <ListField fieldKey={fieldKey} items={value.map(String)} options={listOptions} onSet={onSet} onOpenPath={onOpenPath} />;
   }
 
   const current = String(value ?? '');
@@ -376,12 +393,13 @@ function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpe
 // type-proper value editor on the right (enum pills, validated date, percent
 // number, path options for links). Nothing is written until a non-empty
 // value is committed, so cancel paths never touch the document.
-function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, files, onAdd }: {
+function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, refTargets, anchorOpts, onAdd }: {
   schema: PropertySchema | undefined;
   presentKeys: string[];
   corpusKeys: string[];
   optionsFor: (key: string, def: FieldDef) => string[];
-  files: Record<string, string> | undefined;
+  refTargets: RefTarget[];
+  anchorOpts: RefTarget[];
   onAdd: (key: string, value: unknown) => void;
 }) {
   const [stage, setStage] = useState<'idle' | 'key' | 'value'>('idle');
@@ -447,8 +465,8 @@ function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, files, on
 
   const colorOf = def.values ? (v: string) => PAL[def.values![v.trim().toLowerCase()] || 'slate'] || PAL.slate : undefined;
   const dateBad = def.type === 'date' && val.trim() !== '' && !isValidDateStr(val.trim());
-  const valueOptions = def.type === 'links'
-    ? Object.keys(files || {}).filter((p) => p.endsWith('.md'))
+  const valueOptions: (string | RefTarget)[] = def.type === 'links' ? refTargets
+    : (key === 'anchors' || def.type === 'anchors') ? anchorOpts
     : optionsFor(key, def);
   return (
     <div style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
@@ -492,10 +510,11 @@ function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, files, on
 }
 
 // DriversField edits `drivers: [{type, ref}]` in place: the type comes from
-// the workspace driver taxonomy, the ref is free text or a document path.
-function DriversField({ items, files, onSet, onOpenPath }: {
+// the workspace driver taxonomy, the ref is a searchable path#anchor target
+// or free text.
+function DriversField({ items, refTargets, onSet, onOpenPath }: {
   items: { type?: string; ref?: string }[];
-  files: Record<string, string> | undefined;
+  refTargets: RefTarget[];
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
@@ -525,13 +544,7 @@ function DriversField({ items, files, onSet, onOpenPath }: {
               {!effTypes.some((t) => t.key === d.type) && <option value={d.type || ''}>{d.type || '?'}</option>}
               {effTypes.map((t) => <option key={t.key} value={t.key}>{t.icon} {t.label}</option>)}
             </select>
-            <input
-              defaultValue={ref}
-              placeholder="doc path or free text"
-              list="paths-drivers"
-              onBlur={(e) => { if (e.target.value !== ref) update(i, { ref: e.target.value }); }}
-              style={{ ...sx(INPUT), height: 22, width: Math.max(180, ref.length * 6.6), border: 'none', background: 'transparent', color: isLink(ref) ? 'var(--prod)' : 'var(--text)' }}
-            />
+            <DriverRef current={ref} options={refTargets} onCommit={(v) => update(i, { ref: v })} />
             {isLink(ref) && (
               <span title={'open ' + ref.split('#')[0]} onClick={() => onOpenPath(ref.split('#')[0])}
                 style={sx('cursor:pointer;color:var(--prod);font-size:11px')}>↗</span>
@@ -547,24 +560,43 @@ function DriversField({ items, files, onSet, onOpenPath }: {
       >
         + add driver
       </button>
-      <datalist id="paths-drivers">
-        {Object.keys(files || {}).filter((p) => p.endsWith('.md')).map((p) => <option key={p} value={p} />)}
-      </datalist>
     </>
   );
 }
 
-function ListField({ fieldKey, type, items, files, onSet, onOpenPath }: {
+// DriverRef: the searchable half of a driver chip — workspace docs and their
+// anchors as options, free text (prose drivers) still allowed.
+function DriverRef({ current, options, onCommit }: {
+  current: string;
+  options: RefTarget[];
+  onCommit: (v: string) => void;
+}) {
+  const [text, setText] = useState(current);
+  const isLink = (t: string) => /([\w-]+\/[\w.\/-]+\.md)/.test(t);
+  return (
+    <Combobox
+      text={text}
+      onText={setText}
+      options={options}
+      placeholder="doc path or free text"
+      ariaLabel="driver ref"
+      style={{ ...sx(INPUT), height: 22, width: Math.max(180, text.length * 6.6), border: 'none', background: 'transparent', color: isLink(text) ? 'var(--prod)' : 'var(--text)' }}
+      onCommit={(v) => { if (v !== current) onCommit(v); }}
+      onEscape={() => setText(current)}
+    />
+  );
+}
+
+function ListField({ fieldKey, items, options, onSet, onOpenPath }: {
   fieldKey: string;
-  type: string;
   items: string[];
-  files: Record<string, string> | undefined;
+  options: RefTarget[];
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
   const [adding, setAdding] = useState('');
   const isLink = (t: string) => /([\w-]+\/[\w.\/-]+\.(?:md|excalidraw|mermaid))/.test(t);
-  const listId = 'paths-' + fieldKey;
+  const addable = options.filter((o) => !items.includes(o.value));
   return (
     <>
       {items.map((it, i) => (
@@ -584,23 +616,37 @@ function ListField({ fieldKey, type, items, files, onSet, onOpenPath }: {
           </span>
         </span>
       ))}
-      <input
-        placeholder="+ add"
-        value={adding}
-        list={type === 'links' ? listId : undefined}
-        onChange={(e) => setAdding(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && adding.trim()) {
-            onSet([...items, adding.trim()]);
-            setAdding('');
-          }
-        }}
-        style={{ ...sx(INPUT), width: 130, borderStyle: 'dashed' }}
-      />
-      {type === 'links' && (
-        <datalist id={listId}>
-          {Object.keys(files || {}).map((p) => <option key={p} value={p} />)}
-        </datalist>
+      {addable.length ? (
+        // append via search-picker; blur keeps the draft so clicking away
+        // never accidentally writes a half-typed entry
+        <Combobox
+          text={adding}
+          onText={setAdding}
+          options={addable}
+          placeholder="+ add"
+          ariaLabel={'add ' + fieldKey}
+          style={{ ...sx(INPUT), width: 160, borderStyle: 'dashed' }}
+          onCommit={(v, via) => {
+            if (via === 'blur') return;
+            const t = v.trim();
+            if (t) { onSet([...items, t]); setAdding(''); }
+          }}
+          onEscape={() => setAdding('')}
+        />
+      ) : (
+        <input
+          placeholder="+ add"
+          aria-label={'add ' + fieldKey}
+          value={adding}
+          onChange={(e) => setAdding(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && adding.trim()) {
+              onSet([...items, adding.trim()]);
+              setAdding('');
+            }
+          }}
+          style={{ ...sx(INPUT), width: 130, borderStyle: 'dashed' }}
+        />
       )}
     </>
   );

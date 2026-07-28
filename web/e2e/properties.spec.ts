@@ -7,7 +7,7 @@ import { APIRequestContext, expect, test } from '@playwright/test';
 const REPO = 'trading-specs';
 const H = { 'X-SpecQuill': '1' };
 const DOC = `scratch-props-${Date.now().toString(36)}.md`;
-const BODY = '---\ntitle: Props scratch\nstatus: draft\nupdated: 2026-05-30\n---\n# Props scratch\n\nbody\n';
+const BODY = '---\ntitle: Props scratch\nstatus: draft\nupdated: 2026-05-30\nanchors: [props-a]\ndrivers:\n  - type: regulatory\n    ref: regulations/mifid-ii.md#rts-22-art-26\n---\n# Props scratch\n\n## Props anchor {#props-a}\n\n## Retention Rules\n\nbody\n';
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
   const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
@@ -87,6 +87,23 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await page.keyboard.press('Enter');
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('updated: 2026-07-28');
+
+  // the driver ref is a search-picker over workspace docs AND their anchors
+  const driverRef = page.getByRole('combobox', { name: 'driver ref' });
+  await driverRef.click();
+  await expect(page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ })).toBeVisible();
+  await page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ }).click();
+  await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
+    .toContain('ref: regulations/gdpr.md#art-17-erasure');
+
+  // the anchors list offers the document's own headings as ids — minus the
+  // ones already listed (props-a is present in the frontmatter)
+  await page.getByRole('combobox', { name: 'add anchors' }).click();
+  await expect(page.getByRole('option', { name: /retention-rules/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: /props-a/ })).toHaveCount(0);
+  await page.getByRole('option', { name: /retention-rules/ }).click();
+  await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
+    .toContain('retention-rules');
 
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

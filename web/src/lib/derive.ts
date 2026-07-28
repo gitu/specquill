@@ -176,6 +176,59 @@ export function collectFieldValues(files: Record<string, string>): Record<string
   return out;
 }
 
+// ---------------------------------------------------------------- ref targets
+
+export interface RefTarget { value: string; hint?: string }
+
+/**
+ * Link targets for the properties-form pickers (drivers, implements, maps_to,
+ * diagrams, …): every non-reserved workspace file, plus `path#anchor` for
+ * anchors a document declares (frontmatter `anchors:`) or carries as explicit
+ * `{#id}` heading attributes, plus `path#field` for data-mapping fields.
+ * Hints carry titles / field names so search can match on them too.
+ */
+export function collectRefTargets(files: Record<string, string>, fields: DataField[] = []): RefTarget[] {
+  const out: RefTarget[] = [];
+  const seen = new Set<string>();
+  const add = (value: string, hint?: string) => {
+    if (!seen.has(value)) { seen.add(value); out.push({ value, hint }); }
+  };
+  for (const p of Object.keys(files).sort()) {
+    if (p.split('/')[0].startsWith('.')) continue;
+    if (!p.endsWith('.md')) { add(p); continue; }
+    if (isReservedMd(p)) continue;
+    const { fm, body } = stripFrontmatter(files[p]);
+    const title = ((fm || '').match(/^title:\s*["']?(.*?)["']?\s*$/m) || [])[1] || '';
+    add(p, title);
+    for (const e of parseProps(fm || '')) {
+      if (e.key !== 'anchors') continue;
+      (e.type === 'list' ? e.items : [e.value]).forEach((a) => a && add(p + '#' + a, title));
+    }
+    for (const m of body.matchAll(/^#{1,6}\s[^\n]*\{#([A-Za-z0-9_-]+)\}/gm)) add(p + '#' + m[1], title);
+  }
+  fields.forEach((f) => add(f.map + '#' + f.name.split('.').pop(), f.name));
+  return out;
+}
+
+/**
+ * Anchor-id options for editing a document's OWN `anchors:` list, derived
+ * from its headings: explicit `{#id}` attributes verbatim, plain headings as
+ * slugs (the hint flags that the heading still lacks the `{#id}` attribute).
+ */
+export function docAnchorOptions(body: string): RefTarget[] {
+  const out: RefTarget[] = [];
+  const seen = new Set<string>();
+  for (const m of body.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)) {
+    const em = m[1].match(/\{#([A-Za-z0-9_-]+)\}\s*$/);
+    const label = m[1].replace(/\s*\{#[A-Za-z0-9_-]+\}\s*$/, '');
+    const id = em ? em[1] : label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ value: id, hint: em ? label : label + ' — no {#id} on the heading yet' });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- changes
 
 export interface ChangeItem extends Change {
