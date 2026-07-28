@@ -314,7 +314,13 @@ export function EditorView() {
       if (/^```/.test(line.trim())) { fence = !fence; continue; }
       if (fence) continue;
       const m = line.match(/^(#{1,3})[ \t]+(.+?)\s*$/);
-      if (m) out.push({ level: m[1].length, text: m[2].replace(/\s*\{#[\w-]+\}\s*$/, '') });
+      if (m) {
+        const text = m[2]
+          .replace(/\s*\{#[\w-]+\}\s*$/, '')
+          .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links → their text
+          .replace(/[*_`~]/g, ''); // inline emphasis/code markers
+        out.push({ level: m[1].length, text });
+      }
     }
     return out;
   }, [body, kind]);
@@ -432,8 +438,11 @@ export function EditorView() {
               style={sx('display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb, var(--surface) 92%, transparent);backdrop-filter:blur(4px);color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;' + (outlineOpen ? 'color:var(--text)' : ''))}>
               <IconMenu /> Outline
             </button>
+            {/* the list's flex:none is load-bearing: the height:0 sticky wrapper
+                is a flex column, and an overflow-y:auto child has no automatic
+                minimum size — without it the list gets crushed to a sliver */}
             {outlineOpen && (
-              <div data-outline-list style={sx('margin-top:6px;width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
+              <div data-outline-list style={sx('flex:none;margin-top:6px;width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
                 {outline.map((h, i) => (
                   <div key={i} onClick={() => jumpToHeading(i)}
                     style={{ ...sx('padding:3px 8px;border-radius:6px;font-size:11.5px;color:var(--text-2);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), paddingLeft: 8 + (h.level - 1) * 11 }}>
