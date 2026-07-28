@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useParams } from 'react-router-dom';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { buildGraph, edgeCurve } from '../lib/derive';
+import { buildGraph, edgeCurve, focusGraph } from '../lib/derive';
 import { Loading } from './Dashboard';
 import { docTabsStrip } from './EditorView';
 
@@ -20,10 +21,19 @@ interface Body {
 export function GraphView() {
   const nav = useNav();
   const app = useApp();
+  // /graph/<docPath> scopes the graph to that document's chain; ?full=1
+  // keeps the doc context (for the editor tab) but shows everything
+  const { '*': focusPath = '' } = useParams();
+  const full = new URLSearchParams(useLocation().search).has('full');
   const [hover, setHover] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [, setFrame] = useState(0); // bumped per simulation tick
-  const g = useMemo(() => (app.model ? buildGraph(app.model) : null), [app.model]);
+  const g = useMemo(() => {
+    if (!app.model) return null;
+    const base = buildGraph(app.model);
+    return focusPath && !full ? focusGraph(base, focusPath) : base;
+  }, [app.model, focusPath, full]);
+  const focusName = focusPath ? focusPath.split('/').pop()! : '';
   const bodies = useRef<Map<string, Body>>(new Map());
   const alpha = useRef(0);
   const raf = useRef(0);
@@ -184,11 +194,20 @@ export function GraphView() {
 
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
-      {docTabsStrip('graph', 'txn-report.md', nav)}
+      {docTabsStrip('graph', focusName || 'Editor', nav, undefined, focusPath || undefined)}
       <div ref={scroller} style={sx('flex:1;min-height:0;position:relative;overflow:auto;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px')}>
         <div style={sx('position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:4;display:flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);padding:3px')}>
           <span style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(true))}>Graph</span>
           <span onClick={() => nav('/matrix')} style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(false))}>Matrix</span>
+          {focusPath && (
+            <span
+              onClick={() => nav('/graph/' + focusPath + (full ? '' : '?full=1'))}
+              title={full ? 'focus on ' + focusName + "'s chain" : 'show the full graph'}
+              style={sx('display:flex;align-items:center;gap:6px;padding:5px 12px;margin-left:3px;border-left:1px solid var(--border);font-size:12px;font-weight:600;cursor:pointer;user-select:none;' + (full ? 'color:var(--text-3)' : 'color:var(--prod)'))}
+            >
+              ◎ {focusName}
+            </span>
+          )}
         </div>
         <div style={sx('position:absolute;left:16px;top:14px;z-index:3;display:flex;align-items:center;gap:6px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);flex-wrap:wrap;max-width:calc(100% - 32px)')}>
           <span style={sx('font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;padding:0 6px')}>Layers</span>

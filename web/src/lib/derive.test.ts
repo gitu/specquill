@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions } from './derive';
+import { buildGraph, buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, focusGraph } from './derive';
+import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 
 describe('buildTree', () => {
@@ -114,5 +115,30 @@ describe('docAnchorOptions', () => {
 
   it('dedupes repeated ids', () => {
     expect(docAnchorOptions('## A {#x}\n## B {#x}\n')).toHaveLength(1);
+  });
+});
+
+describe('focusGraph', () => {
+  const files = {
+    'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md#x\nimplements:\n  - specs/s1.md\n---\n',
+    'specs/s1.md': '---\nid: S1\ntitle: Spec One\n---\n',
+    'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\ndrivers:\n  - type: product\n    ref: products/p.md\n---\n',
+  };
+  const g = buildGraph(buildModel(files));
+
+  it('keeps only the chain connected to the doc, up and down', () => {
+    const f = focusGraph(g, 'requirements/R1.md');
+    const ids = f.nodes.map((n) => n.id);
+    expect(ids).toContain('req:requirements/R1.md');
+    expect(ids).toContain('spec:specs/s1.md');
+    expect(ids).toContain('src:regulatory|regulations/a.md#x');
+    expect(ids).not.toContain('req:requirements/R2.md');
+    expect(f.stats).toEqual({ s: 1, r: 1, sp: 1, f: 0 });
+    expect(f.edges).toHaveLength(2);
+  });
+
+  it('falls back to the full graph for docs no node points at', () => {
+    expect(focusGraph(g, 'changes/nope.md')).toBe(g);
   });
 });

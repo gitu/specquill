@@ -42,7 +42,7 @@ const projectViews = () => [
   { path: 'dashboard', element: <Dashboard /> },
   { path: 'editor/*', element: <EditorView /> },
   { path: 'changes', element: <ChangesView /> },
-  { path: 'graph', element: <GraphView /> },
+  { path: 'graph/*', element: <GraphView /> }, // /graph/<docPath> focuses on that doc's chain
   { path: 'matrix', element: <MatrixView /> },
   { path: 'model', element: <ModelView /> },
   { path: 'diff', element: <DiffView /> },

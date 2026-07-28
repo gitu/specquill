@@ -402,6 +402,43 @@ export function buildGraph(model: WorkspaceModel) {
   return { nodes, edges, H, stats: { s: sources.length, r: reqs.length, sp: specs.length, f: fields.length } };
 }
 
+/**
+ * The sub-graph connected to one document: seeds are every node the doc
+ * backs (its own node, source nodes for refs into it, its data fields), and
+ * the whole chain is followed up AND down through every edge kind (drivers,
+ * implements, maps_to, body references). Kept columns are re-spread so a
+ * small focus set doesn't float sparsely in the full graph's layout.
+ * Unknown docs (nothing in the graph points at them) fall back to the full
+ * graph rather than an empty canvas.
+ */
+export function focusGraph(g: ReturnType<typeof buildGraph>, docPath: string): ReturnType<typeof buildGraph> {
+  const keep = new Set(g.nodes.filter((n) => (n.go || '').split('#')[0] === docPath).map((n) => n.id));
+  if (!keep.size) return g;
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const e of g.edges) {
+      const a = keep.has(e.a), b = keep.has(e.b);
+      if (a !== b) { keep.add(e.a); keep.add(e.b); grew = true; }
+    }
+  }
+  const nodes = g.nodes.filter((n) => keep.has(n.id)).map((n) => ({ ...n }));
+  const byCol: Record<number, GraphNode[]> = {};
+  nodes.forEach((n) => (byCol[n.col] = byCol[n.col] || []).push(n));
+  Object.values(byCol).forEach((col) => {
+    col.sort((p, q) => p.y - q.y);
+    const gap = g.H / (col.length + 1);
+    col.forEach((n, i) => { n.y = Math.round(gap * (i + 1)); });
+  });
+  const count = (k: string) => nodes.filter((n) => n.kind === k).length;
+  return {
+    ...g,
+    nodes,
+    edges: g.edges.filter((e) => keep.has(e.a) && keep.has(e.b)),
+    stats: { s: count('src'), r: count('req'), sp: count('spec'), f: count('field') },
+  };
+}
+
 // ---------------------------------------------------------------- matrix
 
 export function buildMatrix(model: WorkspaceModel) {

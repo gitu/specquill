@@ -30,18 +30,20 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 
 
 
-export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (p: string) => void, dirty?: boolean) {
+// docPath keeps the document in the URL across the editor↔graph roundtrip:
+// the editor tab reopens THAT doc, the graph tab carries it as focus context.
+export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (p: string) => void, dirty?: boolean, docPath?: string) {
   const tab = (on: boolean) => on
     ? 'background:var(--bg);color:var(--text);border-bottom:2px solid var(--text)'
     : 'background:transparent;color:var(--text-3);border-bottom:2px solid transparent;border-right:1px solid var(--border)';
   return (
     <div style={sx('height:38px;flex:none;display:flex;align-items:stretch;background:var(--panel);border-bottom:1px solid var(--border);padding-left:2px')}>
-      <div onClick={() => nav('/editor')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'editor'))}>
+      <div onClick={() => nav(docPath ? '/editor/' + docPath : '/editor')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'editor'))}>
         <span style={sx('color:var(--reg)')}>◈</span>
         <span style={sx('font-size:12.5px;font-weight:600')}>{docName}</span>
         {dirty && <span style={sx('width:5px;height:5px;border-radius:50%;background:var(--reg)')} />}
       </div>
-      <div onClick={() => nav('/graph')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'graph'))}>
+      <div onClick={() => nav(docPath ? '/graph/' + docPath : '/graph')} style={sx('display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;' + tab(active === 'graph'))}>
         <IconTrace size={13} width={1.9} />
         <span style={sx('font-size:12.5px;font-weight:600')}>Impact Graph</span>
       </div>
@@ -294,7 +296,7 @@ export function EditorView() {
 
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
-      {!narrow && docTabsStrip('editor', name, nav, draft.dirty)}
+      {!narrow && docTabsStrip('editor', name, nav, draft.dirty, raw0)}
       <div style={sx('height:40px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 ' + (narrow ? '10px' : '16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'overflow-x:auto;overflow-y:hidden' : ''))}>
         <div style={sx("display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
           <span style={sx('color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{path}</span>
