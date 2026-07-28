@@ -47,6 +47,16 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await expect(page.getByText('2026-05-30')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'updated' })).toHaveCount(0);
 
+  // "+ add property" opens the key selector immediately; picking an enum key
+  // mounts its value dropdown with the schema options already offered
+  await page.getByRole('button', { name: '+ add property' }).click();
+  await expect(page.getByRole('option', { name: 'business_value' })).toBeVisible();
+  await page.getByRole('option', { name: 'business_value' }).click();
+  await expect(page.getByRole('combobox', { name: 'value for business_value' })).toBeFocused();
+  await expect(page.getByRole('option', { name: 'high' })).toBeVisible();
+  await page.keyboard.press('Escape'); // cancel — writes nothing
+  await expect(page.getByRole('button', { name: '+ add property' })).toBeVisible();
+
   // add a known property from the schema/corpus key pool, then provide a value
   await page.getByRole('button', { name: '+ add property' }).click();
   await page.keyboard.type('jurisdiction');

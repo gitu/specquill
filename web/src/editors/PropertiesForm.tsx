@@ -100,6 +100,7 @@ export function PropertiesForm({ fm, schema, files, onChange, onOpenPath }: {
         presentKeys={Object.keys(values)}
         corpusKeys={Object.keys(corpus)}
         optionsFor={optionsFor}
+        files={files}
         onAdd={set}
       />
     </>
@@ -369,14 +370,18 @@ function Field({ fieldKey, type, enumValues, options, value, files, onSet, onOpe
   );
 }
 
-// AddPropertyRow appends a frontmatter key: pick a known key (schema ∪ corpus)
-// or type a custom one, then provide the value — nothing is written until a
-// non-empty value is committed, so cancel paths never touch the document.
-function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, onAdd }: {
+// AddPropertyRow appends a frontmatter key. Clicking "+ add property"
+// immediately opens the key selector in the label column — the row already
+// looks like the property it will become — and picking a key mounts the
+// type-proper value editor on the right (enum pills, validated date, percent
+// number, path options for links). Nothing is written until a non-empty
+// value is committed, so cancel paths never touch the document.
+function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, files, onAdd }: {
   schema: PropertySchema | undefined;
   presentKeys: string[];
   corpusKeys: string[];
   optionsFor: (key: string, def: FieldDef) => string[];
+  files: Record<string, string> | undefined;
   onAdd: (key: string, value: unknown) => void;
 }) {
   const [stage, setStage] = useState<'idle' | 'key' | 'value'>('idle');
@@ -419,44 +424,69 @@ function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, onAdd }: 
     const draftBad = keyDraft.trim() !== '' && !keyOk(keyDraft.trim());
     return (
       <div style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
-        <span style={sx(LABEL)}>new property</span>
-        {/* per-stage keys force a remount, so the next stage's autoFocus fires */}
-        <Combobox
-          key="new-key"
-          text={keyDraft}
-          onText={setKeyDraft}
-          options={knownKeys}
-          placeholder="property name ⏎"
-          autoFocus
-          ariaLabel="new property name"
-          style={{ ...sx(INPUT), minWidth: 180, borderColor: draftBad ? 'var(--reg)' : undefined }}
-          onCommit={(v, via) => { if (via === 'blur') reset(); else commitKey(v); }}
-          onEscape={reset}
-        />
+        {/* key selector sits in the label column; autoFocus opens its popup
+            right away (per-stage keys force a remount so that fires) */}
+        <span style={sx('width:132px;flex:none;display:flex')}>
+          <Combobox
+            key="new-key"
+            text={keyDraft}
+            onText={setKeyDraft}
+            options={knownKeys}
+            placeholder="property…"
+            autoFocus
+            ariaLabel="new property name"
+            style={{ ...sx(INPUT), width: 132, boxSizing: 'border-box', borderColor: draftBad ? 'var(--reg)' : undefined }}
+            onCommit={(v, via) => { if (via === 'blur') reset(); else commitKey(v); }}
+            onEscape={reset}
+          />
+        </span>
+        <span style={sx('font-size:11px;color:var(--text-3)')}>pick or type a property name ⏎</span>
       </div>
     );
   }
 
   const colorOf = def.values ? (v: string) => PAL[def.values![v.trim().toLowerCase()] || 'slate'] || PAL.slate : undefined;
   const dateBad = def.type === 'date' && val.trim() !== '' && !isValidDateStr(val.trim());
+  const valueOptions = def.type === 'links'
+    ? Object.keys(files || {}).filter((p) => p.endsWith('.md'))
+    : optionsFor(key, def);
   return (
     <div style={sx('display:flex;gap:14px;padding:7px 14px;border-top:1px solid var(--border);align-items:center')}>
       <span style={sx(LABEL)}>{def.label || key.replace(/_/g, ' ')}</span>
-      <Combobox
-        key="new-value"
-        text={val}
-        onText={setVal}
-        options={optionsFor(key, def)}
-        placeholder={def.type === 'date' ? 'YYYY-MM-DD ⏎' : 'value ⏎'}
-        autoFocus
-        ariaLabel={'value for ' + key}
-        colorOf={colorOf}
-        style={colorOf
-          ? { ...sx(INPUT), minWidth: 140, background: colorOf(val).bg, color: colorOf(val).fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20 }
-          : { ...sx(INPUT), minWidth: 180, borderColor: dateBad ? 'var(--reg)' : undefined }}
-        onCommit={(v) => commitValue(v)}
-        onEscape={reset}
-      />
+      <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
+        {def.type === 'percent' ? (
+          <span style={sx('display:inline-flex;align-items:center;gap:4px')}>
+            <input
+              type="number" min={0} max={100} autoFocus value={val} placeholder="0–100"
+              aria-label={'value for ' + key}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitValue(val);
+                if (e.key === 'Escape') reset();
+              }}
+              onBlur={() => commitValue(val)}
+              style={{ ...sx(INPUT), width: 72 }}
+            />
+            <span style={sx('font-size:11px;color:var(--text-3)')}>%</span>
+          </span>
+        ) : (
+          <Combobox
+            key="new-value"
+            text={val}
+            onText={setVal}
+            options={valueOptions}
+            placeholder={def.type === 'date' ? 'YYYY-MM-DD ⏎' : 'value ⏎'}
+            autoFocus
+            ariaLabel={'value for ' + key}
+            colorOf={colorOf}
+            style={colorOf
+              ? { ...sx(INPUT), minWidth: 140, background: colorOf(val).bg, color: colorOf(val).fg, fontWeight: 600, border: '1px solid transparent', borderRadius: 20 }
+              : { ...sx(INPUT), minWidth: 180, borderColor: dateBad ? 'var(--reg)' : undefined }}
+            onCommit={(v) => commitValue(v)}
+            onEscape={reset}
+          />
+        )}
+      </div>
     </div>
   );
 }
