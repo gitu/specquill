@@ -14,6 +14,7 @@ import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
 import { buildProps, collectBacklinks, defaultDoc, srcMeta } from '../lib/derive';
 import type { DocBacklink } from '../lib/derive';
+import type { EntityDef } from '../lib/entities';
 import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
@@ -30,6 +31,34 @@ import { ExcalidrawModal } from '../editors/ExcalidrawModal';
 import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconImage, IconLink, IconLock, IconMenu } from '../components/icons';
 
 
+
+// Read-mode chip for a doc-linking frontmatter item (implements, maps_to,
+// diagrams, …): the target family's entity icon in its color, colored left
+// edge, doc name in mono, anchor muted — same language as the driver and
+// backlinks chips.
+function RefChipView({ text, path, entities, nav }: {
+  text: string;
+  path: string;
+  entities: EntityDef[];
+  nav: (p: string) => void;
+}) {
+  const folder = path.split('/')[0];
+  const meta = entities.find((e) => e.folder.replace(/\/$/, '') === folder);
+  const icon = meta?.icon || '▢';
+  const color = meta?.color || 'var(--text-2)';
+  const anchor = text.includes('#') ? text.split('#')[1] : '';
+  return (
+    <span
+      onClick={() => nav('/editor/' + path)}
+      title={'open ' + path}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + color + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;cursor:pointer')}
+    >
+      <span style={{ color }}>{icon}</span>
+      <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{path.split('/').pop()!.replace(/\.(md|excalidraw|mermaid)$/, '')}</span>
+      {anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+    </span>
+  );
+}
 
 // Read-mode driver chip, styled like the backlinks chips: type icon in its
 // color, colored left edge, doc name in mono, anchor muted. parseProps folds
@@ -569,7 +598,9 @@ export function EditorView() {
                       {p.rawKey === 'drivers'
                         ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} nav={nav} />)
                         : p.items.map((it, i) => (
-                          <span key={i} onClick={it.openPath ? () => nav('/editor/' + it.openPath) : undefined} style={sx(it.style)}>{it.text}</span>
+                          it.openPath
+                            ? <RefChipView key={i} text={it.text} path={it.openPath} entities={app.entities} nav={nav} />
+                            : <span key={i} style={sx(it.style)}>{it.text}</span>
                         ))}
                     </div>
                   </div>
