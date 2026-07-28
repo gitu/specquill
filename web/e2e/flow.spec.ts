@@ -14,10 +14,7 @@ test('dashboard shows live KPIs', async ({ page }) => {
   await expect(page.getByText('Requirement changes')).toBeVisible();
 });
 
-test('matrix and graph render from the model', async ({ page }) => {
-  await page.goto('/p/trading-specs/matrix');
-  await expect(page.getByText('Traceability matrix')).toBeVisible();
-  await expect(page.getByText(/requirements × \d+ artifacts/)).toBeVisible();
+test('graph renders from the model', async ({ page }) => {
   await page.goto('/p/trading-specs/graph');
   await expect(page.getByText('Lineage · from links')).toBeVisible();
 });
@@ -87,10 +84,10 @@ test('rapid switching between cached files always renders', async ({ page }) => 
 test('default view setting controls the root redirect', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await page.getByTitle('Settings').click();
-  await page.getByRole('combobox').last().selectOption('matrix');
+  await page.getByRole('combobox').last().selectOption('graph');
   await page.goto('/');
-  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/matrix/);
-  await expect(page.getByText('Traceability matrix')).toBeVisible();
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/graph/);
+  await expect(page.getByText('Lineage · from links')).toBeVisible();
   // back to workspace default
   await page.getByTitle('Settings').click();
   await page.getByRole('combobox').last().selectOption('');

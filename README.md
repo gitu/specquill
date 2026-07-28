@@ -4,7 +4,7 @@
 [OKF bundle](repo-product/docs/specs/specs/okf.md).** A git-native requirements-engineering tool:
 requirements, specs, regulations, data mappings and change records live as
 plain markdown in git; SpecQuill is the editing and review surface on top —
-traceability graph & matrix, change inbox, rich editors, and an in-app
+traceability graph, change inbox, rich editors, and an in-app
 branch-based merge flow, every commit authored by the logged-in user.
 
 The artifact SpecQuill produces is deliberately **not proprietary**: a
@@ -45,7 +45,7 @@ repo/             demo "trading-specs" workspace (fixture source)
 Key properties:
 
 - **The server never parses frontmatter** — it serves files + git operations; the model
-  (graph, matrix, dashboards) is computed in the browser from a `/snapshot` of the branch.
+  (graph, dashboards) is computed in the browser from a `/snapshot` of the branch.
 - **Protected main, personal workspaces.** The default branch is never edited directly:
   the first edit transparently creates/switches to the user's `ws/<user>` branch
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected

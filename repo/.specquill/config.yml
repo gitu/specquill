@@ -22,7 +22,7 @@ drivers:
 
 statuses: [draft, in_review, approved, deprecated]
 
-# typed links used to compute traceability (graph + matrix)
+# typed links used to compute traceability (graph)
 link_types:
   drives:       { from: [regulation, change], to: requirement }
   implements:   { from: requirement,          to: spec }

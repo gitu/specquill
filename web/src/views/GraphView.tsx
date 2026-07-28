@@ -182,8 +182,6 @@ export function GraphView() {
     return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom };
   };
 
-  const seg = (on: boolean) => (on ? 'background:var(--text);color:var(--surface)' : 'color:var(--text-2);cursor:pointer');
-
   // the canvas grows with the arrangement in both axes — dragging past the
   // original bounds must not clip or snap back
   let canvasH = g.H, canvasW = 900;
@@ -197,8 +195,7 @@ export function GraphView() {
       {docTabsStrip('graph', focusName || 'Editor', nav, undefined, focusPath || undefined)}
       <div ref={scroller} style={sx('flex:1;min-height:0;position:relative;overflow:auto;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px')}>
         <div style={sx('position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:4;display:flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);padding:3px')}>
-          <span style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(true))}>Graph</span>
-          <span onClick={() => nav('/matrix')} style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;' + seg(false))}>Matrix</span>
+          <span style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;background:var(--text);color:var(--surface)')}>Graph</span>
           {focusPath && (
             <span
               onClick={() => nav('/graph/' + focusPath + (full ? '' : '?full=1'))}

@@ -439,46 +439,6 @@ export function focusGraph(g: ReturnType<typeof buildGraph>, docPath: string): R
   };
 }
 
-// ---------------------------------------------------------------- matrix
-
-export function buildMatrix(model: WorkspaceModel) {
-  const specs = model.specs, fields = model.fields, reqs = model.requirements;
-  const CW = 26;
-  const columns: { kind: string; ref: string; label: string; drift?: boolean }[] = [];
-  specs.forEach((s) => columns.push({ kind: 'spec', ref: s.path, label: s.name.replace('.md', '') }));
-  fields.forEach((f) => columns.push({ kind: 'field', ref: f.name, label: f.name.split('.').pop()!, drift: f.drift }));
-  columns.push({ kind: 'test', ref: 'tests', label: 'tests' });
-  const mgroups = [
-    { label: 'Specs', color: 'var(--text-2)', width: specs.length * CW },
-    { label: 'Data fields', color: 'var(--data)', width: fields.length * CW },
-    { label: 'Tests', color: 'var(--prod)', width: CW },
-  ];
-  const sqBase = 'width:15px;height:15px;border-radius:4px;box-sizing:border-box;';
-  const sq = (t: string) =>
-    t === 'linked' ? sqBase + 'background:var(--data);border:1px solid var(--data)'
-    : t === 'drift' ? sqBase + 'background:var(--reg);border:1px solid var(--reg)'
-    : 'width:5px;height:5px;border-radius:50%;background:var(--border-2)';
-  const fieldNameFromRef = (ref: string) => {
-    const a = ref.split('#')[1] || '';
-    const f = fields.find((x) => x.name === a || x.name.endsWith('.' + a));
-    return f ? f.name : null;
-  };
-  const mrows = reqs.map((r) => {
-    const mappedFields = new Set(r.maps_to.map(fieldNameFromRef).filter(Boolean));
-    const cells = columns.map((c) => {
-      let t = 'none';
-      if (c.kind === 'spec') t = r.implements.indexOf(c.ref) >= 0 ? 'linked' : 'none';
-      else if (c.kind === 'field') t = mappedFields.has(c.ref) ? (c.drift ? 'drift' : 'linked') : 'none';
-      else if (c.kind === 'test') t = r.verifies.length ? 'linked' : 'none';
-      return { sq: sq(t) };
-    });
-    const cov = Math.round((r.coverage || 0) * 100);
-    const covC = cov > 80 ? 'var(--data)' : cov > 64 ? 'var(--prod)' : 'var(--reg)';
-    return { id: r.id, name: r.title, cells, cov, covStyle: 'width:' + cov + '%;height:100%;background:' + covC };
-  });
-  return { mgroups, mcolumns: columns, mrows, caption: `${reqs.length} requirements × ${columns.length} artifacts` };
-}
-
 // ---------------------------------------------------------------- source view
 
 export interface SourceLine { n: number; text: string; color: string }

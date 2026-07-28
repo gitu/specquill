@@ -9,7 +9,7 @@ export function scaffoldConfigYml(project: string): string {
 version: 2
 project: ${project}
 
-# view shown when opening the workspace (dashboard | editor | changes | graph | matrix | model)
+# view shown when opening the workspace (dashboard | editor | changes | graph | model)
 ui:
   default_view: editor
 

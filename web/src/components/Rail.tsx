@@ -3,11 +3,11 @@ import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { buildDashboard } from '../lib/derive';
-import { IconChanges, IconDash, IconFolder, IconGear, IconMatrix, IconModel, IconSpark, IconTrace } from './icons';
+import { IconChanges, IconDash, IconFolder, IconGear, IconModel, IconSpark, IconTrace } from './icons';
 
 const VIEW_LABEL: Record<ViewName, string> = {
   dashboard: 'Overview', editor: 'Specs', changes: 'Changes', graph: 'Graph',
-  matrix: 'Matrix', model: 'Model definitions',
+  model: 'Model definitions',
 };
 
 const A = 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)';
@@ -35,7 +35,6 @@ export function Rail() {
         )}
       </button>
       <button title="Traceability" onClick={() => nav('/graph')} style={sx(BTN + (is('/graph') ? A : I))}><IconTrace /></button>
-      <button title="Traceability matrix" onClick={() => nav('/matrix')} style={sx(BTN + (is('/matrix') ? A : I))}><IconMatrix /></button>
       <button title="Model definitions" onClick={() => nav('/model')} style={sx(BTN + (is('/model') ? A : I))}><IconModel /></button>
       <div style={sx('flex:1')} />
       <button title="Copilot" onClick={app.toggleCopilot} style={sx(BTN + (app.copilotOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>

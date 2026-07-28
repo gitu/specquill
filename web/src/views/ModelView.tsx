@@ -123,7 +123,7 @@ export function ModelView() {
         <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);margin-top:18px;overflow:hidden')}>
           <div style={sx('padding:14px 18px;border-bottom:1px solid var(--border)')}>
             <span style={sx('font-weight:700;font-size:13.5px')}>Link types</span>
-            <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>The typed edges the graph &amp; matrix are computed from</span>
+            <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>The typed edges the graph is computed from</span>
           </div>
           {tax.links.map((l) => (
             <div key={l.name} style={sx('display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border)')}>

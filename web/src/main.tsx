@@ -7,7 +7,6 @@ import { Dashboard } from './views/Dashboard';
 import { EditorView } from './views/EditorView';
 import { ChangesView } from './views/ChangesView';
 import { GraphView } from './views/GraphView';
-import { MatrixView } from './views/MatrixView';
 import { ModelView } from './views/ModelView';
 import { DiffView } from './views/DiffView';
 import { LoginView } from './views/LoginView';
@@ -43,7 +42,6 @@ const projectViews = () => [
   { path: 'editor/*', element: <EditorView /> },
   { path: 'changes', element: <ChangesView /> },
   { path: 'graph/*', element: <GraphView /> }, // /graph/<docPath> focuses on that doc's chain
-  { path: 'matrix', element: <MatrixView /> },
   { path: 'model', element: <ModelView /> },
   { path: 'diff', element: <DiffView /> },
 ];
