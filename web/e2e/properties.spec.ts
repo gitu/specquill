@@ -125,12 +125,17 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });
 
-test('driving documents show computed backlinks instead of a drives list', async ({ page }) => {
+test('documents show computed backlinks: drivers, typed relations, text mentions', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/regulations/gdpr.md');
-  // the drives panel sits outside the Properties box and is marked computed
-  await expect(page.getByText('· backlinks, computed from drivers — not stored in this document')).toBeVisible();
+  // the panel sits outside the Properties box and is marked computed
+  await expect(page.getByText('· computed from links to this document — not stored in it')).toBeVisible();
   await page.getByText('REQ-090', { exact: true }).first().click();
   await expect(page).toHaveURL(/editor\/requirements\/REQ-090\.md/);
+
+  // a spec collects implements-backlinks from its requirements
+  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
+  await expect(page.getByText('· computed from links to this document — not stored in it')).toBeVisible();
+  await expect(page.getByText('implements', { exact: true }).first()).toBeVisible();
 });
 
 test('badge-typed schema fields (product repo) get the combobox too', async ({ page }) => {

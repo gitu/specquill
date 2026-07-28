@@ -231,25 +231,50 @@ export function docAnchorOptions(body: string): RefTarget[] {
 
 // ---------------------------------------------------------------- backlinks
 
-export interface DriverBacklink { from: string; type: string; id: string; title: string }
+export interface DocBacklink { from: string; kind: string; type?: string; id: string; title: string }
+
+const BACKLINK_KIND_RANK: Record<string, number> = { driver: 0, implements: 1, 'maps to': 2, verifies: 3, 'in text': 9 };
 
 /**
- * Reverse of the `drivers:` lists: for every document referenced as a driver
- * (regulations, products, …), the requirements citing it. This replaces the
- * manually maintained `drives:` frontmatter — backlinks are computed, so
- * they can never drift from the forward links.
+ * Every inbound link to a document: driver citations, the other typed
+ * frontmatter lists (implements, maps_to, verifies), and untyped body-text
+ * references. Computed — never stored in the target document (this replaced
+ * the manual `drives:` frontmatter, so backlinks can never drift from the
+ * forward links). A text mention is suppressed when the same source document
+ * already links the target through a typed relation.
  */
-export function driverBacklinks(model: WorkspaceModel): Record<string, DriverBacklink[]> {
-  const out: Record<string, DriverBacklink[]> = {};
+export function collectBacklinks(model: WorkspaceModel): Record<string, DocBacklink[]> {
+  const meta: Record<string, { id: string; title: string }> = {};
+  [...model.regs, ...model.requirements, ...model.specs, ...model.changes].forEach((d) => { meta[d.path] = { id: d.id, title: d.title }; });
+  model.maps.forEach((m) => { meta[m.path] = { id: m.name.replace(/\.md$/, ''), title: '' }; });
+  const out: Record<string, DocBacklink[]> = {};
+  const seen = new Set<string>();
+  const pairSeen = new Set<string>();
+  const add = (to: string, from: string, kind: string, type?: string, weak = false) => {
+    const p = (to || '').split('#')[0];
+    if (!/\.md$/.test(p) || p === from) return; // prose refs / self-links have no backlink
+    const pair = p + '|' + from;
+    if (weak && pairSeen.has(pair)) return;
+    const key = pair + '|' + kind;
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairSeen.add(pair);
+    const m = meta[from] || { id: '', title: '' };
+    (out[p] = out[p] || []).push({ from, kind, type, id: m.id || from.split('/').pop()!, title: m.title });
+  };
   model.requirements.forEach((r) => {
-    const seen = new Set<string>();
-    r.drivers.forEach((d) => {
-      const p = (d.ref || '').split('#')[0];
-      if (!/\.md$/.test(p) || seen.has(p)) return; // prose refs have no doc to backlink
-      seen.add(p);
-      (out[p] = out[p] || []).push({ from: r.path, type: d.type, id: r.id, title: r.title });
-    });
+    r.drivers.forEach((d) => add(d.ref, r.path, 'driver', d.type));
+    r.implements.forEach((t) => add(t, r.path, 'implements'));
+    r.maps_to.forEach((t) => add(t, r.path, 'maps to'));
+    r.verifies.forEach((t) => add(t, r.path, 'verifies'));
   });
+  model.specs.forEach((s) => {
+    s.implements.forEach((t) => add(t, s.path, 'implements'));
+    s.maps_to.forEach((t) => add(t, s.path, 'maps to'));
+  });
+  (model.references || []).forEach((ref) => { if (!ref.external) add(ref.to, ref.from, 'in text', undefined, true); });
+  Object.values(out).forEach((links) =>
+    links.sort((a, b) => (BACKLINK_KIND_RANK[a.kind] ?? 5) - (BACKLINK_KIND_RANK[b.kind] ?? 5) || a.from.localeCompare(b.from)));
   return out;
 }
 

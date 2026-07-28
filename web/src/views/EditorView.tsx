@@ -12,8 +12,8 @@ import { assemble } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
-import { buildProps, defaultDoc, driverBacklinks, srcMeta } from '../lib/derive';
-import type { DriverBacklink } from '../lib/derive';
+import { buildProps, collectBacklinks, defaultDoc, srcMeta } from '../lib/derive';
+import type { DocBacklink } from '../lib/derive';
 import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
@@ -31,31 +31,34 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 
 
 
-// Computed backlinks panel: requirements citing this document as a driver.
+// Computed backlinks panel: every inbound link to this document — driver
+// citations, the other typed frontmatter relations, and body-text mentions.
 // Deliberately its OWN box, not a row in the Properties panel — these are
-// derived from the citing documents' `drivers:` lists and are never stored
-// in this document's frontmatter (they replaced the manual `drives:` key).
-function BacklinksPanel({ links, nav }: { links: DriverBacklink[]; nav: (p: string) => void }) {
+// derived from the citing documents and are never stored in this one
+// (they replaced the manual `drives:` key).
+function BacklinksPanel({ links, nav }: { links: DocBacklink[]; nav: (p: string) => void }) {
   return (
     <div style={sx('margin:0 0 30px;border:1px dashed var(--border-2);border-radius:10px')}>
       <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px dashed var(--border)')}>
         <span style={sx('color:var(--text-3);font-size:12px')}>↳</span>
-        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Drives</span>
-        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· backlinks, computed from drivers — not stored in this document</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Backlinks</span>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· computed from links to this document — not stored in it</span>
       </div>
       <div style={sx('display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px')}>
         {links.map((l) => {
-          const m = srcMeta(l.type);
+          const m = l.kind === 'driver' ? srcMeta(l.type || '') : null;
           return (
             <span
-              key={l.from}
+              key={l.from + '|' + l.kind}
               onClick={() => nav('/editor/' + l.from)}
               title={'open ' + l.from}
               style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:6px;font-size:11.5px;cursor:pointer;background:var(--surface-2)')}
             >
-              <span style={{ color: m.fg }}>{m.icon}</span>
+              {m
+                ? <span style={{ color: m.fg }}>{m.icon}</span>
+                : <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)")}>{l.kind}</span>}
               <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{l.id || l.from.split('/').pop()}</span>
-              <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{l.title}</span>
+              {l.title && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{l.title}</span>}
             </span>
           );
         })}
@@ -290,9 +293,9 @@ export function EditorView() {
     [kind, fm, app.schema],
   );
 
-  // requirements citing this doc as a driver — shown as a computed row
+  // every inbound link to this doc — shown as a computed panel
   const backlinks = useMemo(
-    () => (kind === 'md' && app.model ? driverBacklinks(app.model)[path] || [] : []),
+    () => (kind === 'md' && app.model ? collectBacklinks(app.model)[path] || [] : []),
     [kind, app.model, path],
   );
 
