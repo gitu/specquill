@@ -36,9 +36,10 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 // diagrams, …): the target family's entity icon in its color, colored left
 // edge, doc name in mono, anchor muted — same language as the driver and
 // backlinks chips.
-function RefChipView({ text, path, entities, nav }: {
+function RefChipView({ text, path, docTitle, entities, nav }: {
   text: string;
   path: string;
+  docTitle?: string;
   entities: EntityDef[];
   nav: (p: string) => void;
 }) {
@@ -56,6 +57,7 @@ function RefChipView({ text, path, entities, nav }: {
       <span style={{ color }}>{icon}</span>
       <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{path.split('/').pop()!.replace(/\.(md|excalidraw|mermaid)$/, '')}</span>
       {anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+      {docTitle && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{docTitle}</span>}
     </span>
   );
 }
@@ -63,12 +65,13 @@ function RefChipView({ text, path, entities, nav }: {
 // Read-mode driver chip, styled like the backlinks chips: type icon in its
 // color, colored left edge, doc name in mono, anchor muted. parseProps folds
 // each drivers entry to "type · ref"; prose refs render unlinked.
-function DriverChipView({ raw, nav }: { raw: string; nav: (p: string) => void }) {
+function DriverChipView({ raw, titles, nav }: { raw: string; titles: Record<string, string>; nav: (p: string) => void }) {
   const [type, ...rest] = raw.split(' · ');
   const ref = rest.join(' · ');
   const m = srcMeta(type);
   const pm = ref.match(/([\w-]+\/[\w.\/-]+\.md)/);
   const anchor = ref.includes('#') ? ref.split('#')[1] : '';
+  const docTitle = pm ? titles[pm[1]] : undefined;
   return (
     <span
       onClick={pm ? () => nav('/editor/' + pm[1]) : undefined}
@@ -80,6 +83,7 @@ function DriverChipView({ raw, nav }: { raw: string; nav: (p: string) => void })
         ? <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{pm[1].split('/').pop()!.replace(/\.md$/, '')}</span>
         : <span style={sx('color:var(--text-2)')}>{ref}</span>}
       {pm && anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+      {docTitle && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{docTitle}</span>}
     </span>
   );
 }
@@ -352,6 +356,17 @@ export function EditorView() {
     [kind, app.model, path],
   );
 
+  // path → frontmatter title, for the link chips' secondary text
+  const docTitles = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [p, raw] of Object.entries(app.files || {})) {
+      if (!p.endsWith('.md')) continue;
+      const t = (stripFrontmatter(raw).fm.match(/^title:\s*["']?(.*?)["']?\s*$/m) || [])[1];
+      if (t) m[p] = t;
+    }
+    return m;
+  }, [app.files]);
+
   const change = app.model?.changes.find((c) => c.status === 'triage');
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
@@ -596,10 +611,10 @@ export function EditorView() {
                     <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
                       {p.rawKey === 'drivers'
-                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} nav={nav} />)
+                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} titles={docTitles} nav={nav} />)
                         : p.items.map((it, i) => (
                           it.openPath
-                            ? <RefChipView key={i} text={it.text} path={it.openPath} entities={app.entities} nav={nav} />
+                            ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
                             : <span key={i} style={sx(it.style)}>{it.text}</span>
                         ))}
                     </div>
