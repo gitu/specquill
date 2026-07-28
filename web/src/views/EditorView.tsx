@@ -31,6 +31,30 @@ import { IconShare, IconSpark, IconTrace, IconClose, IconDiagram, IconPen, IconI
 
 
 
+// Read-mode driver chip, styled like the backlinks chips: type icon in its
+// color, colored left edge, doc name in mono, anchor muted. parseProps folds
+// each drivers entry to "type · ref"; prose refs render unlinked.
+function DriverChipView({ raw, nav }: { raw: string; nav: (p: string) => void }) {
+  const [type, ...rest] = raw.split(' · ');
+  const ref = rest.join(' · ');
+  const m = srcMeta(type);
+  const pm = ref.match(/([\w-]+\/[\w.\/-]+\.md)/);
+  const anchor = ref.includes('#') ? ref.split('#')[1] : '';
+  return (
+    <span
+      onClick={pm ? () => nav('/editor/' + pm[1]) : undefined}
+      title={pm ? 'open ' + pm[1] : undefined}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + m.fg + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;' + (pm ? 'cursor:pointer' : ''))}
+    >
+      <span style={{ color: m.fg }}>{m.icon}</span>
+      {pm
+        ? <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{pm[1].split('/').pop()!.replace(/\.md$/, '')}</span>
+        : <span style={sx('color:var(--text-2)')}>{ref}</span>}
+      {pm && anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+    </span>
+  );
+}
+
 // Computed backlinks panel: every inbound link to this document — driver
 // citations, the other typed frontmatter relations, and body-text mentions.
 // Deliberately its OWN box, not a row in the Properties panel — these are
@@ -542,9 +566,11 @@ export function EditorView() {
                   <div key={p.key} style={sx('display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--border)')}>
                     <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
-                      {p.items.map((it, i) => (
-                        <span key={i} onClick={it.openPath ? () => nav('/editor/' + it.openPath) : undefined} style={sx(it.style)}>{it.text}</span>
-                      ))}
+                      {p.rawKey === 'drivers'
+                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} nav={nav} />)
+                        : p.items.map((it, i) => (
+                          <span key={i} onClick={it.openPath ? () => nav('/editor/' + it.openPath) : undefined} style={sx(it.style)}>{it.text}</span>
+                        ))}
                     </div>
                   </div>
                 ))}

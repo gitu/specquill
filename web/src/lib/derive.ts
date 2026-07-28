@@ -99,7 +99,7 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
 // ---------------------------------------------------------------- properties
 
 export interface PropItem { text: string; style: string; openPath?: string }
-export interface PropRow { key: string; items: PropItem[] }
+export interface PropRow { key: string; rawKey: string; items: PropItem[] }
 
 // schema.json `values` colors — the second row aliases the css-var names some
 // workspaces use (e.g. the specquill product repo) onto the same palette
@@ -150,7 +150,7 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
     } else {
       items = e.items.map((it) => (type === 'code' || type === 'anchors') ? { text: it, style: chip('var(--surface-2)', 'var(--text-2)', true) } : linkItem(it));
     }
-    return { key: label, items };
+    return { key: label, rawKey: key, items };
   });
 }
 
