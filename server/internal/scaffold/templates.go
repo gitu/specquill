@@ -201,7 +201,7 @@ title: Maintaining the glossary
 }
 
 const schemaJSON = `{
-  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "updated"],
+  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "created", "updated"],
   "fields": {
     "id": { "label": "ID", "type": "mono" },
     "type": { "label": "Type", "type": "text" },
@@ -213,6 +213,7 @@ const schemaJSON = `{
     "satisfies": { "label": "Satisfies", "type": "links" },
     "maps_to": { "label": "Maps to", "type": "links" },
     "verifies": { "label": "Verified by", "type": "links" },
+    "created": { "label": "Created", "type": "date" },
     "updated": { "label": "Updated", "type": "date" }
   }
 }

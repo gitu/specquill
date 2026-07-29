@@ -3,6 +3,7 @@
 // from the folder family it lands in.
 
 import type { EntityDef } from './entities';
+import { todayStr } from './frontmatter';
 
 export const DOC_TYPES: Record<string, string> = {
   requirements: 'Requirement',
@@ -23,5 +24,6 @@ export function newDocTemplate(path: string, entities?: EntityDef[], opts?: { id
   const type = DOC_TYPES[family] || (ent ? titleCase(ent.kind) : 'Document');
   const name = opts?.title || path.split('/').pop()!.replace(/\.md$/, '');
   const idLine = opts?.id ? `id: ${opts.id}\n` : '';
-  return `---\n${idLine}type: ${type}\ntitle: ${name}\nstatus: draft\n---\n\n# ${name}\n`;
+  const today = todayStr();
+  return `---\n${idLine}type: ${type}\ntitle: ${name}\nstatus: draft\ncreated: ${today}\nupdated: ${today}\n---\n\n# ${name}\n`;
 }

@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { newDocTemplate } from './newdoc';
+import { todayStr } from './frontmatter';
 import type { EntityDef } from './entities';
 
 const ent = (kind: string, folder: string): EntityDef => ({
   kind, folder, label: kind, icon: '▢', color: 'x', description: '', builtin: false,
 });
 
+const dates = `created: ${todayStr()}\nupdated: ${todayStr()}\n`;
+
 describe('newDocTemplate', () => {
   it('types the document after its folder family', () => {
     expect(newDocTemplate('requirements/REQ-001.md')).toBe(
-      '---\ntype: Requirement\ntitle: REQ-001\nstatus: draft\n---\n\n# REQ-001\n',
+      `---\ntype: Requirement\ntitle: REQ-001\nstatus: draft\n${dates}---\n\n# REQ-001\n`,
     );
   });
 
@@ -31,7 +34,7 @@ describe('newDocTemplate', () => {
 
   it('carries an explicit id and title into frontmatter and heading', () => {
     expect(newDocTemplate('requirements/REQ-091.md', undefined, { id: 'REQ-091', title: 'Venue routing' })).toBe(
-      '---\nid: REQ-091\ntype: Requirement\ntitle: Venue routing\nstatus: draft\n---\n\n# Venue routing\n',
+      `---\nid: REQ-091\ntype: Requirement\ntitle: Venue routing\nstatus: draft\n${dates}---\n\n# Venue routing\n`,
     );
   });
 

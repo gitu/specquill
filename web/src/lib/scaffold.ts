@@ -35,7 +35,7 @@ references: []
 export function scaffoldSchemaJson(): string {
   return JSON.stringify({
     $comment: 'Property schema for the Properties panel. Edit labels/types/colors/order here.',
-    order: ['id', 'type', 'status', 'priority', 'owner', 'implements', 'updated'],
+    order: ['id', 'type', 'status', 'priority', 'owner', 'implements', 'created', 'updated'],
     fields: {
       id: { label: 'ID', type: 'code' },
       type: { label: 'Type', type: 'tag' },
@@ -43,6 +43,7 @@ export function scaffoldSchemaJson(): string {
       priority: { label: 'Priority', type: 'enum', values: { must: 'amber', should: 'blue', could: 'slate' } },
       owner: { label: 'Owner', type: 'user' },
       implements: { label: 'Implements', type: 'links' },
+      created: { label: 'Created', type: 'date' },
       updated: { label: 'Updated', type: 'date' },
     },
   }, null, 2) + '\n';
