@@ -30,7 +30,7 @@ func TestSetupForgeMode(t *testing.T) {
 		"flo@example.com, ops@example.com", // admins
 		"",                                 // committer name → specquill
 		"",                                 // committer email
-		"n",                                // copilot off
+		"n",                                // speccy off
 	)
 	var out strings.Builder
 	if err := runSetup(in, &out, path); err != nil {
@@ -53,7 +53,7 @@ func TestSetupForgeMode(t *testing.T) {
 		t.Error("https base URL should imply cookie_secure: true")
 	}
 	if cfg.AI.Enabled {
-		t.Error("copilot should be off")
+		t.Error("speccy should be off")
 	}
 }
 
@@ -72,7 +72,7 @@ func TestSetupLocalModeWithAI(t *testing.T) {
 		"",                                 // admins → none
 		"svc",                              // committer name
 		"svc@acme.io",                      // committer email
-		"y",                                // copilot on
+		"y",                                // speccy on
 		"",                                 // base URL → openai
 		"",                                 // model → gpt-4o
 		"",                                 // quick model

@@ -116,12 +116,12 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("GET /api/repos/{repo}/share", s.getShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/share", s.createShare)
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
-	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/chat", s.writableH(s.copilotChat))
-	apiMux.HandleFunc("POST /api/repos/{repo}/copilot/draft", s.writableH(s.copilotDraft))
-	apiMux.HandleFunc("GET /api/copilot/info", s.copilotInfo)
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
+	apiMux.HandleFunc("GET /api/speccy/info", s.speccyInfo)
 	// legacy aliases: resolve the deployment's sole project
-	apiMux.HandleFunc("POST /api/copilot/chat", s.copilotChatAlias)
-	apiMux.HandleFunc("POST /api/copilot/draft", s.copilotDraftAlias)
+	apiMux.HandleFunc("POST /api/speccy/chat", s.speccyChatAlias)
+	apiMux.HandleFunc("POST /api/speccy/draft", s.speccyDraftAlias)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.requireAuth(apiMux))

@@ -154,7 +154,7 @@ type DatabaseConfig struct {
 	Path string `yaml:"path"` // default: <data_dir>/specquill.db
 }
 
-// AIConfig points the copilot at any OpenAI-compatible chat-completions API
+// AIConfig points the speccy at any OpenAI-compatible chat-completions API
 // (OpenAI, Gemini's /v1beta/openai endpoint, Azure, Ollama, …).
 type AIConfig struct {
 	Enabled bool   `yaml:"enabled"`
@@ -164,7 +164,7 @@ type AIConfig struct {
 	// empty = fall back to Model
 	QuickModel string `yaml:"quick_model"`
 	APIKeyEnv  string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
-	// GroundingBudget caps the copilot system-prompt size in bytes
+	// GroundingBudget caps the speccy system-prompt size in bytes
 	// (0 = package default; grows automatically when references exist).
 	GroundingBudget int `yaml:"grounding_budget"`
 }

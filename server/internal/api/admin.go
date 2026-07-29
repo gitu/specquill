@@ -46,10 +46,12 @@ type projectInfo struct {
 	Warnings      []string                     `json:"warnings,omitempty"`
 }
 
-// GET /api/projects — the deployment's projects with their EFFECTIVE
-// references (in-repo selection ∩ catalog, config read from the default
-// branch).
+// GET /api/projects?ref= — the deployment's projects with their EFFECTIVE
+// references (in-repo selection ∩ catalog). The config is read at ?ref= so
+// the listing follows the currently selected branch; a project without that
+// branch (or no ref at all) answers from its default branch.
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("ref")
 	ps, err := s.store.Projects()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -72,9 +74,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 			info.DefaultBranch = repo.Cfg.DefaultBranch
 			info.Protected = repo.Cfg.ProtectedBranches
 			proj := project.New(repo, p.ProjectID, p.ContentRoot, false)
-			// default branch only (D5): a feature branch cannot change the
-			// reference selection until merged
-			if yml, _, err := proj.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
+			if yml, _, err := proj.File(configRef(proj, ref), ".specquill/config.yml"); err == nil {
 				if cfg, err := project.ParseConfig(yml); err == nil {
 					var refs []project.EffectiveReference
 					var warnings []string
@@ -83,11 +83,14 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 						// definitions — each user's token bounds real access
 						refs, warnings = project.EffectiveReferencesInRepo(cfg)
 						// a definition that failed validation is otherwise
-						// invisible (never registered) — say why here
+						// invisible (never registered) — say why here; valid
+						// ones register so branch-only definitions resolve
 						for _, sd := range cfg.Sources {
 							if msg := s.sourceDefError(sd); msg != "" {
 								warnings = append(warnings, "source "+sd.Name+": "+msg)
+								continue
 							}
+							s.registerSourceDef(mgr, sd)
 						}
 					} else {
 						refs, warnings = project.EffectiveReferences(cfg, kinds)

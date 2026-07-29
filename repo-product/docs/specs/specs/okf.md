@@ -52,7 +52,7 @@ which the spec requires consumers to preserve.
 - Reserved files (`index.md`, `log.md`) are never treated as concepts by the
   model, and links found in them create no edges.
 - Any external OKF bundle can be mounted as a **read-only reference repo**
-  today (it's just markdown); the copilot grounds on it like any other input.
+  today (it's just markdown); the speccy grounds on it like any other input.
 
 ## Notes
 

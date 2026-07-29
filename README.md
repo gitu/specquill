@@ -96,8 +96,8 @@ Key properties:
 - **Sessions idle out after 10 minutes** without a request (sliding expiry server-side;
   `session.ttl` in config). The cookie is a browser-session cookie — activity keeps you
   signed in indefinitely.
-- **Responsive reading.** Under 900px the rail/tree/copilot collapse (tree becomes a
-  hamburger drawer, copilot an overlay) and documents read full-width.
+- **Responsive reading.** Under 900px the rail/tree/speccy collapse (tree becomes a
+  hamburger drawer, speccy an overlay) and documents read full-width.
 - **Read-only input repos** (e.g. a regulations repo) are fetched on an interval,
   browsable in the tree (🔒), and refuse writes server-side.
 - **OKF bundles.** Workspaces conform to the
@@ -110,19 +110,19 @@ Key properties:
   scaffolds a new workspace repo: folder skeleton per chosen document family
   (requirements, specs, regulations, data-mappings, changes, decisions, glossary),
   the `.specquill/schema.json` property schema, starter documents, a server-config
-  stub — and **AI authoring skills** under `.specquill/skills/` that the copilot pins
+  stub — and **AI authoring skills** under `.specquill/skills/` that the speccy pins
   into its system prompt, so it drafts requirements/specs following your house rules.
 - **Two model tiers.** `ai.model` is the main (thinking-class) tier for chat and
   draft edits; `ai.quick_model` is a fast one-shot tier for small tasks. Commit
   messages are auto-drafted from the uncommitted diff on the quick tier
   (`POST /commit-message`) and prefill the commit dialog — editable, regenerable,
   never overwriting what you typed. `<think>…</think>` reasoning tags are stripped.
-- **Copilot** (`ai:` config) talks to any **OpenAI-compatible** chat endpoint —
+- **Speccy** (`ai:` config) talks to any **OpenAI-compatible** chat endpoint —
   OpenAI, Gemini (`…/v1beta/openai`), Azure, Ollama — with the branch snapshot as
   grounding (no index; the workspace is prompt-sized). Chat streams over SSE;
   "Draft edits & open as diff" asks the model for surgical search/replace edits,
   validates them (impacted files only, unique match), and applies them as
-  **uncommitted saves on a `copilot/<change>` branch** — the human reviews via the
+  **uncommitted saves on a `speccy/<change>` branch** — the human reviews via the
   normal status → commit → merge flow. `scripts/mock-llm.py` is a keyless dev provider.
 
 ## Run (dev)
@@ -131,7 +131,7 @@ Key properties:
 make dev-fixture        # local bare origins under data/origin/ from repo/
                         # (also drops the store so it can't outlive the fixtures)
 make web server         # build SPA into the embed dir + build specquill
-python3 scripts/mock-llm.py &          # keyless copilot provider for dev
+python3 scripts/mock-llm.py &          # keyless speccy provider for dev
 ./server/specquill -config specquill.dev.yml -dev
 # → http://localhost:8643  (dev flag auto-authenticates as auth.dev_user)
 ```
@@ -165,7 +165,7 @@ and credential-free; access rides each user's own token:
 | lives in server YAML | lives in `.specquill/config.yml` (in the repo) | lives with the user |
 |---|---|---|
 | forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote on an allowlisted host, branch) | the PAT (browser localStorage + RAM-only session vault) |
-| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, copilot grounding) | identity + git author (forge `/user`) |
+| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, speccy grounding) | identity + git author (forge `/user`) |
 | optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema, AI skills (as before) | deployment role (forge permission on the main project, refreshed each login) |
 | **no tokens, no source catalog** (a top-level `sources:` block is rejected) | | per-user clones under `data/…/repos/u<id>/` |
 
@@ -199,7 +199,7 @@ persistent directory, a reverse proxy.
 
 ## Notes & future work
 
-- Copilot grounding is whole-snapshot prompting — fine at workspace scale; a retrieval
+- Speccy grounding is whole-snapshot prompting — fine at workspace scale; a retrieval
   index would be needed for large corpora or multi-repo grounding.
 - Read-only repos are browse-only inputs; federating them into the traceability model
   (cross-repo `drives` links) is future work.

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useCommit, StatusResp } from '../api/hooks';
-import { useCopilotInfo } from '../api/copilot';
+import { useSpeccyInfo } from '../api/speccy';
 import { api } from '../api/client';
 import { flushAllDrafts } from '../lib/draftRegistry';
 
@@ -14,7 +14,7 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
   const [message, setMessage] = useState('');
 
   // AI-drafted message (quick one-shot tier): prefill unless the user typed
-  const copilot = useCopilotInfo();
+  const speccy = useSpeccyInfo();
   const [drafting, setDrafting] = useState(false);
   const touched = useRef(false);
   const suggest = async (force = false) => {
@@ -29,9 +29,9 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
     setDrafting(false);
   };
   useEffect(() => {
-    if (copilot.data?.enabled) void suggest();
+    if (speccy.data?.enabled) void suggest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [copilot.data?.enabled]);
+  }, [speccy.data?.enabled]);
 
   const doCommit = async () => {
     if (!message.trim()) return;
@@ -64,7 +64,7 @@ export function CommitDialog({ status, onClose }: { status: StatusResp; onClose:
           rows={3}
           style={sx('width:100%;padding:9px 11px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:12.5px;resize:vertical')}
         />
-        {copilot.data?.enabled && (
+        {speccy.data?.enabled && (
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:5px;font-size:11px;color:var(--text-3)')}>
             <span>{drafting ? 'drafting…' : message && !touched.current ? 'drafted by AI — edit freely' : ''}</span>
             <div style={sx('flex:1')} />

@@ -2,7 +2,7 @@
 """Tiny OpenAI-compatible /v1/chat/completions mock for dev & e2e.
 
 Streams a canned grounded answer for chat; returns a canned edit-JSON for the
-copilot draft prompt (fixes the RTS 22 timestamp drift in the demo repo).
+speccy draft prompt (fixes the RTS 22 timestamp drift in the demo repo).
 """
 import json
 import re

@@ -37,7 +37,7 @@ export function Rail() {
       <button title="Traceability" onClick={() => nav('/graph')} style={sx(BTN + (is('/graph') ? A : I))}><IconTrace /></button>
       <button title="Model definitions" onClick={() => nav('/model')} style={sx(BTN + (is('/model') ? A : I))}><IconModel /></button>
       <div style={sx('flex:1')} />
-      <button title="Copilot" onClick={app.toggleCopilot} style={sx(BTN + (app.copilotOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>
+      <button title="Speccy" onClick={app.toggleSpeccy} style={sx(BTN + (app.speccyOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>
         <IconSpark />
       </button>
       <div style={sx('position:relative')}>

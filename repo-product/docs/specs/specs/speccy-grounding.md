@@ -1,12 +1,12 @@
 ---
 type: Specification
-title: Copilot grounding — context and limits
+title: Speccy grounding — context and limits
 status: in_review
 satisfies: [requirements/REQ-007.md]
 updated: 2026-07-09
 ---
 
-# Copilot grounding — context and limits
+# Speccy grounding — context and limits
 
 How [REQ-007](../requirements/REQ-007.md) is realized; the reference chain it
 draws on is specified in [references.md](references.md).
@@ -28,13 +28,13 @@ never re-reads an unchanged source.
 
 ## Write boundary
 
-The copilot has two write surfaces, both bounded:
+The speccy has two write surfaces, both bounded:
 
 | surface | limit |
 |---|---|
 | chat | read-only; grounds an answer, edits nothing |
-| draft | surgical search/replace edits, applied as uncommitted saves on a `copilot/*` branch for review |
+| draft | surgical search/replace edits, applied as uncommitted saves on a `speccy/*` branch for review |
 
 A draft edit targeting a `~`-prefixed reference path is refused: reference
-sources are read-only. Nothing the copilot does reaches a protected branch
+sources are read-only. Nothing the speccy does reaches a protected branch
 without a human merge.

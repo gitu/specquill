@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, clearStoredPat, getStoredPat, storePat } from './client';
+import { api, clearStoredPat, getStoredPat, storePat, takeLoginError } from './client';
 
 // The stored PAT is the credential of record in forge mode: a 401 must
-// trigger exactly one silent re-login, and the token may only be discarded
-// when the forge itself rejects it — never on a transient failure, or an
-// outage would force every user to mint a new token.
+// trigger exactly one silent re-login, and the token is NEVER discarded by
+// code — a failed re-login parks its reason for the login page and leaves
+// the token alone; only an explicit logout removes it.
 
 type Handler = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
@@ -27,14 +27,18 @@ function install(handler: Handler) {
 }
 
 beforeEach(() => {
-  // jsdom serves an opaque origin, so it exposes no localStorage of its own
-  const store = new Map<string, string>();
-  vi.stubGlobal('localStorage', {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => void store.set(k, v),
-    removeItem: (k: string) => void store.delete(k),
-    clear: () => store.clear(),
-  });
+  // jsdom serves an opaque origin, so it exposes no web storage of its own
+  const mapStorage = () => {
+    const store = new Map<string, string>();
+    return {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+  };
+  vi.stubGlobal('localStorage', mapStorage());
+  vi.stubGlobal('sessionStorage', mapStorage());
   // jsdom refuses real navigation; the 401 fallback only sets href
   Object.defineProperty(window, 'location', { writable: true, value: { href: '' } });
 });
@@ -55,35 +59,39 @@ describe('PAT re-authentication', () => {
     expect(getStoredPat()).toBe('glpat-x');
   });
 
-  it('forgets the token when the forge rejects it', async () => {
+  it('keeps the token when the forge rejects it, and parks the reason', async () => {
     storePat('glpat-revoked');
     install((url) => (url === '/auth/pat/login'
-      ? jsonResponse(401, { error: 'token rejected' })
+      ? jsonResponse(401, { error: 'token rejected by gitlab: 401' })
       : jsonResponse(401, { error: 'unauthenticated' })));
 
     await expect(api('/api/me')).rejects.toThrow();
-    expect(getStoredPat()).toBeNull();
+    expect(getStoredPat()).toBe('glpat-revoked'); // surfaced, never deleted
     expect(window.location.href).toBe('/auth/login');
+    expect(takeLoginError()).toBe('token rejected by gitlab: 401');
+    expect(takeLoginError()).toBeNull(); // read-once
   });
 
-  it('forgets the token when it loses project access', async () => {
+  it('keeps the token when it loses project access, and parks the reason', async () => {
     storePat('glpat-no-access');
     install((url) => (url === '/auth/pat/login'
-      ? jsonResponse(403, { code: 'no_project_access' })
+      ? jsonResponse(403, { error: 'this token has no access' })
       : jsonResponse(401, {})));
 
     await expect(api('/api/me')).rejects.toThrow();
-    expect(getStoredPat()).toBeNull();
+    expect(getStoredPat()).toBe('glpat-no-access');
+    expect(takeLoginError()).toBe('this token has no access');
   });
 
-  it('keeps the token when the server is briefly unavailable', async () => {
+  it('keeps the token when the forge is briefly unavailable', async () => {
     storePat('glpat-x');
     install((url) => (url === '/auth/pat/login'
-      ? jsonResponse(503, { error: 'forge unreachable' })
+      ? jsonResponse(502, { error: 'gitlab could not verify the token' })
       : jsonResponse(401, {})));
 
     await expect(api('/api/me')).rejects.toThrow();
-    expect(getStoredPat()).toBe('glpat-x'); // a 5xx is "try later", not "wrong token"
+    expect(getStoredPat()).toBe('glpat-x'); // a 502 is "try later", not "wrong token"
+    expect(takeLoginError()).toBe('gitlab could not verify the token');
   });
 
   it('keeps the token when the network is down', async () => {

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { sx } from '../lib/sx';
-import { api, storePat } from '../api/client';
+import { api, storePat, takeLoginError } from '../api/client';
 
 interface ForgeProvider { kind: 'github' | 'gitlab'; baseUrl?: string; tokenCreateUrl: string; scopes: string[] }
 interface Providers { local: boolean; forge?: ForgeProvider }
@@ -23,6 +23,9 @@ export function LoginView() {
   const [warning, setWarning] = useState('');
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<Providers | null>(null);
+  // why the silent re-login bounced here — the saved token is still in this
+  // browser; signing in again (same or new token) simply overwrites it
+  const [autoError] = useState(() => takeLoginError());
 
   useEffect(() => {
     api<Providers>('/auth/providers')
@@ -80,6 +83,12 @@ export function LoginView() {
           </div>
           <span style={sx('font-weight:700;font-size:17px;letter-spacing:-.2px')}>specquill</span>
         </div>
+
+        {autoError && (
+          <div style={sx('margin-bottom:12px;padding:9px 12px;border:1px solid var(--del);border-radius:8px;color:var(--del);font-size:12px;line-height:1.5')}>
+            Signing in with the saved token failed — {autoError}
+          </div>
+        )}
 
         {warning && (
           <div style={sx('margin-bottom:12px;padding:9px 12px;border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:8px;color:var(--reg);font-size:12px')}>

@@ -20,7 +20,7 @@ var (
 // htmlToText reduces HTML (or Confluence storage XHTML) to readable markdown-ish
 // text: headings become `#`, list items `- `, block tags become line breaks,
 // remaining tags are stripped and entities decoded. It is intentionally
-// dependency-free and lossy — enough for the copilot to ground on the prose.
+// dependency-free and lossy — enough for the speccy to ground on the prose.
 func htmlToText(s string) string {
 	s = reScript.ReplaceAllString(s, "")
 	s = reStyle.ReplaceAllString(s, "")

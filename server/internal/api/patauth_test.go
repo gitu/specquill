@@ -33,6 +33,15 @@ func mockGitLab(t *testing.T, roles map[string]int, mrCreated *bool) *httptest.S
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := r.Header.Get("PRIVATE-TOKEN")
+		// outage fixtures: the forge is up but failing — never a token verdict
+		if tok == "tok-outage" {
+			http.Error(w, `{"message":"503 Service Unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		if tok == "tok-roleout" && strings.Contains(r.URL.Path, "/projects/") {
+			http.Error(w, `{"message":"429 Too Many Requests"}`, http.StatusTooManyRequests)
+			return
+		}
 		level, ok := roles[tok]
 		if !ok {
 			http.Error(w, `{"message":"401 Unauthorized"}`, http.StatusUnauthorized)
@@ -157,7 +166,7 @@ func patServerSources(t *testing.T, extraSources string) patEnv {
 	// tok-a2 shares tok-a's level, so the mock reports the same forge user id:
 	// the SAME user holding a SECOND, different token (which the reference
 	// server rejects) — the concurrency fixture.
-	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-a2": 30, "tok-b": 20, "tok-none": 0, "tok-maint": 40}, &mrCreated)
+	forgeSrv := mockGitLab(t, map[string]int{"tok-a": 30, "tok-a2": 30, "tok-b": 20, "tok-none": 0, "tok-maint": 40, "tok-roleout": 30}, &mrCreated)
 	t.Cleanup(forgeSrv.Close)
 
 	cfg := &config.Config{
@@ -272,6 +281,31 @@ func TestPatLoginRejectsBadTokenAndNoAccess(t *testing.T) {
 	env.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "no_project_access") {
 		t.Fatalf("no-access token: want 403 no_project_access, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A forge that is up-but-failing (5xx, rate limits) or plain unreachable
+// never judged the token — the login must answer 502 forge_unavailable, not
+// 401/403, or clients would treat a working token as revoked.
+func TestPatLoginForgeOutageIs502(t *testing.T) {
+	env := patServer(t)
+
+	patTry := func(token string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"token": token})
+		req := httptest.NewRequest("POST", "/auth/pat/login", bytes.NewReader(body))
+		req.Header.Set("X-SpecQuill", "1")
+		rec := httptest.NewRecorder()
+		env.h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// identity check hits a 503
+	if rec := patTry("tok-outage"); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "forge_unavailable") {
+		t.Fatalf("forge 503: want 502 forge_unavailable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// identity passes, the project-access check gets rate-limited
+	if rec := patTry("tok-roleout"); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "forge_unavailable") {
+		t.Fatalf("role-check 429: want 502 forge_unavailable, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

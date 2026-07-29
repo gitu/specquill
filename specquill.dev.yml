@@ -18,7 +18,7 @@ sources:
     remote: ./data/origin/regulations.git
     sync_interval: 1m
   # importer demo: an OpenAPI spec the server serves to itself (web/public/),
-  # mirrored into a read-only repo so the copilot can ground on the API contract
+  # mirrored into a read-only repo so the speccy can ground on the API contract
   - name: platform-api
     kind: openapi
     remote: http://127.0.0.1:8643/demo-openapi.json
@@ -41,7 +41,7 @@ session:
   ttl: 10m
   cookie_secure: false             # plain http in dev
 
-# dev copilot: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
+# dev speccy: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
 # or to a cloud provider — see specquill.example.yml)
 ai:
   enabled: true

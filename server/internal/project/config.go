@@ -16,7 +16,7 @@ import (
 type Reference struct {
 	Source    string   `yaml:"source"`
 	Paths     []string `yaml:"paths"`     // optional prefix filters (grounding only)
-	Grounding bool     `yaml:"grounding"` // include in copilot context
+	Grounding bool     `yaml:"grounding"` // include in speccy context
 }
 
 // SourceDef DEFINES a read-only reference repo inside the workspace itself —

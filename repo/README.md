@@ -51,6 +51,6 @@ trading-specs/
 | Inline mermaid block | fenced block in `specs/txn-report.md` + `diagrams/reporting.mermaid` |
 | Inline excalidraw block | `diagrams/data-flow.excalidraw` |
 | Data-mapping table | `data-mappings/trade.md` |
-| Copilot "change detected" | `changes/2026-06-mifid-rts22.md` |
+| Speccy "change detected" | `changes/2026-06-mifid-rts22.md` |
 | Diff / PR #128 | git diff of the above on `feature/mifid-update` |
 | Traceability graph | computed from `drivers` / `implements` / `maps_to` / `verifies` links |

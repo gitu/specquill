@@ -28,8 +28,11 @@ export interface ProjectInfo {
   id: string; contentRoot?: string; defaultBranch: string; managedBy: string;
   references: ProjectRef[]; warnings?: string[];
 }
-export function useProjects() {
-  return useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
+// ref = the selected branch: references/warnings follow its .specquill/config.yml
+// (the server falls back to the default branch for projects without that branch)
+export function useProjects(ref?: string) {
+  const url = ref ? `/api/projects?ref=${encodeURIComponent(ref)}` : '/api/projects';
+  return useQuery({ queryKey: ['projects', ref ?? ''], queryFn: () => api<ProjectInfo[]>(url) });
 }
 
 export function useSnapshot(repo: string | undefined, ref: string) {

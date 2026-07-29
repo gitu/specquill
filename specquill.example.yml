@@ -30,7 +30,7 @@ projects:
     #   # token_env: SPECQUILL_FORGE_TOKEN              # defaults to token_env above
 
 # sources are the read-only reference catalog projects may reference and the
-# copilot may ground on. Credentials always come from token_env — never inline.
+# speccy may ground on. Credentials always come from token_env — never inline.
 # LOCAL-AUTH DEPLOYMENTS ONLY: with auth.forge enabled, reference sources are
 # defined inside the workspace repo (.specquill/config.yml `sources:`) and
 # fetched with each user's own token — this block must then stay empty.
@@ -104,7 +104,7 @@ session:
   ttl: 10m
   cookie_secure: true
 
-# Copilot: any OpenAI-compatible chat-completions endpoint.
+# Speccy: any OpenAI-compatible chat-completions endpoint.
 ai:
   enabled: true
   # OpenAI:  https://api.openai.com/v1                                model: gpt-4o-mini

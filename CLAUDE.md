@@ -42,8 +42,8 @@ from the code.
   — with the store inside `data/runtime`, removing that directory now clears
   sessions/merge state too (the fixture script also deletes the DB, so
   fixtures and store can't drift apart).
-- Copilot in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
-  `scripts/mock-llm.py` (:8991) is the keyless provider the copilot e2e needs
+- Speccy in dev points at ollama `qwen2.5:7b` (`specquill.dev.yml`);
+  `scripts/mock-llm.py` (:8991) is the keyless provider the speccy e2e needs
   (it self-skips unless the configured model is `mock-1`).
 
 ## Testing
@@ -66,7 +66,9 @@ from the code.
   and git ops use full paths, the wire format is project-relative.
 - **3-stage authorization** (local-auth mode): (1) catalog sources+credentials in
   app YAML/admin, (2) in-repo `.specquill/config.yml` `references:` SELECT
-  cataloged sources (read from the DEFAULT branch only), (3) deployment roles
+  cataloged sources (read from the request's branch, worktree edits included,
+  falling back to the default branch — safe because selection can never mint
+  access beyond the catalog; changed 2026-07-29), (3) deployment roles
   viewer<member<admin (`users.role`) plus per-repo grants. In-repo config can
   only select cataloged sources — it can NEVER mint access.
   `EffectiveReferences` = selection ∩ catalog.
@@ -85,7 +87,7 @@ from the code.
   (`client.ts` retry-once). Deployment role = forge permission on
   `projects[0]`, refreshed each login. No boot clone, no sync loops; in-app
   merge 403s (`merge_via_forge`) — `POST /propose` pushes and opens the MR/PR.
-- **Copilot grounding**: grounded reference sources join the system prompt under
+- **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
 - **Non-git sources = importer mirror repos**: url/openapi/confluence sources are
@@ -129,7 +131,7 @@ from the code.
 - **AI tiers**: `ai.model` (thinking-class: chat, draft edits) vs
   `ai.quick_model` (one-shot: commit messages). Both through any
   OpenAI-compatible endpoint. `.specquill/skills/*.md` in the workspace are
-  pinned into the copilot system prompt as authoring rules.
+  pinned into the speccy system prompt as authoring rules.
 
 ## Hard-won gotchas (do not rediscover these)
 

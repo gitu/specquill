@@ -11,7 +11,7 @@ const (
 	None Role = iota
 	// Viewer reads everything and comments on PRs.
 	Viewer
-	// Editor writes workspace branches, commits, co-edits and uses the copilot.
+	// Editor writes workspace branches, commits, co-edits and uses the speccy.
 	Editor
 	// Maintainer merges into protected branches and manages share links.
 	Maintainer

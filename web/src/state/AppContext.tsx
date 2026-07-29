@@ -47,8 +47,8 @@ interface AppState {
   userDefaultView: ViewName | null;
   workspaceDefaultView: ViewName | null;
   setDefaultView: (v: ViewName | null) => void; // null = follow workspace config
-  copilotOpen: boolean;
-  toggleCopilot: () => void;
+  speccyOpen: boolean;
+  toggleSpeccy: () => void;
   aiSuggestions: boolean;
   toggleAI: () => void;
   model?: WorkspaceModel;
@@ -128,9 +128,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
   const systemTheme: 'light' | 'dark' = systemDark ? 'dark' : 'light';
   const theme: 'light' | 'dark' = themeMode === 'system' ? systemTheme : themeMode;
-  // narrow screens never open the copilot by default (it overlays the doc)
-  const [copilotOpen, setCopilotOpen] = useState(
-    () => localStorage.getItem('specquill-copilot') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
+  // narrow screens never open the speccy by default (it overlays the doc)
+  const [speccyOpen, setSpeccyOpen] = useState(
+    () => localStorage.getItem('specquill-speccy') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
   );
   const [aiSuggestions, setAI] = useState(true);
   const [userDefaultView, setUserDefaultView] = useState<ViewName | null>(() => {
@@ -197,8 +197,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('specquill-theme', themeMode);
   }, [themeMode]);
   useEffect(() => {
-    localStorage.setItem('specquill-copilot', copilotOpen ? '1' : '0');
-  }, [copilotOpen]);
+    localStorage.setItem('specquill-speccy', speccyOpen ? '1' : '0');
+  }, [speccyOpen]);
 
   const value = useMemo<AppState>(() => {
     const files = snapshot.data?.files;
@@ -259,8 +259,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         else localStorage.removeItem('specquill-default-view');
         setUserDefaultView(v);
       },
-      copilotOpen,
-      toggleCopilot: () => setCopilotOpen((v) => !v),
+      speccyOpen,
+      toggleSpeccy: () => setSpeccyOpen((v) => !v),
       aiSuggestions,
       toggleAI: () => setAI((v) => !v),
       model: files ? buildModel(files) : undefined,
@@ -271,7 +271,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [writable?.id, repos.data, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
+  }, [writable?.id, repos.data, effBranch, theme, themeMode, speccyOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

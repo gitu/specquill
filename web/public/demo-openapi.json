@@ -3,7 +3,7 @@
   "info": {
     "title": "Platform API",
     "version": "1.4.0",
-    "description": "Demo OpenAPI source mirrored by the SpecQuill importer so the copilot can ground on the platform's contract."
+    "description": "Demo OpenAPI source mirrored by the SpecQuill importer so the speccy can ground on the platform's contract."
   },
   "paths": {
     "/trades": {

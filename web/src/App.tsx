@@ -8,7 +8,7 @@ import { ToastProvider } from './components/Toast';
 import { TopBar } from './components/TopBar';
 import { Rail } from './components/Rail';
 import { Tree } from './components/Tree';
-import { Copilot } from './components/Copilot';
+import { Speccy } from './components/Speccy';
 import { SearchPalette } from './components/SearchPalette';
 import { SyncBanner } from './components/SyncBanner';
 import { useNarrow } from './hooks/useMediaQuery';
@@ -57,11 +57,11 @@ function Shell() {
             <Outlet />
           )}
         </main>
-        {app.copilotOpen && !narrow && <Copilot />}
-        {app.copilotOpen && narrow && (
-          <div onClick={app.toggleCopilot} style={sx('position:fixed;inset:0;top:46px;z-index:40;background:rgba(10,12,16,.35)')}>
+        {app.speccyOpen && !narrow && <Speccy />}
+        {app.speccyOpen && narrow && (
+          <div onClick={app.toggleSpeccy} style={sx('position:fixed;inset:0;top:46px;z-index:40;background:rgba(10,12,16,.35)')}>
             <div onClick={(e) => e.stopPropagation()} style={sx('position:absolute;right:0;top:0;bottom:0;display:flex;max-width:100vw;box-shadow:var(--shadow-lg)')}>
-              <Copilot />
+              <Speccy />
             </div>
           </div>
         )}

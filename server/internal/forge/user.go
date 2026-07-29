@@ -241,7 +241,7 @@ func (c *Client) postJSON(ctx context.Context, url string, payload, out any) err
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(firstLine(string(body))))
+		return statusError(resp, string(body))
 	}
 	return json.Unmarshal(body, out)
 }
@@ -264,7 +264,7 @@ func (c *Client) getJSONHeader(ctx context.Context, url string, out any) (http.H
 		return resp.Header, err
 	}
 	if resp.StatusCode/100 != 2 {
-		return resp.Header, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(firstLine(string(body))))
+		return resp.Header, statusError(resp, string(body))
 	}
 	return resp.Header, json.Unmarshal(body, out)
 }
