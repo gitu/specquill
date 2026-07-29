@@ -169,7 +169,7 @@ export function Speccy() {
   };
 
   return (
-    <aside style={{ ...sx('flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;position:relative'), width: panelW, maxWidth: '92vw' }}>
+    <aside style={{ ...sx('flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;position:relative;overflow:hidden'), width: panelW, maxWidth: '92vw' }}>
       {/* left-edge resize handle */}
       <div
         onPointerDown={(e) => { panelW0.current = panelW; dragPanel(e); }}
@@ -187,7 +187,9 @@ export function Speccy() {
         <span onClick={app.toggleSpeccy} style={sx('color:var(--text-3);cursor:pointer')}>⌵</span>
       </div>
 
-      <div ref={scroller} style={sx('flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px')}>
+      {/* min-height:0 lets the flex child actually shrink — without it the
+          transcript grows past the panel instead of scrolling */}
+      <div ref={scroller} style={sx('flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px')}>
         <div style={sx("display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:10.5px")}>
           <span style={sx('color:var(--text-3)')}>Context</span>
           {focusPath && <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>@{focusPath.split('/').pop()}</span>}
