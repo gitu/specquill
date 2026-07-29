@@ -72,12 +72,20 @@ export async function streamChat(
       buffer = buffer.slice(idx + 2);
       const line = frame.trim();
       if (!line.startsWith('data:')) continue;
-      const payload = JSON.parse(line.slice(5).trim()) as {
+      let payload: {
         delta?: string; error?: string; done?: boolean;
         tool?: ToolEvent;
         ask?: { callId: string; question: string; options?: string[] };
         resume?: ChatMessage[];
       };
+      try {
+        payload = JSON.parse(line.slice(5).trim());
+      } catch {
+        // proxies can inject non-JSON data lines; a single bad frame must not
+        // kill the stream (and the console keeps the evidence)
+        console.warn('speccy: skipping unparseable SSE frame:', line.slice(0, 200));
+        continue;
+      }
       if (payload.error) throw new Error(payload.error);
       if (payload.delta) {
         result.text += payload.delta;
@@ -98,6 +106,7 @@ export async function streamChat(
   // the stream closed without the server's terminal {done} event — a dropped
   // connection (proxy idle timeout, network) that would otherwise pass for a
   // finished reply. A pending ask is still usable; anything else is an error.
+  console.warn('speccy: stream closed without done', { chars: result.text.length, ask: !!result.ask, edited: result.edited });
   if (result.ask) return result;
   throw new Error(
     result.text

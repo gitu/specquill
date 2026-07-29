@@ -124,6 +124,7 @@ export function Speccy() {
         qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
       }
     } catch (e) {
+      console.error('speccy: chat turn failed', e);
       // keep whatever streamed before the failure — a half answer plus a
       // visible error beats losing both
       if (lastText) {
@@ -136,8 +137,20 @@ export function Speccy() {
     }
   };
 
-  const textHistory = () =>
-    entries.filter((e): e is { kind: 'msg'; msg: ChatMessage } => e.kind === 'msg').map((e) => e.msg);
+  // conversation replayed to the model on later turns: plain messages, plus
+  // answered questions reconstructed as assistant-question/user-answer pairs —
+  // without them every clarified decision would be forgotten a turn later
+  const textHistory = (): ChatMessage[] =>
+    entries.flatMap((e): ChatMessage[] => {
+      if (e.kind === 'msg') return [e.msg];
+      if (e.kind === 'ask' && e.answered) {
+        return [
+          { role: 'assistant', content: (e.preface ? e.preface + '\n\n' : '') + e.ask.question },
+          { role: 'user', content: e.answered },
+        ];
+      }
+      return [];
+    });
 
   const ask = async (question: string) => {
     if (!question.trim() || busy || !enabled) return;

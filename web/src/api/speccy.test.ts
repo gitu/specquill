@@ -50,6 +50,12 @@ describe('streamChat stream termination', () => {
       .rejects.toThrow(/empty reply/);
   });
 
+  it('a malformed data frame is skipped, not fatal', async () => {
+    stub('data: ping\n\n', frame({ delta: 'still ' }), 'data: <html>proxy junk</html>\n\n', frame({ delta: 'alive' }), frame({ done: true }));
+    const r = await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {});
+    expect(r.text).toBe('still alive');
+  });
+
   it('SSE comments (heartbeats) are ignored', async () => {
     stub(': ping\n\n', frame({ delta: 'ok' }), ': ping\n\n', frame({ done: true }));
     const r = await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {});
