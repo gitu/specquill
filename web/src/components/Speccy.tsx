@@ -277,7 +277,7 @@ export function Speccy() {
         </div>
 
         {change && (
-          <div style={sx('border:1px solid var(--reg-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+          <div style={sx('flex:none;border:1px solid var(--reg-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
             <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--reg-bg)')}>
               <span style={sx('font-size:13px')}>⚖</span>
               <span style={sx('font-size:12px;font-weight:700;color:var(--reg)')}>Regulatory change detected</span>
@@ -394,7 +394,7 @@ function AskCard({ preface, ask, answered, busy, onAnswer }: {
 }) {
   const [text, setText] = useState('');
   return (
-    <div style={sx('border:1px solid var(--ai-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+    <div style={sx('flex:none;border:1px solid var(--ai-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--ai-bg)')}>
         <IconSpark size={13} stroke="var(--ai)" width={1.9} />
         <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Speccy asks</span>
@@ -452,7 +452,7 @@ function MessageRow({ msg, streaming }: { msg: ChatMessage; streaming?: boolean 
 
 function DraftResultCard({ result, onReview }: { result: DraftResult; onReview: () => void }) {
   return (
-    <div style={sx('border:1px solid var(--ai-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+    <div style={sx('flex:none;border:1px solid var(--ai-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--ai-bg)')}>
         <IconSpark size={13} stroke="var(--ai)" width={1.9} />
         <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Edits drafted on</span>

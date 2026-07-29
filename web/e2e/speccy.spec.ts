@@ -138,4 +138,12 @@ test('a question after a read_file round renders, and again after an answer', as
   await expect(page.getByText('Follow-up question?').last()).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'gamma', exact: true }).last().click();
   await expect(page.getByText(/noted: gamma/)).toBeVisible({ timeout: 15_000 });
+
+  // regression: cards carry overflow:hidden, which removes the flex minimum —
+  // in a long transcript the scroller's flex layout crushed them to a ~2px
+  // stripe (toBeVisible cannot see clipping, so measure the card itself)
+  const card = page.getByText('Speccy asks').last().locator('..').locator('..');
+  const box = await card.boundingBox();
+  expect(box, 'ask card has no box').toBeTruthy();
+  expect(box!.height).toBeGreaterThan(60);
 });
