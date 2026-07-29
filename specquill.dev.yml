@@ -43,8 +43,10 @@ session:
 
 # dev speccy: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
 # or to a cloud provider — see specquill.example.yml)
+# speccy e2e needs the deterministic mock instead:
+#   python3 scripts/mock-llm.py &   → base_url: http://127.0.0.1:8991/v1, model+quick_model: mock-1
 ai:
   enabled: true
   base_url: http://127.0.0.1:11434/v1
-  model: qwen2.5:7b                  # main tier: chat + draft edits
+  model: qwen2.5:7b                  # main tier: chat + draft edits (tool-capable)
   quick_model: qwen2.5:7b            # fast one-shot tier: commit messages

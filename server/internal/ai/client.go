@@ -19,8 +19,12 @@ import (
 )
 
 type Message struct {
-	Role    string `json:"role"` // system | user | assistant
+	Role    string `json:"role"` // system | user | assistant | tool
 	Content string `json:"content"`
+	// tool-calling round-trip (omitted for plain text messages): an assistant
+	// message carries the calls it requested, a tool message answers one call
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 type Client struct {
@@ -28,7 +32,8 @@ type Client struct {
 	model   string // main (thinking-class): chat, draft edits
 	quick   string // fast one-shot tier: commit messages, titles
 	key     string
-	budget  int // grounding system-prompt cap in bytes (0 = package default)
+	budget  int    // grounding system-prompt cap in bytes (0 = package default)
+	effort  string // reasoning_effort passthrough ("" = omit from requests)
 	http    *http.Client
 }
 
@@ -47,8 +52,20 @@ func New(cfg config.AIConfig) *Client {
 		quick:   quick,
 		key:     key,
 		budget:  cfg.GroundingBudget,
+		effort:  cfg.ReasoningEffort,
 		http:    &http.Client{Timeout: 5 * time.Minute},
 	}
+}
+
+// chatBody assembles a chat-completions request. The configured
+// reasoning_effort rides along when set — OpenAI reasoning models default it
+// server-side and then refuse function tools unless it is explicitly "none".
+func (c *Client) chatBody(model string, msgs []Message, stream bool) map[string]any {
+	body := map[string]any{"model": model, "messages": msgs, "stream": stream}
+	if c.effort != "" {
+		body["reasoning_effort"] = c.effort
+	}
+	return body
 }
 
 func (c *Client) Model() string      { return c.model }
@@ -57,7 +74,26 @@ func (c *Client) QuickModel() string { return c.quick }
 // GroundingBudget is the configured system-prompt cap in bytes (0 = default).
 func (c *Client) GroundingBudget() int { return c.budget }
 
-func (c *Client) request(ctx context.Context, body any) (*http.Response, error) {
+// request posts a chat-completions body, working around one provider quirk:
+// OpenAI reasoning models (gpt-5.x) refuse function tools on /chat/completions
+// unless reasoning_effort is explicitly "none" — they DEFAULT the field
+// server-side, so omitting it does not help. On that specific 400 the request
+// is retried once with reasoning_effort forced to "none" (an explicit
+// ai.reasoning_effort config skips the wasted round trip).
+func (c *Client) request(ctx context.Context, body map[string]any) (*http.Response, error) {
+	res, err := c.post(ctx, body)
+	if err == nil || body["reasoning_effort"] == "none" || !strings.Contains(err.Error(), "reasoning_effort") {
+		return res, err
+	}
+	retry := make(map[string]any, len(body)+1)
+	for k, v := range body {
+		retry[k] = v
+	}
+	retry["reasoning_effort"] = "none"
+	return c.post(ctx, retry)
+}
+
+func (c *Client) post(ctx context.Context, body map[string]any) (*http.Response, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -84,9 +120,7 @@ func (c *Client) request(ctx context.Context, body any) (*http.Response, error) 
 
 // Stream sends the conversation and invokes onDelta for each content chunk.
 func (c *Client) Stream(ctx context.Context, msgs []Message, onDelta func(delta string) error) error {
-	res, err := c.request(ctx, map[string]any{
-		"model": c.model, "messages": msgs, "stream": true,
-	})
+	res, err := c.request(ctx, c.chatBody(c.model, msgs, true))
 	if err != nil {
 		return err
 	}
@@ -133,9 +167,7 @@ func (c *Client) QuickComplete(ctx context.Context, msgs []Message) (string, err
 }
 
 func (c *Client) complete(ctx context.Context, model string, msgs []Message) (string, error) {
-	res, err := c.request(ctx, map[string]any{
-		"model": model, "messages": msgs, "stream": false,
-	})
+	res, err := c.request(ctx, c.chatBody(model, msgs, false))
 	if err != nil {
 		return "", err
 	}

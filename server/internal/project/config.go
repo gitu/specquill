@@ -30,11 +30,19 @@ type SourceDef struct {
 	DefaultBranch string `yaml:"default_branch"` // default: main
 }
 
+// SpeccyConfig tunes the AI assistant per workspace. Instructions are
+// appended to the speccy system prompt (structure/content rules);
+// .specquill/instructions.md is the file-shaped companion for longer rules.
+type SpeccyConfig struct {
+	Instructions string `yaml:"instructions"`
+}
+
 type Config struct {
-	Version    int         `yaml:"version"`
-	Project    string      `yaml:"project"`
-	References []Reference `yaml:"references"`
-	Sources    []SourceDef `yaml:"sources"` // forge-PAT mode source definitions
+	Version    int          `yaml:"version"`
+	Project    string       `yaml:"project"`
+	References []Reference  `yaml:"references"`
+	Sources    []SourceDef  `yaml:"sources"` // forge-PAT mode source definitions
+	Speccy     SpeccyConfig `yaml:"speccy"`
 }
 
 // ParseConfig parses the in-repo config. Unknown keys (the v1 taxonomy/ui

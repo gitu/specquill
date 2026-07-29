@@ -234,6 +234,8 @@ func runSetup(in io.Reader, out io.Writer, configPath string) error {
 		if aiKeyEnv != "" {
 			w("  api_key_env: %s", yamlv(aiKeyEnv))
 		}
+		w("  # reasoning_effort: none   # OpenAI gpt-5.x: required for chat tools (auto-negotiated otherwise)")
+		w("  # grounding_budget: 98304  # prompt-stuffed grounding cap in bytes (default 48KiB)")
 	}
 
 	if err := os.WriteFile(configPath, []byte(b.String()), 0o644); err != nil {

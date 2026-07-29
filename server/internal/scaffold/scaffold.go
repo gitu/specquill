@@ -63,6 +63,7 @@ func Init(dir, project string, chosen []string) error {
 		"index.md":                     "---\nokf_version: \"" + okf.Version + "\"\n---\n\n# Index\n",
 		".specquill/schema.json":         schemaJSON,
 		".specquill/skills/authoring.md": authoringSkill,
+		".specquill/instructions.md":     instructionsStarter,
 	}
 	for _, t := range picked {
 		files[".specquill/skills/"+t.Key+".md"] = t.Skill
@@ -155,19 +156,21 @@ func workspaceReadme(project string, picked map[string]SpecType) string {
 
 func serverConfigStub(project string) string {
 	return `# specquill server config stub for this workspace — merge into your specquill.yml
-repos:
+# (see specquill.example.yml for every option)
+projects:
   - id: ` + strings.ToLower(strings.ReplaceAll(project, " ", "-")) + `
-    url: <git remote url>          # server pushes/fetches with token_env
-    mode: writable
+    remote: <git remote url>       # server pushes/fetches with token_env
     default_branch: main
-    token_env: SPECQUILL_TOKEN
+    token_env: SPECQUILL_TOKEN     # not needed in forge-PAT mode (users bring tokens)
 
 ai:
   enabled: true
   base_url: https://api.openai.com/v1   # any OpenAI-compatible endpoint
-  model: <thinking-class model>          # chat + draft edits
+  model: <thinking-class model>          # chat + draft edits (needs tool support)
   quick_model: <small fast model>        # commit messages, one-shot tasks
   api_key_env: SPECQUILL_AI_KEY
+  # reasoning_effort: none              # OpenAI gpt-5.x: required for chat tools
+  # grounding_budget: 98304             # prompt-stuffed grounding cap (default 48KiB)
 `
 }
 

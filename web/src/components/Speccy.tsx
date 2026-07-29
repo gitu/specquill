@@ -2,23 +2,64 @@ import { useEffect, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
+import { useWorkspace } from '../hooks/useWorkspace';
 import { reqByName } from '../lib/derive';
-import { ChatMessage, DraftResult, draftEdits, streamChat, useSpeccyInfo } from '../api/speccy';
+import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, streamChat, useSpeccyInfo } from '../api/speccy';
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
 
 interface DraftCard { kind: 'draft'; result: DraftResult }
-type Entry = { kind: 'msg'; msg: ChatMessage } | DraftCard;
+type Entry =
+  | { kind: 'msg'; msg: ChatMessage }
+  | { kind: 'tool'; tool: ToolEvent }
+  | { kind: 'ask'; ask: PendingAsk; answered?: string; preface?: string }
+  | DraftCard;
 
 const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'Compare our retention rules to the GDPR spec'];
 
-// The Speccy panel: streaming chat grounded on the branch snapshot, plus the
-// "draft edits" flow that applies model-proposed edits to a speccy branch.
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+// persisted drag-to-resize dimension: panel width / composer height survive
+// reloads; parse failures and quota errors degrade to the default silently
+function useStoredSize(key: string, fallback: number, lo: number, hi: number) {
+  const [size, setSize] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem(key) || '', 10);
+      return Number.isFinite(v) ? clamp(v, lo, hi) : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, String(size)); } catch { /* quota */ }
+  }, [key, size]);
+  return [size, setSize] as const;
+}
+
+/** Pointer-drag helper: onPointerDown handler that streams deltas to onMove. */
+function dragHandler(onMove: (dx: number, dy: number) => void) {
+  return (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const move = (ev: PointerEvent) => onMove(ev.clientX - startX, ev.clientY - startY);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+}
+
+// The Speccy panel: streaming chat grounded on the branch snapshot — with
+// tools to edit workspace files (uncommitted drafts on the workspace branch)
+// and ask clarifying questions — plus the "draft edits" flow for changes.
 export function Speccy() {
   const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
   const pathname = useAppPath();
+  const { ensureWritableBranch } = useWorkspace();
   const info = useSpeccyInfo(app.repoId, app.branch);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [input, setInput] = useState('');
@@ -27,7 +68,21 @@ export function Speccy() {
   const [error, setError] = useState('');
   const scroller = useRef<HTMLDivElement>(null);
 
+  // both windows resize by dragging: the panel at its left edge, the
+  // composer at the grip above it
+  const [panelW, setPanelW] = useStoredSize('specquill-speccy-w', 340, 280, 720);
+  // textarea height; 19px = one line at 12.5px/1.5
+  const [composerH, setComposerH] = useStoredSize('specquill-speccy-input-h', 19, 19, 300);
+  const panelW0 = useRef(0);
+  const composerH0 = useRef(0);
+  const dragPanel = dragHandler((dx) =>
+    setPanelW(clamp(panelW0.current - dx, 280, Math.min(720, Math.floor(window.innerWidth * 0.85)))));
+  const dragComposer = dragHandler((_dx, dy) => setComposerH(clamp(composerH0.current - dy, 19, 300)));
+
   const enabled = info.data?.enabled === true;
+  // edits only on a writable workspace branch — the server refuses protected
+  // branches anyway, the flag just keeps the tools (and UI promise) honest
+  const allowEdits = app.canEdit && !app.isProtectedBranch;
   const change = app.model?.changes.find((c) => c.status === 'triage') || app.model?.changes[0];
   const focusPath = pathname.startsWith('/editor/') ? decodeURI(pathname.slice('/editor/'.length)) : undefined;
 
@@ -35,24 +90,57 @@ export function Speccy() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [entries, streamText]);
 
-  const ask = async (question: string) => {
-    if (!question.trim() || busy || !enabled) return;
+  const runChat = async (messages: ChatMessage[]) => {
     setError('');
-    setInput('');
-    const history = entries.filter((e): e is { kind: 'msg'; msg: ChatMessage } => e.kind === 'msg').map((e) => e.msg);
-    const messages: ChatMessage[] = [...history, { role: 'user', content: question }];
-    setEntries((es) => [...es, { kind: 'msg', msg: { role: 'user', content: question } }]);
     setBusy(true);
     setStreamText('');
     try {
-      const full = await streamChat(app.repoId, { messages, focusPath, branch: app.branch }, setStreamText);
-      setEntries((es) => [...es, { kind: 'msg', msg: { role: 'assistant', content: full } }]);
+      const result = await streamChat(
+        app.repoId,
+        { messages, focusPath, branch: app.branch, allowEdits },
+        setStreamText,
+        (t) => setEntries((es) => [...es, { kind: 'tool', tool: t }]),
+      );
+      if (result.ask) {
+        // any pre-question text lives inside the resume transcript — showing
+        // it via the card avoids doubling it in the replayed history
+        setEntries((es) => [...es, { kind: 'ask', ask: result.ask!, preface: result.text || undefined }]);
+      } else if (result.text) {
+        setEntries((es) => [...es, { kind: 'msg', msg: { role: 'assistant', content: result.text } }]);
+      }
+      if (result.edited) {
+        // speccy saved uncommitted drafts — refresh editors, tree and badges
+        qc.invalidateQueries({ queryKey: ['file', app.repoId, app.branch] });
+        qc.invalidateQueries({ queryKey: ['status', app.repoId, app.branch] });
+        qc.invalidateQueries({ queryKey: ['snapshot', app.repoId, app.branch] });
+        qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
+      }
     } catch (e) {
       setError(String((e as Error).message || e));
     } finally {
       setStreamText(null);
       setBusy(false);
     }
+  };
+
+  const textHistory = () =>
+    entries.filter((e): e is { kind: 'msg'; msg: ChatMessage } => e.kind === 'msg').map((e) => e.msg);
+
+  const ask = async (question: string) => {
+    if (!question.trim() || busy || !enabled) return;
+    setInput('');
+    const messages: ChatMessage[] = [...textHistory(), { role: 'user', content: question }];
+    setEntries((es) => [...es, { kind: 'msg', msg: { role: 'user', content: question } }]);
+    await runChat(messages);
+  };
+
+  // answering a pending speccy question: replay the conversation + the tool
+  // transcript the server handed back, plus the answer as the tool result
+  const answerAsk = async (index: number, ask: PendingAsk, answer: string) => {
+    if (busy || !answer.trim()) return;
+    const history = textHistory();
+    setEntries((es) => es.map((e, j) => (j === index && e.kind === 'ask' ? { ...e, answered: answer } : e)));
+    await runChat([...history, ...ask.resume, { role: 'tool', tool_call_id: ask.callId, content: answer }]);
   };
 
   const draft = async () => {
@@ -81,7 +169,13 @@ export function Speccy() {
   };
 
   return (
-    <aside style={sx('width:340px;flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column')}>
+    <aside style={{ ...sx('flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;position:relative'), width: panelW, maxWidth: '92vw' }}>
+      {/* left-edge resize handle */}
+      <div
+        onPointerDown={(e) => { panelW0.current = panelW; dragPanel(e); }}
+        title="drag to resize"
+        style={sx('position:absolute;left:-3px;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:6')}
+      />
       <div style={sx('height:46px;flex:none;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border)')}>
         <IconSpark size={16} stroke="var(--ai)" />
         <span style={sx('font-weight:700;font-size:13.5px')}>Speccy</span>
@@ -101,6 +195,14 @@ export function Speccy() {
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>{app.branch}</span>
           {info.data?.groundedSources?.map((src) => (
             <span key={src} title="Granted reference source in Speccy's context" style={sx('padding:2px 7px;border-radius:5px;background:var(--reg-bg);border:1px solid var(--reg-line);color:var(--reg)')}>~{src}</span>
+          ))}
+          {enabled && (allowEdits ? (
+            <span title="Speccy can edit files on this branch — changes land as uncommitted drafts" style={sx('padding:2px 7px;border-radius:5px;background:var(--ai-bg);border:1px solid var(--ai-line);color:var(--ai)')}>✎ can edit</span>
+          ) : app.canEdit ? (
+            <span onClick={() => void ensureWritableBranch()} title="Protected branch — switch to your workspace to let Speccy edit files"
+              style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);cursor:pointer')}>read-only · switch to edit</span>
+          ) : (
+            <span title="Viewer role — Speccy answers questions but cannot edit" style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3)')}>read-only</span>
           ))}
         </div>
 
@@ -130,6 +232,10 @@ export function Speccy() {
         {entries.map((e, i) =>
           e.kind === 'msg' ? (
             <MessageRow key={i} msg={e.msg} />
+          ) : e.kind === 'tool' ? (
+            <ToolChip key={i} tool={e.tool} onOpen={(p) => nav('/editor/' + p)} />
+          ) : e.kind === 'ask' ? (
+            <AskCard key={i} preface={e.preface} ask={e.ask} answered={e.answered} busy={busy} onAnswer={(a) => void answerAsk(i, e.ask, a)} />
           ) : (
             <DraftResultCard key={i} result={e.result} onReview={() => reviewDraft(e.result)} />
           ),
@@ -148,7 +254,15 @@ export function Speccy() {
         )}
       </div>
 
-      <div style={sx('flex:none;padding:12px 14px;border-top:1px solid var(--border)')}>
+      <div style={sx('flex:none;padding:12px 14px;border-top:1px solid var(--border);position:relative')}>
+        {/* composer resize grip (drag up to grow the input) */}
+        <div
+          onPointerDown={(e) => { composerH0.current = composerH; dragComposer(e); }}
+          title="drag to resize"
+          style={sx('position:absolute;top:-4px;left:0;right:0;height:8px;cursor:ns-resize;display:flex;align-items:center;justify-content:center')}
+        >
+          <span style={sx('width:34px;height:3px;border-radius:2px;background:var(--border-2)')} />
+        </div>
         <div style={sx('border:1px solid var(--border-2);border-radius:11px;background:var(--surface-2);padding:9px 11px')}>
           {focusPath && (
             <div style={sx("display:flex;align-items:center;gap:6px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;font-size:10px")}>
@@ -163,7 +277,7 @@ export function Speccy() {
               placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in specquill.yml to enable Speccy'}
               disabled={!enabled || busy}
               rows={1}
-              style={sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5')}
+              style={{ ...sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5'), height: composerH, overflowY: 'auto' }}
             />
             <button onClick={() => void ask(input)} disabled={!enabled || busy || !input.trim()}
               style={sx('width:28px;height:28px;flex:none;border:none;border-radius:8px;background:var(--ai);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;' + (!enabled || busy || !input.trim() ? 'opacity:.5' : ''))}>
@@ -173,6 +287,73 @@ export function Speccy() {
         </div>
       </div>
     </aside>
+  );
+}
+
+// ToolChip: one executed tool call — edit/create/read activity in the flow.
+function ToolChip({ tool, onOpen }: { tool: ToolEvent; onOpen: (path: string) => void }) {
+  const err = tool.status === 'error';
+  const icon = tool.name === 'read_file' ? '👁' : tool.name === 'create_file' ? '+' : '✎';
+  const openable = !!tool.path && !err && tool.name !== 'read_file' && !tool.path.startsWith('~');
+  return (
+    <div style={sx("display:flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid " + (err ? 'var(--reg-line)' : 'var(--ai-line)') + ";border-radius:8px;background:" + (err ? 'var(--reg-bg)' : 'var(--ai-bg)') + ";font-family:'JetBrains Mono',monospace;font-size:11px;color:" + (err ? 'var(--reg)' : 'var(--ai)'))}>
+      <span>{icon}</span>
+      <span style={sx('font-weight:600')}>{tool.name.replace(/_/g, ' ')}</span>
+      {tool.path && (
+        <span
+          onClick={openable ? () => onOpen(tool.path!) : undefined}
+          style={openable ? { cursor: 'pointer', textDecoration: 'underline' } : undefined}
+        >
+          {tool.path}
+        </span>
+      )}
+      {err && <span title={tool.detail} style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px')}>{tool.detail}</span>}
+    </div>
+  );
+}
+
+// AskCard: a pending speccy question — option chips plus a free-text answer.
+function AskCard({ preface, ask, answered, busy, onAnswer }: {
+  preface?: string;
+  ask: PendingAsk;
+  answered?: string;
+  busy: boolean;
+  onAnswer: (answer: string) => void;
+}) {
+  const [text, setText] = useState('');
+  return (
+    <div style={sx('border:1px solid var(--ai-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+      <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--ai-bg)')}>
+        <IconSpark size={13} stroke="var(--ai)" width={1.9} />
+        <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Speccy asks</span>
+      </div>
+      <div style={sx('padding:11px 13px;font-size:12.5px;line-height:1.6;color:var(--text)')}>
+        {preface && <div style={sx('margin-bottom:8px;white-space:pre-wrap;color:var(--text-2)')}>{preface}</div>}
+        <div style={sx('font-weight:600')}>{ask.question}</div>
+        {answered ? (
+          <div style={sx('margin-top:8px;font-size:12px;color:var(--text-2)')}>↳ {answered}</div>
+        ) : (
+          <>
+            <div style={sx('margin-top:9px;display:flex;flex-wrap:wrap;gap:6px')}>
+              {(ask.options || []).map((o) => (
+                <button key={o} disabled={busy} onClick={() => onAnswer(o)}
+                  style={sx('padding:5px 11px;border:1px solid var(--ai-line);border-radius:20px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11.5px;cursor:pointer;' + (busy ? 'opacity:.5' : ''))}>
+                  {o}
+                </button>
+              ))}
+            </div>
+            <input
+              value={text}
+              placeholder="or answer in your own words ⏎"
+              disabled={busy}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) onAnswer(text); }}
+              style={sx('margin-top:8px;width:100%;box-sizing:border-box;padding:6px 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:12px;outline:none')}
+            />
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

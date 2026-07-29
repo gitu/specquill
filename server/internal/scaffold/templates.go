@@ -219,6 +219,24 @@ const schemaJSON = `{
 }
 `
 
+// instructionsStarter seeds .specquill/instructions.md — the workspace's own
+// structure/content expectations, pinned into every speccy prompt alongside
+// the skills (config.yml speccy.instructions is the short inline companion).
+const instructionsStarter = `---
+type: Instructions
+title: Workspace instructions
+---
+
+# Workspace instructions
+
+Rules the AI assistant follows for documents in THIS workspace — extend them
+with your team's structure and content expectations. Examples to adapt:
+
+- Every requirement gets a rationale paragraph before its normative statements.
+- Specs describe current behavior only; planned work belongs in change records.
+- Use tables for field mappings, mermaid flowcharts for branching flows.
+`
+
 const authoringSkill = `---
 type: Skill
 title: Authoring in this workspace
