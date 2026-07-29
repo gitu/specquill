@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assemble, fmToJS, setFmValue } from './frontmatter';
+import { assemble, fmToJS, setFmValue, todayStr, touchUpdated } from './frontmatter';
 import { stripFrontmatter } from './model';
 
 const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '../../../repo');
@@ -68,5 +68,34 @@ describe('setFmValue', () => {
     expect(none).toBe('');
     const next = setFmValue(none, 'status', 'draft');
     expect(assemble(next, body)).toBe('---\nstatus: draft\n---\n# Title\n\nbody\n');
+  });
+});
+
+describe('touchUpdated', () => {
+  const now = new Date(2026, 6, 29); // 2026-07-29 local
+
+  it('formats today as local YYYY-MM-DD', () => {
+    expect(todayStr(now)).toBe('2026-07-29');
+  });
+
+  it('bumps a stale updated date and preserves neighbours', () => {
+    const raw = readFileSync(join(REPO, 'requirements/REQ-042.md'), 'utf8');
+    const { fm } = stripFrontmatter(raw);
+    const next = touchUpdated(fm, now);
+    expect(fmToJS(next).updated).toBe('2026-07-29');
+    expect(next).toContain('  - type: regulatory');
+  });
+
+  it('adds the key when frontmatter exists without one', () => {
+    expect(touchUpdated('status: draft', now)).toBe('status: draft\nupdated: 2026-07-29');
+  });
+
+  it('is byte-stable when updated is already today', () => {
+    const fm = 'status: draft\nupdated:   2026-07-29   # note';
+    expect(touchUpdated(fm, now)).toBe(fm);
+  });
+
+  it('leaves documents without frontmatter alone', () => {
+    expect(touchUpdated('', now)).toBe('');
   });
 });

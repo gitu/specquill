@@ -164,6 +164,10 @@ type AIConfig struct {
 	// empty = fall back to Model
 	QuickModel string `yaml:"quick_model"`
 	APIKeyEnv  string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
+	// ReasoningEffort is passed through as `reasoning_effort` when set.
+	// OpenAI reasoning models (gpt-5.x) default it on /chat/completions and
+	// then REFUSE function tools — set "none" there so the chat tools work.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 	// GroundingBudget caps the speccy system-prompt size in bytes
 	// (0 = package default; grows automatically when references exist).
 	GroundingBudget int `yaml:"grounding_budget"`

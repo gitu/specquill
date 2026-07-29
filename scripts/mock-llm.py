@@ -45,7 +45,50 @@ class Handler(BaseHTTPRequestHandler):
         system = next((m['content'] for m in body['messages'] if m['role'] == 'system'), '')
         user = next((m['content'] for m in reversed(body['messages']) if m['role'] == 'user'), '')
 
-        if 'Reply with ONLY a JSON object' in system:
+        # deterministic tool behavior for the chat-tools e2e: the user message
+        # carries a directive, the mock emits the matching tool_calls round
+        # (arguments fragmented on purpose to exercise accumulation)
+        tool_call = None
+        last = body['messages'][-1]
+        if body.get('tools') and last['role'] == 'tool':
+            name = ''
+            for m in reversed(body['messages']):
+                if m['role'] == 'assistant' and m.get('tool_calls'):
+                    name = next((tc['function']['name'] for tc in m['tool_calls']
+                                 if tc['id'] == last.get('tool_call_id')), '')
+                    break
+            if name == 'ask_user' and 'READFIRST' in last['content']:
+                # answered question → the model consults a file next
+                tool_call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/txn-report.md'})}
+                reply = ''
+            elif name == 'ask_user':
+                reply = f"(mock) noted: {last['content']}."
+            elif name == 'read_file':
+                # after reading, the model asks a follow-up — the exact chain
+                # reported from gpt-5.x (answer → read_file → next question)
+                tool_call = {'name': 'ask_user',
+                             'arguments': json.dumps({'question': 'Follow-up question?', 'options': ['gamma', 'delta']})}
+                reply = 'Read it; one point is still open.'
+            elif last['content'].startswith('ERROR'):
+                reply = f"(mock) the edit failed: {last['content']}"
+            else:
+                reply = "(mock) applied the edit as an uncommitted draft — review it in the changes drawer."
+        elif body.get('tools') and (m := re.search(r'EDIT (\S+) REPLACE "([^"]+)" WITH "([^"]+)"', user)):
+            tool_call = {'name': 'edit_file',
+                         'arguments': json.dumps({'path': m.group(1), 'search': m.group(2), 'replace': m.group(3)})}
+            reply = ''
+        elif body.get('tools') and 'READFIRST' in user:
+            tool_call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/txn-report.md'})}
+            reply = ''
+        elif body.get('tools') and 'ASKME' in user:
+            # content BEFORE the tool call, like real providers stream it —
+            # the preface must reach the question card
+            tool_call = {'name': 'ask_user',
+                         'arguments': json.dumps({'question': 'Which option do you want?', 'options': ['alpha', 'beta']})}
+            reply = 'I checked the spec; one point is unresolved.'
+        elif 'word title' in system:
+            reply = 'Mock Chat Title'
+        elif 'Reply with ONLY a JSON object' in system:
             reply = DRAFT_REPLY
         else:
             # workspace files head `## <path>`; grounded reference files head
@@ -67,10 +110,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
             try:
+                # content first, then tool_calls — the order real providers use
                 for i in range(0, len(reply), 24):
                     chunk = json.dumps({'choices': [{'delta': {'content': reply[i:i + 24]}}]})
                     self._chunk(f"data: {chunk}\n\n")
                     time.sleep(0.01)
+                if tool_call:
+                    args = tool_call['arguments']
+                    half = len(args) // 2
+                    frags = [
+                        {'index': 0, 'id': 'call_mock_1', 'type': 'function',
+                         'function': {'name': tool_call['name'], 'arguments': ''}},
+                        {'index': 0, 'function': {'arguments': args[:half]}},
+                        {'index': 0, 'function': {'arguments': args[half:]}},
+                    ]
+                    for f in frags:
+                        chunk = json.dumps({'choices': [{'delta': {'tool_calls': [f]}}]})
+                        self._chunk(f"data: {chunk}\n\n")
+                        time.sleep(0.01)
                 self._chunk("data: [DONE]\n\n")
                 self._chunk('')
             except (BrokenPipeError, ConnectionResetError):

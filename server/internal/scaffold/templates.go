@@ -201,7 +201,7 @@ title: Maintaining the glossary
 }
 
 const schemaJSON = `{
-  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "updated"],
+  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "created", "updated"],
   "fields": {
     "id": { "label": "ID", "type": "mono" },
     "type": { "label": "Type", "type": "text" },
@@ -213,9 +213,28 @@ const schemaJSON = `{
     "satisfies": { "label": "Satisfies", "type": "links" },
     "maps_to": { "label": "Maps to", "type": "links" },
     "verifies": { "label": "Verified by", "type": "links" },
+    "created": { "label": "Created", "type": "date" },
     "updated": { "label": "Updated", "type": "date" }
   }
 }
+`
+
+// instructionsStarter seeds .specquill/instructions.md — the workspace's own
+// structure/content expectations, pinned into every speccy prompt alongside
+// the skills (config.yml speccy.instructions is the short inline companion).
+const instructionsStarter = `---
+type: Instructions
+title: Workspace instructions
+---
+
+# Workspace instructions
+
+Rules the AI assistant follows for documents in THIS workspace — extend them
+with your team's structure and content expectations. Examples to adapt:
+
+- Every requirement gets a rationale paragraph before its normative statements.
+- Specs describe current behavior only; planned work belongs in change records.
+- Use tables for field mappings, mermaid flowcharts for branching flows.
 `
 
 const authoringSkill = `---

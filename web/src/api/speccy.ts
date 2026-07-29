@@ -1,10 +1,25 @@
-// Speccy API: SSE chat streaming + draft-edit application.
+// Speccy API: SSE chat streaming (with tool activity) + draft-edit application.
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
 
-export interface ChatMessage { role: 'user' | 'assistant'; content: string }
+// Chat wire messages round-trip through the server untouched; tool_calls /
+// tool_call_id only appear on the resume path of a pending ask_user question.
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+}
 export interface SpeccyInfo { enabled: boolean; model?: string; groundedSources?: string[] }
 export interface DraftResult { branch: string; summary: string; applied: string[]; failures: string[] }
+
+/** One executed tool call, streamed for display. */
+export interface ToolEvent { name: string; path?: string; status: 'ok' | 'error'; detail?: string }
+
+/** A pending ask_user question: answer it by replaying resume + a tool message. */
+export interface PendingAsk { callId: string; question: string; options?: string[]; resume: ChatMessage[] }
+
+export interface ChatResult { text: string; ask?: PendingAsk; edited: boolean }
 
 // info is per-project: grounded sources depend on the active project's
 // references, read from the selected branch. repoId scopes the probe (omit it
@@ -20,15 +35,18 @@ export function useSpeccyInfo(repoId?: string, branch?: string) {
 
 /**
  * POST the active project's speccy/chat and consume the SSE stream. onDelta
- * fires per chunk; resolves with the full reply text. repoId targets the active
- * project so grounding follows the project switcher (omit → sole-project alias).
+ * fires per chunk with the accumulated text, onTool per executed tool call.
+ * Resolves with the reply text plus a pending ask_user question, if the model
+ * paused for one. repoId targets the active project so grounding follows the
+ * project switcher (omit → sole-project alias).
  */
 export async function streamChat(
   repoId: string | undefined,
-  body: { messages: ChatMessage[]; focusPath?: string; branch?: string },
+  body: { messages: ChatMessage[]; focusPath?: string; branch?: string; allowEdits?: boolean },
   onDelta: (text: string) => void,
+  onTool?: (t: ToolEvent) => void,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<ChatResult> {
   const res = await fetch(repoId ? `/api/repos/${encodeURIComponent(repoId)}/speccy/chat` : '/api/speccy/chat', {
     method: 'POST',
     headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
@@ -43,7 +61,7 @@ export async function streamChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let full = '';
+  const result: ChatResult = { text: '', edited: false };
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -54,16 +72,55 @@ export async function streamChat(
       buffer = buffer.slice(idx + 2);
       const line = frame.trim();
       if (!line.startsWith('data:')) continue;
-      const payload = JSON.parse(line.slice(5).trim()) as { delta?: string; error?: string; done?: boolean };
+      let payload: {
+        delta?: string; error?: string; done?: boolean;
+        tool?: ToolEvent;
+        ask?: { callId: string; question: string; options?: string[] };
+        resume?: ChatMessage[];
+      };
+      try {
+        payload = JSON.parse(line.slice(5).trim());
+      } catch {
+        // proxies can inject non-JSON data lines; a single bad frame must not
+        // kill the stream (and the console keeps the evidence)
+        console.warn('speccy: skipping unparseable SSE frame:', line.slice(0, 200));
+        continue;
+      }
       if (payload.error) throw new Error(payload.error);
       if (payload.delta) {
-        full += payload.delta;
-        onDelta(full);
+        result.text += payload.delta;
+        onDelta(result.text);
       }
-      if (payload.done) return full;
+      if (payload.tool) {
+        if (payload.tool.status === 'ok' && (payload.tool.name === 'edit_file' || payload.tool.name === 'create_file')) {
+          result.edited = true;
+        }
+        onTool?.(payload.tool);
+      }
+      if (payload.ask) {
+        result.ask = { ...payload.ask, resume: payload.resume || [] };
+      }
+      if (payload.done) return result;
     }
   }
-  return full;
+  // the stream closed without the server's terminal {done} event — a dropped
+  // connection (proxy idle timeout, network) that would otherwise pass for a
+  // finished reply. A pending ask is still usable; anything else is an error.
+  console.warn('speccy: stream closed without done', { chars: result.text.length, ask: !!result.ask, edited: result.edited });
+  if (result.ask) return result;
+  throw new Error(
+    result.text
+      ? `connection lost mid-reply (after ${result.text.length} characters) — check the proxy's SSE/idle timeout`
+      : 'connection lost before Speccy answered — check the network and the proxy\'s SSE/idle timeout',
+  );
+}
+
+/** Quick-tier chat naming; the caller keeps its fallback title on failure. */
+export function nameChat(repoId: string, text: string): Promise<{ title: string }> {
+  return api<{ title: string }>(`/api/repos/${encodeURIComponent(repoId)}/speccy/title`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
 }
 
 export function draftEdits(repoId: string | undefined, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {

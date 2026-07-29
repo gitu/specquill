@@ -10,6 +10,8 @@ const H = { 'X-SpecQuill': '1' };
 // a doc inside a folder catches an opener that resolves against the doc dir
 const DOC = `requirements/scratch-props-${Date.now().toString(36)}.md`;
 const BODY = '---\ntitle: Props scratch\nstatus: draft\nupdated: 2026-05-30\nanchors: [props-a]\ndrivers:\n  - type: regulatory\n    ref: regulations/mifid-ii.md#rts-22-art-26\n---\n# Props scratch\n\n## Props anchor {#props-a}\n\n## Retention Rules\n\nbody\n';
+// local YYYY-MM-DD, same as the SPA's todayStr (property edits auto-bump `updated`)
+const TODAY = (() => { const d = new Date(), p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
 
 async function wsBranch(request: APIRequestContext): Promise<string> {
   const res = await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} });
@@ -69,9 +71,11 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('jurisdiction: EU');
 
-  // removing it restores the document byte-identically (nothing else was touched)
+  // removing it restores the document byte-identically — except `updated`,
+  // which the property edits auto-bumped to today
   await page.getByTitle('remove jurisdiction').click();
-  await expect.poll(() => fileContent(request, branch), { timeout: 15_000 }).toBe(BODY);
+  await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
+    .toBe(BODY.replace('updated: 2026-05-30', `updated: ${TODAY}`));
 
   // picking an option from the popup writes it
   await status.click();

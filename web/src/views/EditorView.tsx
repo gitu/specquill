@@ -8,7 +8,7 @@ import { useApp } from '../state/AppContext';
 import { useFileAtHead, useFileQuery, useSaveFile } from '../api/hooks';
 import { api, rawUrl, uploadAsset } from '../api/client';
 import { esc, isReservedMd, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
-import { assemble } from '../lib/frontmatter';
+import { assemble, fmToJS, touchUpdated } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
@@ -203,7 +203,7 @@ export function EditorView() {
       if (fresh == null) return null;
       const nl = fresh.endsWith('\n') ? fresh : fresh + '\n';
       const curFm = stripFrontmatter(rawRef.current).fm;
-      return curFm ? assemble(curFm, '\n' + nl) : nl;
+      return curFm ? assemble(touchUpdated(curFm), '\n' + nl) : nl;
     },
   });
   rawRef.current = draft.raw;
@@ -232,10 +232,15 @@ export function EditorView() {
   const onBodyChange = useCallback((md: string) => {
     const curFm = stripFrontmatter(rawRef.current).fm;
     const nl = md.endsWith('\n') ? md : md + '\n';
-    setRaw(curFm ? assemble(curFm, '\n' + nl) : nl);
+    setRaw(curFm ? assemble(touchUpdated(curFm), '\n' + nl) : nl);
   }, [setRaw]);
   const onFmChange = useCallback((nextFm: string) => {
-    setRaw(assemble(nextFm, stripFrontmatter(rawRef.current).body));
+    // a property edit bumps `updated` — unless the edit IS a date override
+    // (created/updated changed by hand), which must win over the auto-bump
+    const prev = fmToJS(stripFrontmatter(rawRef.current).fm);
+    const next = fmToJS(nextFm);
+    const dateOverride = prev.updated !== next.updated || prev.created !== next.created;
+    setRaw(assemble(dateOverride ? nextFm : touchUpdated(nextFm), stripFrontmatter(rawRef.current).body));
   }, [setRaw]);
   const onRawChange = useCallback((raw: string) => {
     // typing in source mode on a protected branch triggers the workspace

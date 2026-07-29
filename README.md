@@ -110,8 +110,12 @@ Key properties:
   scaffolds a new workspace repo: folder skeleton per chosen document family
   (requirements, specs, regulations, data-mappings, changes, decisions, glossary),
   the `.specquill/schema.json` property schema, starter documents, a server-config
-  stub — and **AI authoring skills** under `.specquill/skills/` that the speccy pins
-  into its system prompt, so it drafts requirements/specs following your house rules.
+  stub — and the speccy's workspace-side brain: **authoring skills** under
+  `.specquill/skills/`, an **instructions** starter (`.specquill/instructions.md`,
+  with `speccy.instructions` in `config.yml` as the short inline form) and the
+  **project memory** convention (`.specquill/memory/`, one decision per file).
+  All of it is pinned into the system prompt, versioned in git, and reviewed
+  like any other change.
 - **Two model tiers.** `ai.model` is the main (thinking-class) tier for chat and
   draft edits; `ai.quick_model` is a fast one-shot tier for small tasks. Commit
   messages are auto-drafted from the uncommitted diff on the quick tier
@@ -124,6 +128,25 @@ Key properties:
   validates them (impacted files only, unique match), and applies them as
   **uncommitted saves on a `speccy/<change>` branch** — the human reviews via the
   normal status → commit → merge flow. `scripts/mock-llm.py` is a keyless dev provider.
+- **Chat tools.** On a writable workspace branch the chat can act directly:
+  `read_file`/`list_files`/`search` (full files, listings and text search over
+  the workspace AND **every selected reference source** — `grounding: true`
+  only decides which sources are additionally excerpted into the prompt, so
+  large implementation repos stay explorable without prompt-stuffing),
+  `edit_file`/`create_file` (unique search/replace or new documents —
+  always **uncommitted drafts** on the current branch, never on protected ones;
+  frontmatter must still parse and `created:`/`updated:` are maintained
+  server-side), and `ask_user` (a clarifying question with option chips that
+  pauses the conversation). Tool descriptions carry the workspace's own
+  vocabulary — statuses, schema enums, family folders, ID patterns. Extra
+  authoring rules live in `.specquill/instructions.md` and/or
+  `speccy.instructions` in `.specquill/config.yml`, pinned into every prompt
+  next to the skills. Speccy interviews rather than assumes: undefined
+  behavior becomes pointed `ask_user` questions grounded in what the
+  referenced repositories already do, and durable answers are persisted as
+  **project memory** — one decision per file under `.specquill/memory/`
+  (merge-friendly by construction), pinned above the specs in every
+  conversation and reviewed/committed like any other workspace change.
 
 ## Run (dev)
 
@@ -165,8 +188,8 @@ and credential-free; access rides each user's own token:
 | lives in server YAML | lives in `.specquill/config.yml` (in the repo) | lives with the user |
 |---|---|---|
 | forge kind + base URL (`auth.forge`) | reference **source definitions** (`sources:` — name, https remote on an allowlisted host, branch) | the PAT (browser localStorage + RAM-only session vault) |
-| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths, speccy grounding) | identity + git author (forge `/user`) |
-| optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema, AI skills (as before) | deployment role (forge permission on the main project, refreshed each login) |
+| the workspace repo (`projects:` — remote, default branch, content root) | reference **selection** (`references:` — paths filter, `grounding:` = prompt excerpting; every selected source is chat-tool-explorable) | identity + git author (forge `/user`) |
+| optional: scopes / token-creation link overrides, `admin_emails`, `default_role` floor | taxonomy, entities, views, schema — and the speccy's brain: skills, `speccy.instructions`, `instructions.md`, `memory/` | deployment role (forge permission on the main project, refreshed each login) |
 | **no tokens, no source catalog** (a top-level `sources:` block is rejected) | | per-user clones under `data/…/repos/u<id>/` |
 
 **Local-auth mode (`auth.local`, the v2 developer setup)** — the server owns shared

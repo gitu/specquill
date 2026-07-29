@@ -78,7 +78,7 @@ export function PropertiesForm({ fm, body, schema, files, onChange, onOpenPath }
             <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
               <Field
                 fieldKey={key}
-                type={def.type || (key === 'updated' ? 'date' : 'text')}
+                type={def.type || (key === 'updated' || key === 'created' ? 'date' : 'text')}
                 enumValues={def.values}
                 options={optionsFor(key, def)}
                 value={values[key]}

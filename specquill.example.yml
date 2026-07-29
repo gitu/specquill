@@ -1,9 +1,9 @@
 # specquill server configuration (copy to specquill.yml and adjust — or run
 # `specquill setup` to generate one interactively)
 
-listen: ":8080"
+listen: ":8080"                     # default :8080
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
-base_url: https://specquill.example.com
+base_url: https://specquill.example.com   # public URL (share links, forge redirects)
 
 # Store (users, sessions, workspace claims): an embedded SQLite
 # file. Defaults to <data_dir>/specquill.db, so this block is optional — set
@@ -20,6 +20,11 @@ projects:
     default_branch: main
     token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
     # content_root: docs/specs           # monorepo: workspace lives in a subfolder
+    # sync_interval: 2m                  # remote fetch cadence (default 2m; local-auth mode)
+    # Branches that never take direct writes or commits — they only move via
+    # merges from a workspace branch. Defaults to [default_branch]; the first
+    # edit on a protected branch auto-switches the user to ws/<user>.
+    # protected_branches: [main]
     # Optional, read-only: show the branch's open merge request and its
     # comments from the git host. SpecQuill merges directly and has no in-app
     # review, so this is where forge review feedback shows up.
@@ -37,9 +42,11 @@ projects:
 # sources:
 #   # git: a read-only input repo, fetched and never written
 #   - name: regulations
-#     kind: git
+#     kind: git                          # git (default) | url | openapi | confluence
 #     remote: https://github.com/acme/regulations.git
-#     sync_interval: 5m
+#     # default_branch: main             # branch that is snapshotted (default main)
+#     # token_env: SPECQUILL_TOKEN_REGS  # only for private remotes
+#     sync_interval: 5m                  # default 5m
 
   # importers mirror non-git sources into read-only repos (materialized locally,
   # refreshed on sync_interval or on demand via POST /api/sources/{name}/sync):
@@ -100,18 +107,40 @@ auth:
   # (none = users only reach repos explicitly granted to them)
   # default_role: editor
 
-session:
-  ttl: 10m
-  cookie_secure: true
+  # Identity every request runs as when the server is started with -dev —
+  # local development only, ignored otherwise.
+  # dev_user:
+  #   name: Flo Dev
+  #   email: flo@dev.local
 
-# Speccy: any OpenAI-compatible chat-completions endpoint.
+session:
+  ttl: 10m               # idle timeout — expiry slides on every authenticated request (default 10m)
+  cookie_secure: true    # default true; disable only for plain-http local setups
+
+# Speccy (AI assistant): any OpenAI-compatible chat-completions endpoint.
+# The chat uses function tools (read/list/search files, ask the user,
+# edit/create documents) — pick a main model with tool support. Workspace-side
+# tuning lives in the repo, not here: authoring skills (.specquill/skills/),
+# extended instructions (.specquill/instructions.md or `speccy.instructions`
+# in .specquill/config.yml) and project memory (.specquill/memory/).
 ai:
   enabled: true
-  # OpenAI:  https://api.openai.com/v1                                model: gpt-4o-mini
+  # OpenAI:  https://api.openai.com/v1                                model: gpt-5.x / gpt-4o
   # Gemini:  https://generativelanguage.googleapis.com/v1beta/openai  model: gemini-2.0-flash
-  # Ollama:  http://127.0.0.1:11434/v1                                model: llama3.1 (no key)
+  # Ollama:  http://127.0.0.1:11434/v1                                model: qwen2.5:7b (no key)
   base_url: https://api.openai.com/v1
-  model: gpt-4o                      # main tier (thinking-class): chat + draft edits
+  model: gpt-4o                      # main tier (thinking-class, tool-capable): chat + draft edits
   quick_model: gpt-4o-mini           # fast one-shot tier: commit messages, titles
-  api_key_env: SPECQUILL_AI_KEY
+  api_key_env: SPECQUILL_AI_KEY      # env var holding the key; omit for keyless local providers
+  # OpenAI reasoning models (gpt-5.x) refuse function tools on
+  # /chat/completions unless reasoning_effort is explicitly "none". The
+  # client detects that refusal and retries with "none" automatically;
+  # setting it here just skips the wasted round trip. Omit for providers
+  # that don't know the parameter.
+  # reasoning_effort: none
+  # Byte cap for the prompt-stuffed grounding (workspace snapshot + sources
+  # marked `grounding: true`). Default 48KiB; raise it for models with big
+  # contexts. Everything selected stays reachable through the chat's
+  # list_files/search/read_file tools regardless of this cap.
+  # grounding_budget: 98304
 

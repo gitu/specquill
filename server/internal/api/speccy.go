@@ -3,9 +3,12 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
@@ -24,7 +27,8 @@ func (s *Server) speccyInfo(w http.ResponseWriter, r *http.Request) {
 		info["model"] = s.ai.Model()
 		if proj := s.speccyProject(r); proj != nil {
 			names := []string{}
-			for _, src := range s.groundingSources(r, proj, r.URL.Query().Get("branch")) {
+			_, grounded := s.resolveSources(r, proj, r.URL.Query().Get("branch"))
+			for _, src := range grounded {
 				names = append(names, src.Name)
 			}
 			info["groundedSources"] = names
@@ -78,19 +82,40 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		Messages  []ai.Message `json:"messages"`
 		FocusPath string       `json:"focusPath"`
 		Branch    string       `json:"branch"`
+		// AllowEdits opts the conversation into the write tools; the server
+		// still refuses protected branches regardless of what the client asks
+		AllowEdits bool `json:"allowEdits"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) == 0 {
 		jsonError(w, http.StatusBadRequest, "messages required")
 		return
 	}
-	files, err := repo.Snapshot(repo.ResolveRef(body.Branch))
+	branch := repo.ResolveRef(body.Branch)
+	files, err := repo.Snapshot(branch)
 	if err != nil {
 		gitFail(w, err)
 		return
 	}
-	refs := s.groundingSources(r, repo, body.Branch)
+	sources, grounded := s.resolveSources(r, repo, body.Branch)
+	instructions := ""
+	if cfg := inRepoConfig(repo, body.Branch); cfg != nil {
+		instructions = cfg.Speccy.Instructions
+	}
+	writable := body.AllowEdits && repo.Writable() && !repo.Repo.Cfg.IsProtected(branch)
 
-	system := ai.GroundingPrompt(files, refs, body.FocusPath, s.ai.GroundingBudget())
+	system := ai.GroundingPrompt(files, grounded, body.FocusPath, s.ai.GroundingBudget(), instructions)
+	system += ai.ToolRules // read_file/ask_user are always registered
+	if len(sources) > 0 {
+		names := make([]string, 0, len(sources))
+		for _, src := range sources {
+			names = append(names, "~"+src.Name)
+		}
+		sort.Strings(names)
+		system += "\nSelected reference sources — explore them with list_files/search/read_file even when not excerpted above: " + strings.Join(names, ", ") + "\n"
+	}
+	if writable {
+		system += ai.EditingRules
+	}
 	msgs := append([]ai.Message{{Role: "system", Content: system}}, body.Messages...)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -100,18 +125,79 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		jsonError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	var wmu sync.Mutex
 	send := func(v any) {
 		raw, _ := json.Marshal(v)
+		wmu.Lock()
 		fmt.Fprintf(w, "data: %s\n\n", raw)
 		flusher.Flush()
+		wmu.Unlock()
 	}
-	err = s.ai.Stream(r.Context(), msgs, func(delta string) error {
-		send(map[string]string{"delta": delta})
+	// heartbeat: thinking models can stay silent for minutes; without bytes on
+	// the wire, reverse proxies kill the connection at their idle timeout and
+	// the chat "just stops" with nothing in any log. SSE comments are invisible
+	// to the client parser.
+	hbDone := make(chan struct{})
+	defer close(hbDone)
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbDone:
+				return
+			case <-t.C:
+				wmu.Lock()
+				fmt.Fprint(w, ": ping\n\n")
+				flusher.Flush()
+				wmu.Unlock()
+			}
+		}
+	}()
+
+	tb := &speccyToolbox{repo: repo, branch: branch, writable: writable, sources: sources, files: files,
+		publish: func() { s.publish("save", repo.Key(), branch) }}
+	onCall := func(tc ai.ToolCall, result string, execErr error) error {
+		if execErr != nil {
+			log.Printf("speccy chat [%s@%s]: tool %s failed: %v", repo.ID, branch, tc.Function.Name, execErr)
+		}
+		if tc.Function.Name == "ask_user" {
+			return nil // the ask event below carries the question
+		}
+		var a struct{ Path string }
+		_ = json.Unmarshal([]byte(tc.Function.Arguments), &a)
+		ev := map[string]string{"name": tc.Function.Name, "path": a.Path, "status": "ok"}
+		if execErr != nil {
+			ev["status"] = "error"
+			ev["detail"] = execErr.Error()
+		}
+		send(map[string]any{"tool": ev})
 		return nil
-	})
+	}
+	resume, pending, err := s.ai.StreamTools(r.Context(), msgs, tb.specs(files), tb.exec,
+		func(delta string) error {
+			send(map[string]string{"delta": delta})
+			return nil
+		}, onCall)
 	if err != nil {
+		// the SSE error event reaches the panel; the log line is for ops —
+		// "the chat just stopped" must always leave a trace somewhere
+		log.Printf("speccy chat [%s@%s]: %v", repo.ID, branch, err)
 		send(map[string]string{"error": err.Error()})
 		return
+	}
+	if pending != nil {
+		// a question for the human: hand the client everything it needs to
+		// resume statelessly — the appended messages plus the open call id
+		var q struct {
+			Question string   `json:"question"`
+			Options  []string `json:"options"`
+		}
+		_ = json.Unmarshal([]byte(pending.Function.Arguments), &q)
+		send(map[string]any{
+			"ask":    map[string]any{"callId": pending.ID, "question": q.Question, "options": q.Options},
+			"resume": resume,
+		})
 	}
 	send(map[string]bool{"done": true})
 }
@@ -176,7 +262,17 @@ func (s *Server) speccyDraft(w http.ResponseWriter, r *http.Request, repo *proje
 		return
 	}
 
-	reply, err := s.ai.Complete(r.Context(), ai.DraftPrompt(changeContent, allowed))
+	// the draft flow writes documents too — give it the same authoring
+	// guidance (skills + workspace instructions) as the chat
+	authoring := ""
+	if snap, err := repo.Snapshot(branch); err == nil {
+		instr := ""
+		if cfg := inRepoConfig(repo, branch); cfg != nil {
+			instr = cfg.Speccy.Instructions
+		}
+		authoring = ai.AuthoringRules(snap, instr)
+	}
+	reply, err := s.ai.Complete(r.Context(), ai.DraftPrompt(changeContent, allowed, authoring))
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
@@ -254,19 +350,21 @@ func normalizePath(p string, allowed map[string]string) string {
 	return p
 }
 
-// groundingSources resolves the speccy's grounded reference sources for a
-// project: its EFFECTIVE references (selection ∩ catalog) with
-// `grounding: true`, each read as a read-only snapshot of the source's
-// default branch (filtered to the reference's paths). The selection is read
-// from the branch the request works on (worktree edits included), so config
-// changes take effect before they merge; the D5 trust boundary holds because
-// a selection can never reach an uncataloged source (catalog mode) and
-// in-repo definitions stay bound by the host allowlist + the caller's own
-// token (forge-PAT mode). Best-effort: any failure yields no grounding.
-func (s *Server) groundingSources(r *http.Request, proj *project.Project, ref string) []ai.GroundingSource {
+// resolveSources resolves the speccy's reference sources for a project: its
+// EFFECTIVE references (selection ∩ catalog), each read as a read-only
+// snapshot of the source's default branch (filtered to the reference's
+// paths). ALL selected sources are tool-reachable (read_file/list_files/
+// search); the `grounding: true` subset is ADDITIONALLY prompt-stuffed. The
+// selection is read from the branch the request works on (worktree edits
+// included), so config changes take effect before they merge; the D5 trust
+// boundary holds because a selection can never reach an uncataloged source
+// (catalog mode) and in-repo definitions stay bound by the host allowlist +
+// the caller's own token (forge-PAT mode). Best-effort: any failure yields
+// no sources.
+func (s *Server) resolveSources(r *http.Request, proj *project.Project, ref string) (all, grounded []ai.GroundingSource) {
 	cfg := inRepoConfig(proj, ref)
 	if cfg == nil {
-		return nil
+		return nil, nil
 	}
 	mgr := s.gitm(r)
 	var refs []project.EffectiveReference
@@ -281,7 +379,7 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project, ref st
 	} else {
 		catalog, err := s.store.Sources()
 		if err != nil || len(catalog) == 0 {
-			return nil
+			return nil, nil
 		}
 		kinds := map[string]string{}
 		for _, src := range catalog {
@@ -289,17 +387,13 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project, ref st
 		}
 		refs, _ = project.EffectiveReferences(cfg, kinds)
 	}
-	var out []ai.GroundingSource
 	for _, ref := range refs {
-		if !ref.Grounding {
-			continue
-		}
 		repo, ok := mgr.Repo(ref.Source)
 		if !ok {
 			continue
 		}
 		if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
-			continue // token cannot reach this source — ground without it
+			continue // token cannot reach this source — proceed without it
 		}
 		snap := s.sourceSnapshot(ref.Source, repo)
 		if snap == nil {
@@ -309,9 +403,13 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project, ref st
 		if len(files) == 0 {
 			continue
 		}
-		out = append(out, ai.GroundingSource{Name: ref.Source, Files: files})
+		src := ai.GroundingSource{Name: ref.Source, Files: files}
+		all = append(all, src)
+		if ref.Grounding {
+			grounded = append(grounded, src)
+		}
 	}
-	return out
+	return all, grounded
 }
 
 // sourceSnapshot returns a read-only snapshot of a source's default branch,
@@ -415,6 +513,39 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 		return nil, false
 	}
 	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true
+}
+
+// POST /api/repos/{repo}/speccy/title {text} — name a chat after its first
+// exchange on the fast one-shot tier. Purely cosmetic: any failure leaves the
+// client's deterministic fallback title in place.
+func (s *Server) postSpeccyTitle(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		jsonError(w, http.StatusBadRequest, "text required")
+		return
+	}
+	if len(body.Text) > 2000 {
+		body.Text = body.Text[:2000]
+	}
+	reply, err := s.ai.QuickComplete(r.Context(), []ai.Message{
+		{Role: "system", Content: "You label chat conversations in a requirements-engineering workspace. Reply with ONLY a 3-6 word title for the conversation — no quotes, no punctuation at the end."},
+		{Role: "user", Content: body.Text},
+	})
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	title := sanitizeOneShot(reply)
+	if len(title) > 60 {
+		title = title[:60]
+	}
+	jsonOK(w, map[string]string{"title": title})
 }
 
 // POST /api/repos/{repo}/commit-message?branch= — draft a commit message from

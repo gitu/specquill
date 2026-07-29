@@ -90,6 +90,18 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
+- **Speccy chat tools** (`ai.StreamTools` + `api/speccytools.go`): read_file /
+  list_files / search / ask_user always — the read tools span the workspace
+  plus ALL selected references (`resolveSources`; `grounding: true` only
+  picks which get prompt-stuffed); edit_file / create_file only when the client sends
+  `allowEdits` AND the branch is unprotected (server-checked). Writes are
+  uncommitted worktree saves; markdown must keep parseable frontmatter (else
+  the tool errors back to the model) and `mdfm.Touch` maintains
+  created/updated server-side. ask_user halts the loop — the SPA replays the
+  `resume` messages plus a `role:tool` answer; the server stays stateless.
+  Project memory = `.specquill/memory/*.md`, ONE decision per file (merge-
+  friendly), written by the speccy via create_file and pinned into the prompt
+  with skills/instructions (`ai.AuthoringRules`).
 - **Non-git sources = importer mirror repos**: url/openapi/confluence sources are
   remote-less gitx repos (`Mirror: true`, `git init --bare`) that `internal/
   importer`'s Runner populates via `SnapshotMirror` (full-tree bare-repo commit,

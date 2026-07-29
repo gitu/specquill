@@ -102,6 +102,7 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("GET /api/repos/{repo}/history", s.repoH(s.getHistory))
 	apiMux.HandleFunc("GET /api/repos/{repo}/status", s.writableViewH(s.getStatus))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit", s.writableH(s.postCommit))
+	apiMux.HandleFunc("POST /api/repos/{repo}/discard", s.writableH(s.postDiscard))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit-message", s.writableH(s.postCommitMessage))
 	apiMux.HandleFunc("POST /api/repos/{repo}/branches", s.writableH(s.postBranch))
 	apiMux.HandleFunc("POST /api/repos/{repo}/push", s.writableH(s.postPush))
@@ -118,6 +119,7 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))
 	apiMux.HandleFunc("GET /api/speccy/info", s.speccyInfo)
 	// legacy aliases: resolve the deployment's sole project
 	apiMux.HandleFunc("POST /api/speccy/chat", s.speccyChatAlias)

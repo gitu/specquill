@@ -227,6 +227,25 @@ export function useSaveFile(repo: string | undefined, branch: string) {
   });
 }
 
+// reject pending (uncommitted) worktree changes; no paths = everything
+export function useDiscard(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ paths }: { paths?: string[] }) =>
+      api<{ ok: boolean }>(`/api/repos/${repo}/discard?branch=${encodeURIComponent(branch)}`, {
+        method: 'POST',
+        body: JSON.stringify({ paths: paths || [] }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['file', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['fileathead', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['worktreediff', repo, branch] });
+    },
+  });
+}
+
 export function useDeleteFile(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
