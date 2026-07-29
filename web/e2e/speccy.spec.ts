@@ -13,7 +13,9 @@ test('chat streams a grounded reply', async ({ page }) => {
   const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('Enter');
-  await expect(page.getByText('Which mapping drifted?')).toBeVisible();
+  // .first(): the chat tab's fallback title repeats the question until the
+  // quick-model title arrives
+  await expect(page.getByText('Which mapping drifted?').first()).toBeVisible();
   await expect(page.getByText(/grounded on \d+ workspace files/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('trade.executionTimestamp').last()).toBeVisible();
   // the granted, selected reference source reached the system prompt (P4): the
@@ -83,4 +85,32 @@ test('chat pauses on a speccy question and resumes with the answer', async ({ pa
   // the answer resumes the stream; the card records what was chosen
   await expect(page.getByText(/noted: beta/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('↳ beta')).toBeVisible();
+});
+
+test('chats survive closing the panel, auto-name, and dismiss individually', async ({ page }) => {
+  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
+  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  await composer.fill('Which mapping drifted?');
+  await composer.press('Enter');
+  await expect(page.getByText(/grounded on \d+ workspace files/)).toBeVisible({ timeout: 15_000 });
+  // the first exchange auto-names the chat (quick tier via the mock)
+  await expect(page.getByText('Mock Chat Title')).toBeVisible({ timeout: 15_000 });
+
+  // close the panel (unmount) and reopen from the rail — the transcript survives
+  await page.getByText('⌵').click();
+  await expect(composer).toHaveCount(0);
+  await page.getByTitle('Speccy').click();
+  await expect(page.getByText('Which mapping drifted?').first()).toBeVisible();
+  await expect(page.getByText('Mock Chat Title')).toBeVisible();
+
+  // a second chat starts empty next to the first
+  await page.getByRole('button', { name: 'new chat' }).click();
+  await expect(page.getByText('New chat', { exact: true })).toBeVisible();
+  await expect(page.getByText('Which mapping drifted?')).toHaveCount(0);
+
+  // dismissing it returns to the named chat; dismissing that clears the panel
+  await page.getByLabel('dismiss chat').click();
+  await expect(page.getByText('Which mapping drifted?').first()).toBeVisible();
+  await page.getByLabel('dismiss Mock Chat Title').click();
+  await expect(page.getByText('Which mapping drifted?')).toHaveCount(0);
 });

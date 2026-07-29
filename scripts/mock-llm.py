@@ -71,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
             tool_call = {'name': 'ask_user',
                          'arguments': json.dumps({'question': 'Which option do you want?', 'options': ['alpha', 'beta']})}
             reply = ''
+        elif 'word title' in system:
+            reply = 'Mock Chat Title'
         elif 'Reply with ONLY a JSON object' in system:
             reply = DRAFT_REPLY
         else:

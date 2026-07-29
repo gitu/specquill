@@ -4,16 +4,10 @@ import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { reqByName } from '../lib/derive';
-import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, streamChat, useSpeccyInfo } from '../api/speccy';
+import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, nameChat, streamChat, useSpeccyInfo } from '../api/speccy';
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
-
-interface DraftCard { kind: 'draft'; result: DraftResult }
-type Entry =
-  | { kind: 'msg'; msg: ChatMessage }
-  | { kind: 'tool'; tool: ToolEvent }
-  | { kind: 'ask'; ask: PendingAsk; answered?: string; preface?: string }
-  | DraftCard;
+import { appendEntry, autoTitle, dismissChat, nameChatOnce, newChat, setActiveChat, updateChat, useChats } from '../state/chats';
 
 const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'Compare our retention rules to the GDPR spec'];
 
@@ -61,7 +55,13 @@ export function Speccy() {
   const pathname = useAppPath();
   const { ensureWritableBranch } = useWorkspace();
   const info = useSpeccyInfo(app.repoId, app.branch);
-  const [entries, setEntries] = useState<Entry[]>([]);
+  // transcripts live in the chats store (survives closing the panel);
+  // streaming/busy is per-render-session, tagged with the chat it feeds
+  const repoKey = app.repoId || '';
+  const { chats, active } = useChats(repoKey);
+  const chat = chats.find((c) => c.id === active);
+  const entries = chat?.entries ?? [];
+  const streamChatId = useRef('');
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,23 +90,24 @@ export function Speccy() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [entries, streamText]);
 
-  const runChat = async (messages: ChatMessage[]) => {
+  const runChat = async (chatId: string, messages: ChatMessage[]) => {
     setError('');
     setBusy(true);
+    streamChatId.current = chatId;
     setStreamText('');
     try {
       const result = await streamChat(
         app.repoId,
         { messages, focusPath, branch: app.branch, allowEdits },
         setStreamText,
-        (t) => setEntries((es) => [...es, { kind: 'tool', tool: t }]),
+        (t) => appendEntry(repoKey, chatId, { kind: 'tool', tool: t }),
       );
       if (result.ask) {
         // any pre-question text lives inside the resume transcript — showing
         // it via the card avoids doubling it in the replayed history
-        setEntries((es) => [...es, { kind: 'ask', ask: result.ask!, preface: result.text || undefined }]);
+        appendEntry(repoKey, chatId, { kind: 'ask', ask: result.ask, preface: result.text || undefined });
       } else if (result.text) {
-        setEntries((es) => [...es, { kind: 'msg', msg: { role: 'assistant', content: result.text } }]);
+        appendEntry(repoKey, chatId, { kind: 'msg', msg: { role: 'assistant', content: result.text } });
       }
       if (result.edited) {
         // speccy saved uncommitted drafts — refresh editors, tree and badges
@@ -129,18 +130,28 @@ export function Speccy() {
   const ask = async (question: string) => {
     if (!question.trim() || busy || !enabled) return;
     setInput('');
-    const messages: ChatMessage[] = [...textHistory(), { role: 'user', content: question }];
-    setEntries((es) => [...es, { kind: 'msg', msg: { role: 'user', content: question } }]);
-    await runChat(messages);
+    const id = chat?.id ?? newChat(repoKey);
+    const history: ChatMessage[] = chat ? textHistory() : [];
+    appendEntry(repoKey, id, { kind: 'msg', msg: { role: 'user', content: question } });
+    if (!chat || chat.entries.length === 0) {
+      // auto-name on the first message: deterministic fallback right away,
+      // upgraded by the quick-model title when/if it arrives
+      nameChatOnce(repoKey, id, autoTitle(question));
+      if (app.repoId) void nameChat(app.repoId, question).then((r) => nameChatOnce(repoKey, id, r.title, true)).catch(() => { /* keep fallback */ });
+    }
+    await runChat(id, [...history, { role: 'user', content: question }]);
   };
 
   // answering a pending speccy question: replay the conversation + the tool
   // transcript the server handed back, plus the answer as the tool result
   const answerAsk = async (index: number, ask: PendingAsk, answer: string) => {
-    if (busy || !answer.trim()) return;
+    if (busy || !answer.trim() || !chat) return;
     const history = textHistory();
-    setEntries((es) => es.map((e, j) => (j === index && e.kind === 'ask' ? { ...e, answered: answer } : e)));
-    await runChat([...history, ...ask.resume, { role: 'tool', tool_call_id: ask.callId, content: answer }]);
+    updateChat(repoKey, chat.id, (c) => ({
+      ...c,
+      entries: c.entries.map((e, j) => (j === index && e.kind === 'ask' ? { ...e, answered: answer } : e)),
+    }));
+    await runChat(chat.id, [...history, ...ask.resume, { role: 'tool', tool_call_id: ask.callId, content: answer }]);
   };
 
   const draft = async () => {
@@ -154,7 +165,7 @@ export function Speccy() {
         ...change.impReqs.map((r) => reqByName(app.model!, r)?.path).filter((p): p is string => !!p),
       ];
       const result = await draftEdits(app.repoId, { changePath: change.path, files: [...new Set(files)] });
-      setEntries((es) => [...es, { kind: 'draft', result }]);
+      appendEntry(repoKey, chat?.id ?? newChat(repoKey), { kind: 'draft', result });
       qc.invalidateQueries({ queryKey: ['branches'] });
     } catch (e) {
       setError(String((e as Error).message || e));
@@ -186,6 +197,38 @@ export function Speccy() {
         <div style={sx('flex:1')} />
         <span onClick={app.toggleSpeccy} style={sx('color:var(--text-3);cursor:pointer')}>⌵</span>
       </div>
+
+      {/* chat tabs: auto-named, individually dismissable */}
+      {enabled && (
+        <div style={sx('flex:none;display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);overflow-x:auto')}>
+          {chats.map((c) => (
+            <span
+              key={c.id}
+              onClick={() => setActiveChat(repoKey, c.id)}
+              style={sx('flex:none;display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:14px;font-size:11px;cursor:pointer;max-width:160px;border:1px solid ' +
+                (c.id === active ? 'var(--ai-line);background:var(--ai-bg);color:var(--ai);font-weight:600' : 'var(--border);background:var(--surface-2);color:var(--text-2)'))}
+            >
+              <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{c.title || 'New chat'}</span>
+              <span
+                title="dismiss chat"
+                aria-label={'dismiss ' + (c.title || 'chat')}
+                onClick={(e) => { e.stopPropagation(); dismissChat(repoKey, c.id); }}
+                style={sx('flex:none;color:var(--text-3);line-height:1')}
+              >
+                ×
+              </span>
+            </span>
+          ))}
+          <button
+            onClick={() => newChat(repoKey)}
+            title="new chat"
+            aria-label="new chat"
+            style={sx('flex:none;width:22px;height:22px;border:1px dashed var(--border-2);border-radius:11px;background:transparent;color:var(--text-2);cursor:pointer;font-family:inherit;line-height:1')}
+          >
+            +
+          </button>
+        </div>
+      )}
 
       {/* min-height:0 lets the flex child actually shrink — without it the
           transcript grows past the panel instead of scrolling */}
@@ -242,7 +285,9 @@ export function Speccy() {
             <DraftResultCard key={i} result={e.result} onReview={() => reviewDraft(e.result)} />
           ),
         )}
-        {streamText !== null && <MessageRow msg={{ role: 'assistant', content: streamText || '…' }} streaming />}
+        {streamText !== null && streamChatId.current === chat?.id && (
+          <MessageRow msg={{ role: 'assistant', content: streamText || '…' }} streaming />
+        )}
         {error && <div style={sx('padding:9px 12px;border:1px solid var(--reg-line);background:var(--reg-bg);border-radius:8px;color:var(--reg);font-size:12px')}>{error}</div>}
 
         {entries.length === 0 && enabled && (

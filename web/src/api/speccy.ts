@@ -98,6 +98,14 @@ export async function streamChat(
   return result;
 }
 
+/** Quick-tier chat naming; the caller keeps its fallback title on failure. */
+export function nameChat(repoId: string, text: string): Promise<{ title: string }> {
+  return api<{ title: string }>(`/api/repos/${encodeURIComponent(repoId)}/speccy/title`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+}
+
 export function draftEdits(repoId: string | undefined, body: { changePath: string; files: string[]; branch?: string }): Promise<DraftResult> {
   const url = repoId ? `/api/repos/${encodeURIComponent(repoId)}/speccy/draft` : '/api/speccy/draft';
   return api<DraftResult>(url, { method: 'POST', body: JSON.stringify(body) });

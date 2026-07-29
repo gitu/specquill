@@ -483,6 +483,39 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 	return project.New(repo, ps[0].ProjectID, ps[0].ContentRoot, false), true
 }
 
+// POST /api/repos/{repo}/speccy/title {text} — name a chat after its first
+// exchange on the fast one-shot tier. Purely cosmetic: any failure leaves the
+// client's deterministic fallback title in place.
+func (s *Server) postSpeccyTitle(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		jsonError(w, http.StatusBadRequest, "text required")
+		return
+	}
+	if len(body.Text) > 2000 {
+		body.Text = body.Text[:2000]
+	}
+	reply, err := s.ai.QuickComplete(r.Context(), []ai.Message{
+		{Role: "system", Content: "You label chat conversations in a requirements-engineering workspace. Reply with ONLY a 3-6 word title for the conversation — no quotes, no punctuation at the end."},
+		{Role: "user", Content: body.Text},
+	})
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	title := sanitizeOneShot(reply)
+	if len(title) > 60 {
+		title = title[:60]
+	}
+	jsonOK(w, map[string]string{"title": title})
+}
+
 // POST /api/repos/{repo}/commit-message?branch= — draft a commit message from
 // the uncommitted diff on the fast one-shot tier (ai.quick_model).
 func (s *Server) postCommitMessage(w http.ResponseWriter, r *http.Request, repo *project.Project) {

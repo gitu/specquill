@@ -119,6 +119,7 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/share", s.deleteShare)
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))
 	apiMux.HandleFunc("GET /api/speccy/info", s.speccyInfo)
 	// legacy aliases: resolve the deployment's sole project
 	apiMux.HandleFunc("POST /api/speccy/chat", s.speccyChatAlias)
