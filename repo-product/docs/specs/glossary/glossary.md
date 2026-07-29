@@ -22,7 +22,7 @@ the default branch is protected.
 materialized into a remote-less, read-only repository by an importer.
 
 **Grounding** — including the workspace and its grounded references in the
-copilot's context so answers cite real content; references stay read-only.
+speccy's context so answers cite real content; references stay read-only.
 
 **Room** — the per-(branch, path) collaborative session markdown editors join;
 the server relays its CRDT updates and owns the file while it is live.

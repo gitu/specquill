@@ -49,7 +49,7 @@ credential-free forge mode deliberately lacks.
 
 ## Grounding
 
-Grounded references join the copilot context under `~<source>/<path>`
+Grounded references join the speccy context under `~<source>/<path>`
 headings inside a budget; draft edits remain restricted to project files —
 a reference path in a model reply is refused.
 

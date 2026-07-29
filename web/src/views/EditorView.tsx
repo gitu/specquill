@@ -640,7 +640,7 @@ export function EditorView() {
               <div style={sx('margin-top:24px;border:1px solid var(--ai-line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)')}>
                 <div style={sx('display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--ai-bg);border-bottom:1px solid var(--ai-line)')}>
                   <IconSpark size={14} stroke="var(--ai)" />
-                  <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Copilot suggests an edit</span>
+                  <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Speccy suggests an edit</span>
                   <span style={sx('font-size:11px;color:var(--text-2)')}>from {change.name} · {change.published}</span>
                   <div style={sx('flex:1')} />
                   <button onClick={() => nav('/diff?change=' + encodeURIComponent(change.path))} style={sx('height:26px;padding:0 11px;border:none;border-radius:6px;background:var(--ai);color:#fff;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer')}>

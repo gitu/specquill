@@ -11,7 +11,7 @@ import (
 )
 
 // importURLs fetches each configured page and stores it under a stable,
-// path-derived name. HTML is reduced to readable text so the copilot grounds on
+// path-derived name. HTML is reduced to readable text so the speccy grounds on
 // prose, not markup; markdown/text passes through untouched. An index.md lists
 // every mirrored page with its origin URL.
 func importURLs(ctx context.Context, hc *http.Client, src Source) (map[string]string, error) {

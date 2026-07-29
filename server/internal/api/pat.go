@@ -59,11 +59,12 @@ func (s *Server) vaultJanitor() {
 	}
 }
 
-// registerUserSources reads every project's in-repo config (default branch
-// only, D5) from the user's own clones and registers the `sources:`
-// definitions as read-only repos in the user's manager. Cloning stays lazy —
-// registration only makes the name resolvable. Best-effort: an unreadable
-// project or config just contributes nothing.
+// registerUserSources reads every project's in-repo config (default branch —
+// callers register the selected branch's extra definitions themselves) from
+// the user's own clones and registers the `sources:` definitions as
+// read-only repos in the user's manager. Cloning stays lazy — registration
+// only makes the name resolvable. Best-effort: an unreadable project or
+// config just contributes nothing.
 func (s *Server) registerUserSources(mgr *gitx.Manager, token string) {
 	if !s.patMode() {
 		return
@@ -81,12 +82,8 @@ func (s *Server) registerUserSources(mgr *gitx.Manager, token string) {
 			continue
 		}
 		proj := project.New(repo, p.ProjectID, p.ContentRoot, false)
-		yml, _, err := proj.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml")
-		if err != nil {
-			continue
-		}
-		cfg, err := project.ParseConfig(yml)
-		if err != nil {
+		cfg := inRepoConfig(proj, "")
+		if cfg == nil {
 			continue
 		}
 		for _, sd := range cfg.Sources {
@@ -160,10 +157,13 @@ func (s *Server) registerStoreRepo(mgr *gitx.Manager, repoID string) (*gitx.Repo
 	return nil, false
 }
 
-// inRepoConfig parses a project's .specquill/config.yml from its default
-// branch (nil when absent or unparsable).
-func inRepoConfig(proj *project.Project) *project.Config {
-	yml, _, err := proj.FileAt(proj.Cfg.DefaultBranch, ".specquill/config.yml")
+// inRepoConfig parses a project's .specquill/config.yml at ref (nil when
+// absent or unparsable). The read is worktree-aware, so uncommitted config
+// edits on the branch count — same truth the SPA's snapshot shows. An empty
+// ref, or one that names no branch here (a foreign project's branch in a
+// cross-project listing), falls back to the default branch.
+func inRepoConfig(proj *project.Project, ref string) *project.Config {
+	yml, _, err := proj.File(configRef(proj, ref), ".specquill/config.yml")
 	if err != nil {
 		return nil
 	}
@@ -172,4 +172,15 @@ func inRepoConfig(proj *project.Project) *project.Config {
 		return nil
 	}
 	return cfg
+}
+
+// configRef picks the branch a project's in-repo config is read from: the
+// currently selected branch when it exists, the default branch otherwise.
+// The ref is client-supplied — it must pass gitx.ValidRef before it may
+// reach git argv (BranchExists), same funnel as every gitx entry point.
+func configRef(proj *project.Project, ref string) string {
+	if ref != "" && gitx.ValidRef(ref) && (ref == proj.Cfg.DefaultBranch || proj.BranchExists(ref)) {
+		return ref
+	}
+	return proj.Cfg.DefaultBranch
 }

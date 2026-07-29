@@ -8,16 +8,16 @@ import (
 
 const groundingBudget = 48 * 1024 // default chars of content in the system prompt
 
-// GroundingSource is a read-only reference repo whose files ground the copilot
+// GroundingSource is a read-only reference repo whose files ground the speccy
 // alongside the writable workspace. Paths are relative within the source; they
 // are surfaced under `~<name>/<path>` headings and are NEVER editable — the
-// draft path (see copilot.go) refuses any `~`-prefixed target.
+// draft path (see speccy.go) refuses any `~`-prefixed target.
 type GroundingSource struct {
 	Name  string
 	Files map[string]string // path (within the source) → content
 }
 
-const systemHeader = `You are the specquill copilot — an assistant embedded in a
+const systemHeader = `You are the specquill speccy — an assistant embedded in a
 requirements-engineering workspace stored as markdown files in git. Requirements
 (requirements/REQ-*.md) are driven by regulations (regulations/), implement into
 specs (specs/), map to data fields (data-mappings/), and change records
@@ -31,7 +31,7 @@ context (regulations, upstream specs); cite them as ~<source>/<path> but never
 propose edits to them. If the material does not contain the answer, say so
 instead of guessing. Be concise; plain prose, minimal markdown.`
 
-// GroundingPrompt builds the copilot system prompt from the workspace snapshot
+// GroundingPrompt builds the speccy system prompt from the workspace snapshot
 // plus any grounded reference sources. The workspace keeps a 60% floor of the
 // budget; grounded sources share the remainder proportionally to their size
 // (min 4KB each) and appear under `## ~source/path` headings. focusPath pins the
@@ -161,7 +161,7 @@ func emitFiles(b *strings.Builder, paths []string, content, label func(string) s
 	}
 }
 
-const draftSystem = `You are the specquill copilot drafting edits to workspace
+const draftSystem = `You are the specquill speccy drafting edits to workspace
 files in response to a change record. Reply with ONLY a JSON object, no prose.
 The shape, shown with example values:
 

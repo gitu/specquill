@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // GET /auth/login — the SPA's login page (which offers whatever
 // /auth/providers reports: forge-PAT and/or local).
 func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/#/login", http.StatusFound)
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 // GET /auth/providers — which login methods the SPA should offer (public).
@@ -63,11 +64,34 @@ func (s *Server) authPatLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	fu, err := client.CurrentUser(r.Context())
 	if err != nil {
-		jsonError2(w, http.StatusUnauthorized, "token rejected by "+s.cfg.Auth.Forge.Kind+": "+err.Error(), "invalid_token")
+		// only a forge VERDICT on the token (401/403) is a rejection; a rate
+		// limit, forge 5xx or network failure never judged the token, and
+		// answering 401 here would make clients treat a working token as bad
+		var se *forge.StatusError
+		if errors.As(err, &se) && (se.StatusCode == http.StatusUnauthorized || se.StatusCode == http.StatusForbidden) {
+			jsonError2(w, http.StatusUnauthorized, "token rejected by "+s.cfg.Auth.Forge.Kind+": "+err.Error(), "invalid_token")
+			return
+		}
+		jsonError2(w, http.StatusBadGateway,
+			s.cfg.Auth.Forge.Kind+" could not verify the token — try again later: "+err.Error(), "forge_unavailable")
 		return
 	}
 	role, err := client.ProjectRole(r.Context())
-	if err != nil || role == "none" {
+	if err != nil {
+		// 401/403/404 = the forge hid or refused the project for this token;
+		// anything else is the forge being unavailable, not a permission answer
+		var se *forge.StatusError
+		if errors.As(err, &se) && (se.StatusCode == http.StatusUnauthorized ||
+			se.StatusCode == http.StatusForbidden || se.StatusCode == http.StatusNotFound) {
+			jsonError2(w, http.StatusForbidden,
+				"this token has no access to "+pc.ID+" — grant access on the forge or use a different token", "no_project_access")
+			return
+		}
+		jsonError2(w, http.StatusBadGateway,
+			s.cfg.Auth.Forge.Kind+" could not answer the project-access check — try again later: "+err.Error(), "forge_unavailable")
+		return
+	}
+	if role == "none" {
 		jsonError2(w, http.StatusForbidden,
 			"this token has no access to "+pc.ID+" — grant access on the forge or use a different token", "no_project_access")
 		return

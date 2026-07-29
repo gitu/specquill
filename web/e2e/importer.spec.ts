@@ -22,7 +22,7 @@ test('openapi importer source syncs and becomes browsable', async ({ page, reque
   expect(paths).toContain('index.md');
   expect(paths).toContain('openapi.yaml');
 
-  // the generated index summarizes the API contract for the copilot
+  // the generated index summarizes the API contract for the speccy
   const idx = (await (await request.get('/api/repos/platform-api/files/index.md', { headers: H })).json()) as { content: string };
   expect(idx.content).toContain('# Platform API');
   expect(idx.content).toContain('GET /reports/rts22');

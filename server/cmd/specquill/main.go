@@ -196,7 +196,7 @@ func serve(configPath string, dev bool) error {
 	var aiClient *ai.Client
 	if cfg.AI.Enabled {
 		aiClient = ai.New(cfg.AI)
-		log.Printf("copilot enabled: %s @ %s", cfg.AI.Model, cfg.AI.BaseURL)
+		log.Printf("speccy enabled: %s @ %s", cfg.AI.Model, cfg.AI.BaseURL)
 	}
 
 	dist, err := webui.Dist()

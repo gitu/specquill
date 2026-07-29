@@ -58,7 +58,7 @@ export function Tree() {
   // reference section: the ACTIVE project's effective references (stage-3
   // selection ∩ grants); a project without references falls back to every
   // granted source (self-host default)
-  const projectsQ = useProjects();
+  const projectsQ = useProjects(app.branch);
   const activeRefs = projectsQ.data?.find((p) => p.id === app.repoId)?.references || [];
   const refNames = activeRefs.map((r) => r.source);
   const readOnlyRepos = (repos.data || []).filter(

@@ -17,17 +17,26 @@ export const getStoredPat = () => localStorage.getItem(PAT_KEY);
 export const storePat = (token: string) => localStorage.setItem(PAT_KEY, token);
 export const clearStoredPat = () => localStorage.removeItem(PAT_KEY);
 
+// A failed silent re-login parks its reason here; the login page surfaces it.
+// The stored PAT itself is NEVER discarded automatically — replacing it is
+// the user's call (a revoked token, a forge outage and a missing scope all
+// look the same to code and completely different to a person).
+const LOGIN_ERROR_KEY = 'specquill-login-error';
+
+/** The last silent re-login failure, consumed (read-once) by the login page. */
+export function takeLoginError(): string | null {
+  const v = sessionStorage.getItem(LOGIN_ERROR_KEY);
+  sessionStorage.removeItem(LOGIN_ERROR_KEY);
+  return v;
+}
+
 // One in-flight re-login at a time: a burst of 401s (page load after a server
 // restart) must not fire N parallel logins.
 let reauth: Promise<boolean> | null = null;
 
 /** Re-establish the session from the stored PAT. Resolves false when there is
- * no stored token or the login failed.
- *
- * The token is only forgotten when the forge itself rejects it (401 invalid,
- * 403 no access) — a 5xx or a dead network means "try again later", and
- * discarding the token there would force everyone to re-mint one over a
- * transient outage. */
+ * no stored token or the login failed — the failure reason is parked for the
+ * login page, the token stays put. */
 function reloginWithPat(): Promise<boolean> {
   if (reauth) return reauth; // a login is already in flight — join it
   const attempt = (async () => {
@@ -39,10 +48,19 @@ function reloginWithPat(): Promise<boolean> {
         headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       });
-      if (res.status === 401 || res.status === 403) clearStoredPat();
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep statusText */ }
+        sessionStorage.setItem(LOGIN_ERROR_KEY, msg);
+      } else {
+        sessionStorage.removeItem(LOGIN_ERROR_KEY); // recovered — drop any stale reason
+      }
       return res.ok;
     } catch {
-      return false; // offline/aborted — keep the token, retry on the next 401
+      // offline/aborted — keep the token, retry on the next 401; still leave
+      // a reason in case the browser ends up on the login page
+      sessionStorage.setItem(LOGIN_ERROR_KEY, 'the server could not be reached — check your connection and try again');
+      return false;
     }
   })();
   reauth = attempt;

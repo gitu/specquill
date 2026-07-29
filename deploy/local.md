@@ -80,7 +80,7 @@ session:
   ttl: 12h
   cookie_secure: true                # requires https (see reverse proxy below)
 
-# optional: copilot via any OpenAI-compatible endpoint (ollama works)
+# optional: speccy via any OpenAI-compatible endpoint (ollama works)
 # ai:
 #   enabled: true
 #   base_url: http://localhost:11434/v1

@@ -161,6 +161,25 @@ func (c *Client) OpenRequest(ctx context.Context, branch string) (*Request, erro
 	return c.gitlabRequest(ctx, branch)
 }
 
+// StatusError is a non-2xx answer from the forge: the request arrived and
+// the forge said no. Network failures and timeouts stay untyped, so callers
+// can tell "the forge rejected this" from "the forge was unreachable" — the
+// PAT login uses that line to decide between 401 (bad token) and 502 (try
+// again later, the token was never judged).
+type StatusError struct {
+	StatusCode int
+	Msg        string
+}
+
+func (e *StatusError) Error() string { return e.Msg }
+
+func statusError(resp *http.Response, body string) *StatusError {
+	return &StatusError{
+		StatusCode: resp.StatusCode,
+		Msg:        fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(firstLine(body))),
+	}
+}
+
 // authorize attaches the token in the forge's preferred header.
 func (c *Client) authorize(req *http.Request) {
 	if c.token != "" {
@@ -192,9 +211,8 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		// the URL is safe to echo (no token in it); the body may carry the
-		// forge's own explanation, which is the useful part
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(firstLine(string(body))))
+		// the body may carry the forge's own explanation, the useful part
+		return statusError(resp, string(body))
 	}
 	return json.Unmarshal(body, out)
 }

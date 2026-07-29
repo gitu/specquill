@@ -162,8 +162,8 @@ func runSetup(in io.Reader, out io.Writer, configPath string) error {
 	}
 	committerMail := p.ask("committer email", "specquill@"+host)
 
-	fmt.Fprintln(out, "\n== Copilot (optional) ==")
-	aiOn := p.askBool("enable the AI copilot (any OpenAI-compatible endpoint)?", false)
+	fmt.Fprintln(out, "\n== Speccy (optional) ==")
+	aiOn := p.askBool("enable the AI speccy (any OpenAI-compatible endpoint)?", false)
 	var aiBase, aiModel, aiQuick, aiKeyEnv string
 	if aiOn {
 		aiBase = p.ask("API base URL", "https://api.openai.com/v1")

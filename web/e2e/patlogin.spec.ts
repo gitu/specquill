@@ -12,14 +12,14 @@ test.beforeEach(async ({ request }) => {
 });
 
 test('login page offers the PAT form with a token-creation link', async ({ page }) => {
-  await page.goto('/#/login');
+  await page.goto('/login');
   await expect(page.getByText(/personal access token/i)).toBeVisible();
   await expect(page.getByRole('link', { name: /create one on/i })).toBeVisible();
   await expect(page.getByText('The token stays in this browser')).toBeVisible();
 });
 
 test('a mock token signs in, lands in the app, and shows Propose', async ({ page }) => {
-  await page.goto('/#/login');
+  await page.goto('/login');
   await page.getByPlaceholder(/glpat|ghp/).fill('tok-dev');
   await page.getByRole('button', { name: /sign in with/i }).click();
   // authenticated app chrome: the forge merge mode renames Merge → Propose
@@ -29,7 +29,7 @@ test('a mock token signs in, lands in the app, and shows Propose', async ({ page
 });
 
 test('a rejected token shows the forge error inline', async ({ page }) => {
-  await page.goto('/#/login');
+  await page.goto('/login');
   await page.getByPlaceholder(/glpat|ghp/).fill('tok-nope');
   await page.getByRole('button', { name: /sign in with/i }).click();
   await expect(page.getByText(/token rejected/i)).toBeVisible();

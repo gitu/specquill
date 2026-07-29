@@ -1,6 +1,6 @@
 // Package scaffold bootstraps a new specquill workspace repository: folder
 // skeleton per document type, the .specquill/ property schema, and AI authoring
-// skills the copilot grounds itself on.
+// skills the speccy grounds itself on.
 package scaffold
 
 import (
@@ -148,7 +148,7 @@ func workspaceReadme(project string, picked map[string]SpecType) string {
 		t := picked[k]
 		fmt.Fprintf(&b, "- `%s/` — %s\n", t.Dir, t.Title)
 	}
-	b.WriteString("- `.specquill/` — property schema and AI authoring skills (the copilot follows these)\n")
+	b.WriteString("- `.specquill/` — property schema and AI authoring skills (the speccy follows these)\n")
 	b.WriteString("\nDocuments carry typed frontmatter links (`drivers`, `implements`, `maps_to`, `verifies`) that build the traceability graph.\n")
 	return b.String()
 }

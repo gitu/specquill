@@ -90,7 +90,7 @@ export function ChangesView() {
             <div style={sx('margin-top:16px;border:1px solid var(--ai-line);border-radius:11px;overflow:hidden')}>
               <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--ai-bg)')}>
                 <IconSpark size={13} stroke="var(--ai)" width={1.9} />
-                <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Copilot summary</span>
+                <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Speccy summary</span>
               </div>
               <div style={sx('padding:12px 14px;font-size:13px;line-height:1.65;color:var(--text)')}>{sel.summary}</div>
             </div>

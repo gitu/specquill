@@ -39,7 +39,7 @@ paths:
   changes:      changes/
 
 # references select granted sources by name (stage 3 of the authorization
-# chain); `grounding: true` adds them to the copilot context
+# chain); `grounding: true` adds them to the speccy context
 references:
   - source: regulations
     grounding: true

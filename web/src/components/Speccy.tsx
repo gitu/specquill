@@ -3,7 +3,7 @@ import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { reqByName } from '../lib/derive';
-import { ChatMessage, DraftResult, draftEdits, streamChat, useCopilotInfo } from '../api/copilot';
+import { ChatMessage, DraftResult, draftEdits, streamChat, useSpeccyInfo } from '../api/speccy';
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
 
@@ -12,14 +12,14 @@ type Entry = { kind: 'msg'; msg: ChatMessage } | DraftCard;
 
 const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'Compare our retention rules to the GDPR spec'];
 
-// The Copilot panel: streaming chat grounded on the branch snapshot, plus the
-// "draft edits" flow that applies model-proposed edits to a copilot branch.
-export function Copilot() {
+// The Speccy panel: streaming chat grounded on the branch snapshot, plus the
+// "draft edits" flow that applies model-proposed edits to a speccy branch.
+export function Speccy() {
   const nav = useNav();
   const app = useApp();
   const qc = useQueryClient();
   const pathname = useAppPath();
-  const info = useCopilotInfo(app.repoId);
+  const info = useSpeccyInfo(app.repoId, app.branch);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState<string | null>(null);
@@ -84,13 +84,13 @@ export function Copilot() {
     <aside style={sx('width:340px;flex:none;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column')}>
       <div style={sx('height:46px;flex:none;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border)')}>
         <IconSpark size={16} stroke="var(--ai)" />
-        <span style={sx('font-weight:700;font-size:13.5px')}>Copilot</span>
+        <span style={sx('font-weight:700;font-size:13.5px')}>Speccy</span>
         <span style={sx('display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);padding:2px 7px;border-radius:20px')}>
           <span style={sx('width:5px;height:5px;border-radius:50%;background:' + (enabled ? 'var(--data)' : 'var(--text-3)') + ';animation:pulse 2s infinite')} />
           {enabled ? (info.data?.model || 'grounded on repo') : 'not configured'}
         </span>
         <div style={sx('flex:1')} />
-        <span onClick={app.toggleCopilot} style={sx('color:var(--text-3);cursor:pointer')}>⌵</span>
+        <span onClick={app.toggleSpeccy} style={sx('color:var(--text-3);cursor:pointer')}>⌵</span>
       </div>
 
       <div ref={scroller} style={sx('flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px')}>
@@ -100,7 +100,7 @@ export function Copilot() {
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>repo:{app.repoId}</span>
           <span style={sx('padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)')}>{app.branch}</span>
           {info.data?.groundedSources?.map((src) => (
-            <span key={src} title="Granted reference source in the copilot context" style={sx('padding:2px 7px;border-radius:5px;background:var(--reg-bg);border:1px solid var(--reg-line);color:var(--reg)')}>~{src}</span>
+            <span key={src} title="Granted reference source in Speccy's context" style={sx('padding:2px 7px;border-radius:5px;background:var(--reg-bg);border:1px solid var(--reg-line);color:var(--reg)')}>~{src}</span>
           ))}
         </div>
 
@@ -160,7 +160,7 @@ export function Copilot() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input); } }}
-              placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in specquill.yml to enable the copilot'}
+              placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in specquill.yml to enable Speccy'}
               disabled={!enabled || busy}
               rows={1}
               style={sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5')}

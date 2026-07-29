@@ -13,7 +13,7 @@ import (
 // importOpenAPI fetches an OpenAPI/Swagger document (JSON or YAML) and produces
 // two files: the raw spec (openapi.yaml) and a readable index.md summarizing the
 // info block, every path+operation, and the component schema names — the form
-// the copilot actually grounds on.
+// the speccy actually grounds on.
 func importOpenAPI(ctx context.Context, hc *http.Client, src Source) (map[string]string, error) {
 	body, err := get(ctx, hc, src.Remote, src.Token, "application/json, application/yaml, text/yaml")
 	if err != nil {

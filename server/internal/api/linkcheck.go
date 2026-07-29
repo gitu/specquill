@@ -82,10 +82,12 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 			srcAllowed, srcFiles = map[string]bool{}, map[string]map[string]string{}
 			var names []string
 			if s.patMode() {
-				// forge-PAT mode: the in-repo sources: definitions are the set
+				// forge-PAT mode: the in-repo sources: definitions (read at the
+				// checked ref) are the set
 				s.registerUserSources(mgr, s.tok(r))
-				if cfg := inRepoConfig(repo); cfg != nil {
+				if cfg := inRepoConfig(repo, ref); cfg != nil {
 					for _, sd := range cfg.Sources {
+						s.registerSourceDef(mgr, sd)
 						names = append(names, sd.Name)
 					}
 				}
@@ -98,9 +100,10 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 				for _, src := range catalog {
 					kinds[src.Name] = src.Kind
 				}
-				// selection ∩ catalog when the in-repo config selects; the whole
+				// selection ∩ catalog when the in-repo config selects (read at
+				// the checked ref, so branch config edits count); the whole
 				// catalog otherwise (same fallback as the tree's reference section)
-				if yml, _, err := repo.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
+				if yml, _, err := repo.File(configRef(repo, ref), ".specquill/config.yml"); err == nil {
 					if cfg, err := project.ParseConfig(yml); err == nil {
 						if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
 							for _, ref := range refs {

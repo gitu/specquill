@@ -4,7 +4,7 @@
 - [References — sources, grants, grounding](references.md)
 - [Workspace branches — protected main mechanics](workspace-branches.md)
 - [Co-editing — collaborative rooms](co-editing.md)
-- [Copilot grounding — context and limits](copilot-grounding.md)
+- [Speccy grounding — context and limits](speccy-grounding.md)
 - [Merging — landing workspace branches](merging.md)
 - [Forge review — merge-request comments from the git host](forge-review.md)
 - [Importers — mirroring non-git sources](importers.md)

@@ -14,16 +14,17 @@ import (
 	"specquill/server/internal/project"
 )
 
-// GET /api/copilot/info?repo= — capability probe. When a project is resolvable
-// (explicit ?repo=, else the deployment's sole project) it also reports the grounded
-// reference sources feeding that project's copilot context.
-func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
+// GET /api/speccy/info?repo=&branch= — capability probe. When a project is
+// resolvable (explicit ?repo=, else the deployment's sole project) it also
+// reports the grounded reference sources feeding that project's speccy
+// context, resolved from ?branch= (default branch when absent).
+func (s *Server) speccyInfo(w http.ResponseWriter, r *http.Request) {
 	info := map[string]any{"enabled": s.ai != nil}
 	if s.ai != nil {
 		info["model"] = s.ai.Model()
-		if proj := s.copilotProject(r); proj != nil {
+		if proj := s.speccyProject(r); proj != nil {
 			names := []string{}
-			for _, src := range s.groundingSources(r, proj) {
+			for _, src := range s.groundingSources(r, proj, r.URL.Query().Get("branch")) {
 				names = append(names, src.Name)
 			}
 			info["groundedSources"] = names
@@ -32,10 +33,10 @@ func (s *Server) copilotInfo(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, info)
 }
 
-// copilotProject resolves the project the info probe reports on: the ?repo=
+// speccyProject resolves the project the info probe reports on: the ?repo=
 // project when given, otherwise the deployment's first project. Best-effort
 // (nil on any miss) — the info endpoint degrades to enabled/model only.
-func (s *Server) copilotProject(r *http.Request) *project.Project {
+func (s *Server) speccyProject(r *http.Request) *project.Project {
 	ps, err := s.store.Projects()
 	if err != nil || len(ps) == 0 {
 		return nil
@@ -60,17 +61,17 @@ func (s *Server) copilotProject(r *http.Request) *project.Project {
 	return project.New(repo, target.ProjectID, target.ContentRoot, false)
 }
 
-// POST /api/repos/{repo}/copilot/chat {messages, focusPath?, branch?} → SSE
-// stream. /api/copilot/chat is the legacy alias (the sole project).
-func (s *Server) copilotChatAlias(w http.ResponseWriter, r *http.Request) {
+// POST /api/repos/{repo}/speccy/chat {messages, focusPath?, branch?} → SSE
+// stream. /api/speccy/chat is the legacy alias (the sole project).
+func (s *Server) speccyChatAlias(w http.ResponseWriter, r *http.Request) {
 	if repo, ok := s.soleProject(w, r); ok {
-		s.copilotChat(w, r, repo)
+		s.speccyChat(w, r, repo)
 	}
 }
 
-func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
 		return
 	}
 	var body struct {
@@ -87,7 +88,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request, repo *proje
 		gitFail(w, err)
 		return
 	}
-	refs := s.groundingSources(r, repo)
+	refs := s.groundingSources(r, repo, body.Branch)
 
 	system := ai.GroundingPrompt(files, refs, body.FocusPath, s.ai.GroundingBudget())
 	msgs := append([]ai.Message{{Role: "system", Content: system}}, body.Messages...)
@@ -121,24 +122,24 @@ type draftEdit struct {
 	Replace string `json:"replace"`
 }
 
-// POST /api/copilot/draft {changePath, files, branch?}
+// POST /api/speccy/draft {changePath, files, branch?}
 // Asks the model for surgical edits and applies them as *uncommitted saves*
-// on a copilot branch — the human reviews via status → commit → PR.
-func (s *Server) copilotDraftAlias(w http.ResponseWriter, r *http.Request) {
+// on a speccy branch — the human reviews via status → commit → PR.
+func (s *Server) speccyDraftAlias(w http.ResponseWriter, r *http.Request) {
 	if repo, ok := s.soleProject(w, r); ok {
-		s.copilotDraft(w, r, repo)
+		s.speccyDraft(w, r, repo)
 	}
 }
 
-func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+func (s *Server) speccyDraft(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
 		return
 	}
 	var body struct {
 		ChangePath string   `json:"changePath"`
 		Files      []string `json:"files"`  // impacted paths, resolved by the client from the model
-		Branch     string   `json:"branch"` // target branch; default: copilot/<change-name>
+		Branch     string   `json:"branch"` // target branch; default: speccy/<change-name>
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChangePath == "" || len(body.Files) == 0 {
 		jsonError(w, http.StatusBadRequest, "changePath and files required")
@@ -148,7 +149,7 @@ func (s *Server) copilotDraft(w http.ResponseWriter, r *http.Request, repo *proj
 	branch := body.Branch
 	if branch == "" {
 		name := strings.TrimSuffix(body.ChangePath[strings.LastIndex(body.ChangePath, "/")+1:], ".md")
-		branch = "copilot/" + name
+		branch = "speccy/" + name
 	}
 	if !repo.BranchExists(branch) {
 		if err := repo.CreateBranch(branch, ""); err != nil {
@@ -253,20 +254,18 @@ func normalizePath(p string, allowed map[string]string) string {
 	return p
 }
 
-// groundingSources resolves the copilot's grounded reference sources for a
-// project: its EFFECTIVE references (default-branch selection ∩ catalog)
-// with `grounding: true`, each read as a read-only snapshot of the source's
-// default branch (filtered to the reference's paths). This is the D5 trust
-// boundary — selection is read from the default branch only and can never
-// reach an uncataloged source. Best-effort: any failure yields no grounding.
-func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.GroundingSource {
-	// default branch only (D5): a feature branch cannot change the selection
-	yml, _, err := proj.FileAt(proj.Cfg.DefaultBranch, ".specquill/config.yml")
-	if err != nil {
-		return nil
-	}
-	cfg, err := project.ParseConfig(yml)
-	if err != nil {
+// groundingSources resolves the speccy's grounded reference sources for a
+// project: its EFFECTIVE references (selection ∩ catalog) with
+// `grounding: true`, each read as a read-only snapshot of the source's
+// default branch (filtered to the reference's paths). The selection is read
+// from the branch the request works on (worktree edits included), so config
+// changes take effect before they merge; the D5 trust boundary holds because
+// a selection can never reach an uncataloged source (catalog mode) and
+// in-repo definitions stay bound by the host allowlist + the caller's own
+// token (forge-PAT mode). Best-effort: any failure yields no grounding.
+func (s *Server) groundingSources(r *http.Request, proj *project.Project, ref string) []ai.GroundingSource {
+	cfg := inRepoConfig(proj, ref)
+	if cfg == nil {
 		return nil
 	}
 	mgr := s.gitm(r)
@@ -274,6 +273,11 @@ func (s *Server) groundingSources(r *http.Request, proj *project.Project) []ai.G
 	if s.patMode() {
 		refs, _ = project.EffectiveReferencesInRepo(cfg)
 		s.registerUserSources(mgr, s.tok(r))
+		// branch-defined sources aren't on the default branch yet — register
+		// them here (same validation gate as everywhere else)
+		for _, sd := range cfg.Sources {
+			s.registerSourceDef(mgr, sd)
+		}
 	} else {
 		catalog, err := s.store.Sources()
 		if err != nil || len(catalog) == 0 {
@@ -388,7 +392,7 @@ func filterByPaths(files map[string]string, prefixes []string) map[string]string
 }
 
 // soleProject resolves the deployment's first project — the legacy
-// /api/copilot/* alias routes use it; per-project routes carry {repo} and
+// /api/speccy/* alias routes use it; per-project routes carry {repo} and
 // resolve normally.
 func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
 	ps, err := s.store.Projects()
@@ -396,7 +400,7 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 		jsonError(w, http.StatusInternalServerError, "no project configured")
 		return nil, false
 	}
-	// same gate as the writableH copilot routes: copilot drafts write
+	// same gate as the writableH speccy routes: speccy drafts write
 	u := auth.UserFrom(r.Context())
 	if s.effectiveRepoRole(u, ps[0].RepoID) < authz.Editor {
 		jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
@@ -417,7 +421,7 @@ func (s *Server) soleProject(w http.ResponseWriter, r *http.Request) (*project.P
 // the uncommitted diff on the fast one-shot tier (ai.quick_model).
 func (s *Server) postCommitMessage(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
-		jsonError(w, http.StatusNotImplemented, "copilot is not configured (ai: in specquill.yml)")
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
 		return
 	}
 	branch := r.URL.Query().Get("branch")

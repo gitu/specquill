@@ -6,7 +6,7 @@
 - [Multi-stage source authorization](REQ-004.md)
 - [Conformant OKF bundles](REQ-005.md)
 - [Real-time collaborative editing](REQ-006.md)
-- [Grounded AI copilot](REQ-007.md)
+- [Grounded AI speccy](REQ-007.md)
 - [Conflict-checked merges to the default branch](REQ-008.md)
 - [External source importers](REQ-009.md)
 - [Portable diagrams and sketches](REQ-010.md)
