@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
@@ -124,11 +125,35 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		jsonError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	var wmu sync.Mutex
 	send := func(v any) {
 		raw, _ := json.Marshal(v)
+		wmu.Lock()
 		fmt.Fprintf(w, "data: %s\n\n", raw)
 		flusher.Flush()
+		wmu.Unlock()
 	}
+	// heartbeat: thinking models can stay silent for minutes; without bytes on
+	// the wire, reverse proxies kill the connection at their idle timeout and
+	// the chat "just stops" with nothing in any log. SSE comments are invisible
+	// to the client parser.
+	hbDone := make(chan struct{})
+	defer close(hbDone)
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbDone:
+				return
+			case <-t.C:
+				wmu.Lock()
+				fmt.Fprint(w, ": ping\n\n")
+				flusher.Flush()
+				wmu.Unlock()
+			}
+		}
+	}()
 
 	tb := &speccyToolbox{repo: repo, branch: branch, writable: writable, sources: sources, files: files,
 		publish: func() { s.publish("save", repo.Key(), branch) }}

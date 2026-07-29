@@ -95,7 +95,15 @@ export async function streamChat(
       if (payload.done) return result;
     }
   }
-  return result;
+  // the stream closed without the server's terminal {done} event — a dropped
+  // connection (proxy idle timeout, network) that would otherwise pass for a
+  // finished reply. A pending ask is still usable; anything else is an error.
+  if (result.ask) return result;
+  throw new Error(
+    result.text
+      ? `connection lost mid-reply (after ${result.text.length} characters) — check the proxy's SSE/idle timeout`
+      : 'connection lost before Speccy answered — check the network and the proxy\'s SSE/idle timeout',
+  );
 }
 
 /** Quick-tier chat naming; the caller keeps its fallback title on failure. */

@@ -95,12 +95,13 @@ export function Speccy() {
     setBusy(true);
     streamChatId.current = chatId;
     setStreamText('');
+    let lastText = '';
     try {
       let sawTool = false;
       const result = await streamChat(
         app.repoId,
         { messages, focusPath, branch: app.branch, allowEdits },
-        setStreamText,
+        (t) => { lastText = t; setStreamText(t); },
         (t) => { sawTool = true; appendEntry(repoKey, chatId, { kind: 'tool', tool: t }); },
       );
       // the server errors on empty terminal replies, but never let a stream
@@ -123,6 +124,11 @@ export function Speccy() {
         qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
       }
     } catch (e) {
+      // keep whatever streamed before the failure — a half answer plus a
+      // visible error beats losing both
+      if (lastText) {
+        appendEntry(repoKey, chatId, { kind: 'msg', msg: { role: 'assistant', content: lastText + '\n\n⚠ reply interrupted' } });
+      }
       setError(String((e as Error).message || e));
     } finally {
       setStreamText(null);
