@@ -176,8 +176,10 @@ func inRepoConfig(proj *project.Project, ref string) *project.Config {
 
 // configRef picks the branch a project's in-repo config is read from: the
 // currently selected branch when it exists, the default branch otherwise.
+// The ref is client-supplied — it must pass gitx.ValidRef before it may
+// reach git argv (BranchExists), same funnel as every gitx entry point.
 func configRef(proj *project.Project, ref string) string {
-	if ref != "" && (ref == proj.Cfg.DefaultBranch || proj.BranchExists(ref)) {
+	if ref != "" && gitx.ValidRef(ref) && (ref == proj.Cfg.DefaultBranch || proj.BranchExists(ref)) {
 		return ref
 	}
 	return proj.Cfg.DefaultBranch

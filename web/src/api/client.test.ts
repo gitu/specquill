@@ -94,7 +94,7 @@ describe('PAT re-authentication', () => {
     expect(takeLoginError()).toBe('gitlab could not verify the token');
   });
 
-  it('keeps the token when the network is down', async () => {
+  it('keeps the token when the network is down, and parks a generic reason', async () => {
     storePat('glpat-x');
     install((url) => {
       if (url === '/auth/pat/login') throw new TypeError('Failed to fetch');
@@ -103,6 +103,21 @@ describe('PAT re-authentication', () => {
 
     await expect(api('/api/me')).rejects.toThrow();
     expect(getStoredPat()).toBe('glpat-x');
+    expect(takeLoginError()).toMatch(/could not be reached/);
+  });
+
+  it('clears a stale parked reason once a re-login succeeds', async () => {
+    storePat('glpat-x');
+    let apiCalls = 0;
+    install((url) => {
+      if (url === '/auth/pat/login') return jsonResponse(200, { id: 1 });
+      apiCalls++;
+      return apiCalls === 1 ? jsonResponse(401, {}) : jsonResponse(200, { ok: true });
+    });
+    sessionStorage.setItem('specquill-login-error', 'old outage');
+
+    await expect(api<{ ok: boolean }>('/api/me')).resolves.toEqual({ ok: true });
+    expect(takeLoginError()).toBeNull(); // recovery removed the stale reason
   });
 
   it('does not re-login when no token is stored', async () => {

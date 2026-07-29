@@ -52,10 +52,15 @@ function reloginWithPat(): Promise<boolean> {
         let msg = res.statusText;
         try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep statusText */ }
         sessionStorage.setItem(LOGIN_ERROR_KEY, msg);
+      } else {
+        sessionStorage.removeItem(LOGIN_ERROR_KEY); // recovered — drop any stale reason
       }
       return res.ok;
     } catch {
-      return false; // offline/aborted — keep the token, retry on the next 401
+      // offline/aborted — keep the token, retry on the next 401; still leave
+      // a reason in case the browser ends up on the login page
+      sessionStorage.setItem(LOGIN_ERROR_KEY, 'the server could not be reached — check your connection and try again');
+      return false;
     }
   })();
   reauth = attempt;

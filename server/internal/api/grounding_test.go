@@ -131,6 +131,11 @@ func TestGroundingFollowsSelectedBranch(t *testing.T) {
 	if g := grounded("no-such-branch"); len(g) != 1 || g[0] != "reg" {
 		t.Fatalf("missing branch should fall back to default: %v", g)
 	}
+	// an option-shaped ref must never reach git argv (go/command-injection):
+	// ValidRef refuses it and the config read falls back to the default branch
+	if g := grounded("--upload-pack=evil"); len(g) != 1 || g[0] != "reg" {
+		t.Fatalf("hostile ref should fall back to default: %v", g)
+	}
 }
 
 func gitRun(t *testing.T, args ...string) {
