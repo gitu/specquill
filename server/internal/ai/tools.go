@@ -69,11 +69,20 @@ func (c *Client) StreamTools(ctx context.Context, msgs []Message, tools []ToolSp
 		if round < maxToolRounds && used < maxToolBytes {
 			body["tools"] = specs
 		}
-		content, calls, err := c.streamOnce(ctx, body, onDelta)
+		content, calls, finish, err := c.streamOnce(ctx, body, onDelta)
 		if err != nil {
 			return nil, nil, err
 		}
 		if len(calls) == 0 {
+			// a terminal round with no text is a provider failure (token cap,
+			// filtered output, reasoning-only reply) — surface it instead of
+			// ending the stream silently
+			if strings.TrimSpace(content) == "" {
+				if finish == "" {
+					finish = "unknown"
+				}
+				return nil, nil, fmt.Errorf("model returned an empty reply (finish_reason=%s)", finish)
+			}
 			return conv[len(msgs):], nil, nil
 		}
 		conv = append(conv, Message{Role: "assistant", Content: content, ToolCalls: calls})
@@ -115,19 +124,23 @@ func (c *Client) StreamTools(ctx context.Context, msgs []Message, tools []ToolSp
 // streamOnce performs a single streaming request, forwarding content deltas
 // and accumulating tool-call fragments (OpenAI streams id/name/arguments in
 // pieces keyed by index).
-func (c *Client) streamOnce(ctx context.Context, body map[string]any, onDelta func(string) error) (content string, calls []ToolCall, err error) {
+func (c *Client) streamOnce(ctx context.Context, body map[string]any, onDelta func(string) error) (content string, calls []ToolCall, finish string, err error) {
 	res, err := c.request(ctx, body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	defer res.Body.Close()
 
 	byIndex := map[int]*ToolCall{}
 	order := []int{}
 	if err := scanSSE(res, func(payload string) error {
+		if perr := providerErr(payload); perr != nil {
+			return perr
+		}
 		var chunk struct {
 			Choices []struct {
-				Delta struct {
+				FinishReason string `json:"finish_reason"`
+				Delta        struct {
 					Content   string `json:"content"`
 					ToolCalls []struct {
 						Index    int    `json:"index"`
@@ -143,6 +156,9 @@ func (c *Client) streamOnce(ctx context.Context, body map[string]any, onDelta fu
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil || len(chunk.Choices) == 0 {
 			return nil // keep-alives / unknown events
+		}
+		if fr := chunk.Choices[0].FinishReason; fr != "" {
+			finish = fr
 		}
 		d := chunk.Choices[0].Delta
 		if d.Content != "" {
@@ -161,14 +177,17 @@ func (c *Client) streamOnce(ctx context.Context, body map[string]any, onDelta fu
 			if f.ID != "" {
 				tc.ID = f.ID
 			}
-			if f.Function.Name != "" {
-				tc.Function.Name += f.Function.Name
+			// set-once: OpenAI sends the name a single time, but some
+			// compatible runtimes repeat it with every arguments fragment —
+			// naive concatenation yields "edit_fileedit_file"
+			if f.Function.Name != "" && tc.Function.Name == "" {
+				tc.Function.Name = f.Function.Name
 			}
 			tc.Function.Arguments += f.Function.Arguments
 		}
 		return nil
 	}); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	for i, idx := range order {
 		tc := *byIndex[idx]
@@ -177,7 +196,22 @@ func (c *Client) streamOnce(ctx context.Context, body map[string]any, onDelta fu
 		}
 		calls = append(calls, tc)
 	}
-	return content, calls, nil
+	return content, calls, finish, nil
+}
+
+// providerErr surfaces mid-stream error payloads ({"error": {...}}) that the
+// delta parser would otherwise skip as unknown events — the silent-stop
+// failure mode: the provider aborts, we say nothing.
+func providerErr(payload string) error {
+	var e struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(payload), &e) == nil && e.Error != nil {
+		return fmt.Errorf("ai provider mid-stream error: %s", e.Error.Message)
+	}
+	return nil
 }
 
 // scanSSE walks an SSE body, invoking fn per data payload until [DONE].

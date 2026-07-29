@@ -170,6 +170,54 @@ func TestReasoningEffortPassthrough(t *testing.T) {
 	}
 }
 
+// Mid-stream provider errors arrive as {"error": {...}} data payloads — the
+// delta parser used to skip them as unknown events, silently ending the
+// stream with no text and no trace.
+func TestStreamToolsSurfacesMidStreamProviderError(t *testing.T) {
+	round := "data: " + `{"error":{"message":"The server had an error processing your request."}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	c, _ := fakeProvider(t, []string{round})
+	_, _, err := c.StreamTools(context.Background(), []Message{{Role: "user", Content: "x"}},
+		[]ToolSpec{{Name: "read_file"}},
+		func(string, string) (string, bool, error) { return "", false, nil },
+		func(string) error { return nil }, nil)
+	if err == nil || !strings.Contains(err.Error(), "server had an error") {
+		t.Fatalf("mid-stream error swallowed: %v", err)
+	}
+}
+
+// A terminal round with no content and no tool calls is a provider failure
+// (token cap, filtered output) — it must error, not end silently.
+func TestStreamToolsEmptyReplyErrors(t *testing.T) {
+	round := sseChunk(t, map[string]any{}) + "data: [DONE]\n\n"
+	c, _ := fakeProvider(t, []string{round})
+	_, _, err := c.StreamTools(context.Background(), []Message{{Role: "user", Content: "x"}},
+		[]ToolSpec{{Name: "read_file"}},
+		func(string, string) (string, bool, error) { return "", false, nil },
+		func(string) error { return nil }, nil)
+	if err == nil || !strings.Contains(err.Error(), "empty reply") {
+		t.Fatalf("empty reply not surfaced: %v", err)
+	}
+}
+
+// Some OpenAI-compatible runtimes resend the function name with every
+// arguments fragment — set-once accumulation must not concatenate it.
+func TestStreamToolsRepeatedNameFragments(t *testing.T) {
+	round1 := sseChunk(t, toolFragment(0, "c1", "edit_file", `{"pa`)) +
+		sseChunk(t, toolFragment(0, "", "edit_file", `th":"x"}`)) +
+		"data: [DONE]\n\n"
+	round2 := sseChunk(t, map[string]any{"content": "done"}) + "data: [DONE]\n\n"
+	c, _ := fakeProvider(t, []string{round1, round2})
+	var name string
+	_, _, err := c.StreamTools(context.Background(), []Message{{Role: "user", Content: "x"}},
+		[]ToolSpec{{Name: "edit_file"}},
+		func(n, _ string) (string, bool, error) { name = n; return "ok", false, nil },
+		func(string) error { return nil }, nil)
+	if err != nil || name != "edit_file" {
+		t.Fatalf("name accumulated wrong: %q (%v)", name, err)
+	}
+}
+
 // gpt-5.x refuses function tools on /chat/completions with its server-side
 // default reasoning_effort — the client must retry once with an explicit
 // "none" instead of surfacing the 400.

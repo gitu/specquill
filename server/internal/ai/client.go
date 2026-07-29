@@ -4,7 +4,6 @@
 package ai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -125,17 +124,9 @@ func (c *Client) Stream(ctx context.Context, msgs []Message, onDelta func(delta 
 		return err
 	}
 	defer res.Body.Close()
-
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			return nil
+	return scanSSE(res, func(payload string) error {
+		if perr := providerErr(payload); perr != nil {
+			return perr
 		}
 		var chunk struct {
 			Choices []struct {
@@ -145,15 +136,13 @@ func (c *Client) Stream(ctx context.Context, msgs []Message, onDelta func(delta 
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue // ignore keep-alives / unknown events
+			return nil // ignore keep-alives / unknown events
 		}
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			if err := onDelta(chunk.Choices[0].Delta.Content); err != nil {
-				return err
-			}
+			return onDelta(chunk.Choices[0].Delta.Content)
 		}
-	}
-	return scanner.Err()
+		return nil
+	})
 }
 
 // Complete sends the conversation to the main model and returns the content.

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -132,6 +133,9 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 	tb := &speccyToolbox{repo: repo, branch: branch, writable: writable, sources: sources, files: files,
 		publish: func() { s.publish("save", repo.Key(), branch) }}
 	onCall := func(tc ai.ToolCall, result string, execErr error) error {
+		if execErr != nil {
+			log.Printf("speccy chat [%s@%s]: tool %s failed: %v", repo.ID, branch, tc.Function.Name, execErr)
+		}
 		if tc.Function.Name == "ask_user" {
 			return nil // the ask event below carries the question
 		}
@@ -151,6 +155,9 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 			return nil
 		}, onCall)
 	if err != nil {
+		// the SSE error event reaches the panel; the log line is for ops —
+		// "the chat just stopped" must always leave a trace somewhere
+		log.Printf("speccy chat [%s@%s]: %v", repo.ID, branch, err)
 		send(map[string]string{"error": err.Error()})
 		return
 	}

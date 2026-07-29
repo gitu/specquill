@@ -96,12 +96,18 @@ export function Speccy() {
     streamChatId.current = chatId;
     setStreamText('');
     try {
+      let sawTool = false;
       const result = await streamChat(
         app.repoId,
         { messages, focusPath, branch: app.branch, allowEdits },
         setStreamText,
-        (t) => appendEntry(repoKey, chatId, { kind: 'tool', tool: t }),
+        (t) => { sawTool = true; appendEntry(repoKey, chatId, { kind: 'tool', tool: t }); },
       );
+      // the server errors on empty terminal replies, but never let a stream
+      // end without SOME visible outcome (the "chat just stops" bug class)
+      if (!result.text && !result.ask && !sawTool) {
+        setError('Speccy returned an empty reply — please try again.');
+      }
       if (result.ask) {
         // any pre-question text lives inside the resume transcript — showing
         // it via the card avoids doubling it in the replayed history
