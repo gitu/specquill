@@ -57,8 +57,18 @@ class Handler(BaseHTTPRequestHandler):
                     name = next((tc['function']['name'] for tc in m['tool_calls']
                                  if tc['id'] == last.get('tool_call_id')), '')
                     break
-            if name == 'ask_user':
+            if name == 'ask_user' and 'READFIRST' in last['content']:
+                # answered question → the model consults a file next
+                tool_call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/txn-report.md'})}
+                reply = ''
+            elif name == 'ask_user':
                 reply = f"(mock) noted: {last['content']}."
+            elif name == 'read_file':
+                # after reading, the model asks a follow-up — the exact chain
+                # reported from gpt-5.x (answer → read_file → next question)
+                tool_call = {'name': 'ask_user',
+                             'arguments': json.dumps({'question': 'Follow-up question?', 'options': ['gamma', 'delta']})}
+                reply = 'Read it; one point is still open.'
             elif last['content'].startswith('ERROR'):
                 reply = f"(mock) the edit failed: {last['content']}"
             else:
@@ -66,6 +76,9 @@ class Handler(BaseHTTPRequestHandler):
         elif body.get('tools') and (m := re.search(r'EDIT (\S+) REPLACE "(.+?)" WITH "(.+?)"', user)):
             tool_call = {'name': 'edit_file',
                          'arguments': json.dumps({'path': m.group(1), 'search': m.group(2), 'replace': m.group(3)})}
+            reply = ''
+        elif body.get('tools') and 'READFIRST' in user:
+            tool_call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/txn-report.md'})}
             reply = ''
         elif body.get('tools') and 'ASKME' in user:
             # content BEFORE the tool call, like real providers stream it —

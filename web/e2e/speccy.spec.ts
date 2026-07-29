@@ -114,3 +114,28 @@ test('chats survive closing the panel, auto-name, and dismiss individually', asy
   await page.getByLabel('dismiss Mock Chat Title').click();
   await expect(page.getByText('Which mapping drifted?')).toHaveCount(0);
 });
+
+test('a question after a read_file round renders, and again after an answer', async ({ page }) => {
+  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
+  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+
+  // read_file round first, then the question — the reported failure chain
+  await composer.fill('READFIRST please');
+  await composer.press('Enter');
+  await expect(page.getByText('read file', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Follow-up question?')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'delta', exact: true }).click();
+  await expect(page.getByText(/noted: delta/)).toBeVisible({ timeout: 15_000 });
+
+  // answered question → model reads a file → asks AGAIN (chip between cards)
+  await composer.fill('ASKME again');
+  await composer.press('Enter');
+  await expect(page.getByText('Which option do you want?')).toBeVisible({ timeout: 15_000 });
+  const free = page.getByPlaceholder('or answer in your own words ⏎');
+  await free.fill('READFIRST for details');
+  await free.press('Enter');
+  await expect(page.getByText('read file', { exact: true }).last()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Follow-up question?').last()).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'gamma', exact: true }).last().click();
+  await expect(page.getByText(/noted: gamma/)).toBeVisible({ timeout: 15_000 });
+});
