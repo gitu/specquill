@@ -68,9 +68,11 @@ class Handler(BaseHTTPRequestHandler):
                          'arguments': json.dumps({'path': m.group(1), 'search': m.group(2), 'replace': m.group(3)})}
             reply = ''
         elif body.get('tools') and 'ASKME' in user:
+            # content BEFORE the tool call, like real providers stream it —
+            # the preface must reach the question card
             tool_call = {'name': 'ask_user',
                          'arguments': json.dumps({'question': 'Which option do you want?', 'options': ['alpha', 'beta']})}
-            reply = ''
+            reply = 'I checked the spec; one point is unresolved.'
         elif 'word title' in system:
             reply = 'Mock Chat Title'
         elif 'Reply with ONLY a JSON object' in system:
@@ -95,6 +97,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
             try:
+                # content first, then tool_calls — the order real providers use
+                for i in range(0, len(reply), 24):
+                    chunk = json.dumps({'choices': [{'delta': {'content': reply[i:i + 24]}}]})
+                    self._chunk(f"data: {chunk}\n\n")
+                    time.sleep(0.01)
                 if tool_call:
                     args = tool_call['arguments']
                     half = len(args) // 2
@@ -108,10 +115,6 @@ class Handler(BaseHTTPRequestHandler):
                         chunk = json.dumps({'choices': [{'delta': {'tool_calls': [f]}}]})
                         self._chunk(f"data: {chunk}\n\n")
                         time.sleep(0.01)
-                for i in range(0, len(reply), 24):
-                    chunk = json.dumps({'choices': [{'delta': {'content': reply[i:i + 24]}}]})
-                    self._chunk(f"data: {chunk}\n\n")
-                    time.sleep(0.01)
                 self._chunk("data: [DONE]\n\n")
                 self._chunk('')
             except (BrokenPipeError, ConnectionResetError):
