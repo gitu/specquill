@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -330,7 +331,14 @@ func (r *Repo) resolveRef(ref string) (string, error) {
 	return ref, nil
 }
 
-// safeRelPath validates a client-supplied repo path: relative, no traversal.
+// relPathRe rejects control characters (incl. NUL and newlines) anywhere and
+// a leading "-": such names could masquerade as git options or split argv
+// downstream. Every path that reaches a git invocation must pass this.
+var relPathRe = regexp.MustCompile(`^[^\x00-\x1f-][^\x00-\x1f]*$`)
+
+// safeRelPath validates a client-supplied repo path: relative, no traversal,
+// no control characters, never option-shaped. The regexp match is the final
+// gate so the returned value is provably screened (CodeQL barrier).
 func safeRelPath(p string) (string, error) {
 	// ".." anywhere is rejected outright — no repo file legitimately needs
 	// it, and it keeps the traversal check independent of Clean's rewriting
@@ -342,6 +350,9 @@ func safeRelPath(p string) (string, error) {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
 	if strings.HasPrefix(clean, ".git/") || clean == ".git" {
+		return "", fmt.Errorf("invalid path %q", p)
+	}
+	if !relPathRe.MatchString(clean) {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
 	return clean, nil

@@ -73,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
                 reply = f"(mock) the edit failed: {last['content']}"
             else:
                 reply = "(mock) applied the edit as an uncommitted draft — review it in the changes drawer."
-        elif body.get('tools') and (m := re.search(r'EDIT (\S+) REPLACE "(.+?)" WITH "(.+?)"', user)):
+        elif body.get('tools') and (m := re.search(r'EDIT (\S+) REPLACE "([^"]+)" WITH "([^"]+)"', user)):
             tool_call = {'name': 'edit_file',
                          'arguments': json.dumps({'path': m.group(1), 'search': m.group(2), 'replace': m.group(3)})}
             reply = ''
