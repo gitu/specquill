@@ -87,7 +87,7 @@ test('drafts survive navigation away and back', async ({ page, request }) => {
   expect(file.content).toContain(marker);
 });
 
-test('changes drawer shows the uncommitted diff', async ({ page, request }) => {
+test('changes drawer shows the uncommitted diff and discard rejects it', async ({ page, request }) => {
   const branch = await wsBranch(request);
   const cur = (await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string; sha: string };
   await request.put(`/api/repos/${REPO}/files/specs/venue.md?branch=${encodeURIComponent(branch)}`, {
@@ -100,7 +100,17 @@ test('changes drawer shows the uncommitted diff', async ({ page, request }) => {
   await page.getByText(branch, { exact: true }).click();
   await page.getByText('1 change', { exact: false }).first().click();
   await expect(page.getByText('Uncommitted changes')).toBeVisible();
-  await expect(page.getByText('Drawer marker line.')).toBeVisible();
+  // scope to the drawer's diff — the editor body behind it shows the marker too
+  await expect(page.locator('[id="file-specs/venue.md"]').getByText('Drawer marker line.').first()).toBeVisible();
+
+  // "Discard all" rejects the pending change and restores the committed state
+  const head = (await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: 'Discard all' }).click();
+  await expect(page.getByText('working tree clean — nothing to commit')).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () =>
+    ((await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string }).content,
+  { timeout: 15_000 }).toBe(head.content);
 });
 
 test('sync banner offers a workspace update after main moves', async ({ page, request }) => {

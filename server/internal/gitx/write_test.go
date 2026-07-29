@@ -132,6 +132,56 @@ func TestDeleteFile(t *testing.T) {
 	}
 }
 
+func TestDiscard(t *testing.T) {
+	m, _ := fixture(t)
+	repo, _ := m.Repo("w")
+
+	// dirty three ways: modified, untracked draft, deleted
+	_, sha, err := repo.File("main", "specs/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveFile("main", "specs/a.md", "# changed\n", sha); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveFile("main", "specs/draft.md", "# draft\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteFile("main", "notes.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// per-path discard: only the named file reverts (untracked → removed)
+	if err := repo.Discard("main", []string{"specs/draft.md"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := repo.Status("main")
+	if len(st.Dirty) != 2 {
+		t.Fatalf("want 2 dirty after per-path discard, got %v", st.Dirty)
+	}
+
+	// discard-all restores the modification and the deletion
+	if err := repo.Discard("main", nil); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = repo.Status("main")
+	if len(st.Dirty) != 0 {
+		t.Fatalf("worktree should be clean, got %v", st.Dirty)
+	}
+	content, _, err := repo.File("main", "specs/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "---\ntitle: A\n---\n\n# A\n" {
+		t.Fatalf("content not restored: %q", content)
+	}
+
+	// unsafe paths are refused before git sees them
+	if err := repo.Discard("main", []string{"../escape"}); err == nil {
+		t.Error("Discard should refuse a traversing path")
+	}
+}
+
 // Commit builds its `git add` argv from what safeRelPath returned, so a
 // traversing or reserved path is refused before git ever sees it.
 func TestCommitRejectsUnsafePaths(t *testing.T) {

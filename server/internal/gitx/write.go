@@ -217,6 +217,48 @@ func (r *Repo) DeleteFile(branch, path string) error {
 	return os.Remove(abs)
 }
 
+// Discard rejects uncommitted worktree changes: tracked paths (including
+// staged adds/renames) are restored to HEAD, untracked drafts are removed.
+// Empty paths discard the whole worktree. Commits are never touched.
+func (r *Repo) Discard(branch string, paths []string) error {
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return err
+	}
+	if err := r.protectedErr(branch); err != nil {
+		return err
+	}
+	specs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		clean, err := safeRelPath(p)
+		if err != nil {
+			return err
+		}
+		specs = append(specs, clean)
+	}
+	if len(specs) == 0 {
+		specs = []string{"."}
+	}
+	wt, err := r.Worktree(branch)
+	if err != nil {
+		return err
+	}
+	mu := r.lockBranch(branch)
+	mu.Lock()
+	defer mu.Unlock()
+	// per spec: a batch restore aborts wholesale when ONE pathspec is unknown
+	// to git (an untracked draft) — the others must still be restored
+	for _, spec := range specs {
+		if _, err := run(wt, nil, "restore", "--source=HEAD", "--staged", "--worktree", "--", spec); err != nil &&
+			!strings.Contains(err.Error(), "did not match") {
+			return err
+		}
+	}
+	// restore leaves untracked files behind — clean removes them
+	_, err = run(wt, nil, append([]string{"clean", "-fdq", "--"}, specs...)...)
+	return err
+}
+
 // Commit stages and commits worktree changes. The logged-in user is the
 // author and committer; the service identity lands as a Co-authored-by trailer.
 func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []string) (string, error) {

@@ -214,6 +214,27 @@ func (p *Project) Commit(branch, message, authorName, authorEmail string, rels [
 	return p.Repo.Commit(branch, message, authorName, authorEmail, paths)
 }
 
+// Discard rejects uncommitted worktree changes (project-relative paths; empty
+// = everything pending). With a content root only the project subtree is
+// cleared, never sibling content of the shared repo.
+func (p *Project) Discard(branch string, rels []string) error {
+	if err := p.writeGuard(); err != nil {
+		return err
+	}
+	paths := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		full, err := p.MapIn(rel)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, full)
+	}
+	if len(paths) == 0 && p.ContentRoot != "" {
+		paths = []string{p.ContentRoot}
+	}
+	return p.Repo.Discard(branch, paths)
+}
+
 // ---------------------------------------------------------------- status/diff
 
 func (p *Project) Status(branch string) (*gitx.StatusResult, error) {

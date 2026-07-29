@@ -116,6 +116,25 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *projec
 	jsonOK(w, map[string]string{"commitSha": sha})
 }
 
+// postDiscard rejects pending (uncommitted) worktree changes — the undo
+// counterpart of postCommit. Optional paths limit it to specific files.
+func (s *Server) postDiscard(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	var body struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	if err := repo.Discard(r.URL.Query().Get("branch"), body.Paths); err != nil {
+		gitFail(w, err)
+		return
+	}
+	s.publish("save", repo.Key(), branch)
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
 func (s *Server) postBranch(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var body struct{ Name, From string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
