@@ -5,8 +5,10 @@ import (
 	"testing"
 )
 
-// Opted-in bundle: a commit regenerates index.md/log.md and carries them in
-// the SAME commit; a workspace without the okf_version marker is untouched.
+// Opted-in bundle: a commit regenerates the index.md listings and carries
+// them in the SAME commit; log.md is never materialized (it is generated on
+// the fly at bundle export) and a stale committed one is retired. A
+// workspace without the okf_version marker is untouched.
 func TestCommitRegeneratesOKF(t *testing.T) {
 	m, _ := fixture(t)
 	repo, _ := m.Repo("w")
@@ -23,9 +25,12 @@ func TestCommitRegeneratesOKF(t *testing.T) {
 		t.Fatal("index.md generated without opt-in")
 	}
 
-	// opt in: root index.md with okf_version
-	_, err := repo.SaveFile("main", "index.md", "---\nokf_version: \"0.1\"\n---\n\n# Index\n", "")
-	if err != nil {
+	// opt in: root index.md with okf_version — plus a stale log.md as an
+	// older producer version would have committed it
+	if _, err := repo.SaveFile("main", "index.md", "---\nokf_version: \"0.1\"\n---\n\n# Index\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveFile("main", "log.md", "# Log\n\n- stale entry\n", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.Commit("main", "adopt OKF", "Jane", "jane@t", nil); err != nil {
@@ -44,16 +49,12 @@ func TestCommitRegeneratesOKF(t *testing.T) {
 	if err != nil || !strings.HasPrefix(dirIdx, "# specs\n") {
 		t.Fatalf("specs/index.md missing: %v\n%s", err, dirIdx)
 	}
-	logMd, _, err := repo.File("main", "log.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// includes the pending commit itself AND prior history
-	if !strings.Contains(logMd, "adopt OKF (Jane)") || !strings.Contains(logMd, "update a (Jane)") {
-		t.Fatalf("log.md missing entries:\n%s", logMd)
+	// log.md is a bundle-export artifact now — the stale one must be gone
+	if logMd, _, err := repo.File("main", "log.md"); err == nil {
+		t.Fatalf("log.md materialized in the tree:\n%s", logMd)
 	}
 
-	// next commit refreshes the log and keeps indexes in the same commit
+	// next commit keeps indexes in the same commit, worktree stays clean
 	_, sha2, _ := repo.File("main", "specs/a.md")
 	if _, err := repo.SaveFile("main", "specs/a.md", "---\ntitle: A\ndescription: The A spec.\n---\n\n# A v3\n", sha2); err != nil {
 		t.Fatal(err)
@@ -68,12 +69,27 @@ func TestCommitRegeneratesOKF(t *testing.T) {
 	if len(st.Dirty) != 0 {
 		t.Fatalf("derived files left uncommitted: %v", st.Dirty)
 	}
-	logMd, _, _ = repo.File("main", "log.md")
-	if !strings.Contains(logMd, "**Added** add description to a (Jane)") {
-		t.Fatalf("log.md missing new entry:\n%s", logMd)
-	}
 	idx, _, _ = repo.File("main", "index.md")
 	if !strings.Contains(idx, "— The A spec.") {
 		t.Fatalf("index description not refreshed:\n%s", idx)
+	}
+
+	// the on-the-fly log covers the whole history, newest first
+	entries, err := repo.OKFLogEntries("main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subjects []string
+	for _, e := range entries {
+		subjects = append(subjects, e.Subject)
+	}
+	joined := strings.Join(subjects, "\n")
+	for _, want := range []string{"add description to a", "adopt OKF", "update a"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("log entries missing %q:\n%s", want, joined)
+		}
+	}
+	if subjects[0] != "add description to a" {
+		t.Fatalf("log not newest-first: %v", subjects)
 	}
 }

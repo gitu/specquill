@@ -1,8 +1,9 @@
 // Package okf implements Open Knowledge Format (v0.1) producer support:
 // a workspace opts in by declaring `okf_version` in the frontmatter of its
-// root index.md; specquill then keeps the derived reserved files current —
-// index.md per directory (grouped concept listings) and log.md (change
-// history). Spec: github.com/GoogleCloudPlatform/knowledge-catalog/okf.
+// root index.md; specquill then keeps the index.md listings current at
+// commit time, while log.md (change history) is rendered on the fly only
+// when an OKF bundle is exported — git itself is the history.
+// Spec: github.com/GoogleCloudPlatform/knowledge-catalog/okf.
 package okf
 
 import (
@@ -211,9 +212,10 @@ func actionWord(subject string) string {
 	}
 }
 
-// WriteLog renders log.md from entries (expected newest first) and writes it
-// when changed, returning whether it did.
-func WriteLog(root string, entries []LogEntry) (bool, error) {
+// RenderLog renders log.md content from entries (expected newest first).
+// The log is never materialized in the repo — it is generated on the fly
+// when an OKF bundle is exported (git history is the source of truth).
+func RenderLog(entries []LogEntry) string {
 	var b strings.Builder
 	b.WriteString("# Log\n")
 	last := ""
@@ -224,12 +226,7 @@ func WriteLog(root string, entries []LogEntry) (bool, error) {
 		}
 		fmt.Fprintf(&b, "- **%s** %s (%s)\n", actionWord(e.Subject), e.Subject, e.Author)
 	}
-	abs := filepath.Join(root, "log.md")
-	content := b.String()
-	if cur, err := os.ReadFile(abs); err == nil && string(cur) == content {
-		return false, nil
-	}
-	return true, os.WriteFile(abs, []byte(content), 0o644)
+	return b.String()
 }
 
 // Validate returns conformance violations (OKF v0.1 §9) for the tree at

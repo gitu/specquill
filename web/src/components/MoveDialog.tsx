@@ -81,7 +81,7 @@ export function MoveDialog({ path, onClose }: { path: string; onClose: () => voi
           style={sx("width:100%;height:32px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px")} />
         {reserved && (
           <div style={sx('margin-top:8px;font-size:12px;color:var(--del)')}>
-            index.md and log.md are reserved — these files are generated automatically at commit time.
+            index.md and log.md are reserved — these files are generated automatically (indexes at commit time, the log at bundle export).
           </div>
         )}
 
