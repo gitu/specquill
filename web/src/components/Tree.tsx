@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useProjects, useRepos, useStatus, useTree } from '../api/hooks';
-import { buildTree } from '../lib/derive';
+import { buildRefTree, buildTree, filterRefPaths, RefDir } from '../lib/derive';
 import { CommitDialog } from './CommitDialog';
 import { NewDocDialog } from './NewDocDialog';
 import { IconChevD, IconChevR, IconLock, IconPlus, IconSync } from './icons';
@@ -17,33 +17,103 @@ function agoLabel(iso?: string): string {
   return `synced ${Math.round(mins / 60)}h ago`;
 }
 
-// Read-only input repo: lock glyph, files open read-only, footer shows sync age.
-function ReadOnlyRepoSection({ repoId, syncedAt, okf, openPath }: { repoId: string; syncedAt?: string; okf?: boolean; openPath?: string }) {
+function RefFileRow({ repoId, file, depth, openPath }: { repoId: string; file: { name: string; path: string }; depth: number; openPath?: string }) {
   const nav = useNav();
-  const tree = useTree(repoId, '');
+  const target = `~${repoId}/${file.path}`;
+  const active = openPath === target;
+  return (
+    <div
+      onClick={() => nav('/editor/' + target)}
+      style={sx(`display:flex;align-items:center;gap:7px;padding:5px 8px 5px ${26 + depth * 14}px;border-radius:6px;cursor:pointer;` +
+        (active ? 'background:var(--surface);box-shadow:var(--shadow);font-weight:600;color:var(--text)' : 'color:var(--text-3)'))}
+    >
+      <span style={sx('color:var(--reg);flex:none')}>◈</span>
+      <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{file.name}</span>
+    </div>
+  );
+}
+
+function RefDirRow({ repoId, dir, depth, openPath }: { repoId: string; dir: RefDir; depth: number; openPath?: string }) {
+  // collapsed by default; the chain holding the open document expands itself
+  const inPath = !!openPath?.startsWith(`~${repoId}/${dir.path}/`);
+  const [open, setOpen] = useState(inPath);
+  useEffect(() => { if (inPath) setOpen(true); }, [inPath]);
+  return (
+    <div>
+      <div
+        onClick={() => setOpen(!open)}
+        style={sx(`display:flex;align-items:center;gap:5px;padding:4px 8px 4px ${10 + depth * 14}px;border-radius:6px;cursor:pointer;color:var(--text-3);font-weight:600`)}
+      >
+        {open ? <IconChevD /> : <IconChevR />}
+        <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{dir.name}</span>
+      </div>
+      {open && <RefDirBody repoId={repoId} dir={dir} depth={depth + 1} openPath={openPath} />}
+    </div>
+  );
+}
+
+function RefDirBody({ repoId, dir, depth, openPath }: { repoId: string; dir: RefDir; depth: number; openPath?: string }) {
+  return (
+    <>
+      {dir.dirs.map((d) => <RefDirRow key={d.path} repoId={repoId} dir={d} depth={depth} openPath={openPath} />)}
+      {dir.files.map((f) => <RefFileRow key={f.path} repoId={repoId} file={f} depth={depth} openPath={openPath} />)}
+    </>
+  );
+}
+
+// Read-only input repo: lock glyph, files open read-only, footer shows sync age.
+// Listing honors the reference's `paths` prefixes (same semantics as grounding).
+// Sections start collapsed (the tree isn't even fetched until expanded) —
+// except the one holding the open document.
+function ReadOnlyRepoSection({ repoId, syncedAt, okf, paths, openPath }: { repoId: string; syncedAt?: string; okf?: boolean; paths?: string[]; openPath?: string }) {
+  const holdsOpenDoc = !!openPath?.startsWith(`~${repoId}/`);
+  const [open, setOpen] = useState(holdsOpenDoc);
+  // navigating into this reference (search palette, doc link) expands it
+  useEffect(() => { if (holdsOpenDoc) setOpen(true); }, [holdsOpenDoc]);
+  const tree = useTree(open ? repoId : undefined, '');
+  const root = useMemo(
+    () => buildRefTree(filterRefPaths((tree.data || []).map((e) => e.path), paths)),
+    [tree.data, paths],
+  );
   return (
     <div style={sx('margin-top:10px;border-top:1px solid var(--border);padding-top:6px')}>
-      <div style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;color:var(--text-3);font-weight:700;font-size:10.5px;letter-spacing:.5px')}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={sx('display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;cursor:pointer;color:var(--text-3);font-weight:700;font-size:10.5px;letter-spacing:.5px;user-select:none')}
+      >
+        {open ? <IconChevD /> : <IconChevR />}
         <span title="read-only input repo" style={sx('display:inline-flex')}><IconLock /></span>{repoId.toUpperCase()}
         {okf && <span title="OKF bundle" style={sx("font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--data-bg);color:var(--data)")}>OKF</span>}
         <div style={sx('flex:1')} />
         <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:400")}>{agoLabel(syncedAt)}</span>
       </div>
-      {(tree.data || []).map((e) => {
-        const target = `~${repoId}/${e.path}`;
-        const active = openPath === target;
-        return (
-          <div
-            key={e.path}
-            onClick={() => nav('/editor/' + target)}
-            style={sx('display:flex;align-items:center;gap:7px;padding:5px 8px 5px 26px;border-radius:6px;cursor:pointer;' +
-              (active ? 'background:var(--surface);box-shadow:var(--shadow);font-weight:600;color:var(--text)' : 'color:var(--text-3)'))}
-          >
-            <span style={sx('color:var(--reg);flex:none')}>◈</span>
-            <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{e.path.split('/').pop()}</span>
-          </div>
-        );
-      })}
+      {!open ? null : tree.isLoading ? (
+        // unfetched repos (lazy PAT clones, importer mirrors mid-sync) can sit
+        // here a while — shimmer keeps the section from reading as empty
+        <>
+          {[62, 45, 54].map((w, i) => (
+            <div key={i} style={sx('display:flex;align-items:center;padding:6px 8px 6px 26px')}>
+              <div style={{ ...sx('height:9px;border-radius:5px;background:var(--surface-2);animation:skel 1.3s ease-in-out infinite'), width: w + '%', animationDelay: i * 0.18 + 's' }} />
+            </div>
+          ))}
+          <div style={sx("padding:2px 8px 4px 26px;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)")}>fetching {repoId}…</div>
+        </>
+      ) : tree.error ? (
+        <div style={sx('display:flex;align-items:center;gap:8px;padding:6px 8px 6px 26px;font-size:11.5px;color:var(--text-3)')}>
+          <span style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')} title={String((tree.error as Error).message || tree.error)}>
+            couldn't load
+          </span>
+          <span onClick={() => void tree.refetch()} style={sx('flex:none;cursor:pointer;text-decoration:underline;text-decoration-color:var(--border-2);color:var(--text-2)')}>
+            retry
+          </span>
+        </div>
+      ) : root.dirs.length === 0 && root.files.length === 0 ? (
+        <div style={sx('padding:6px 8px 6px 26px;font-size:11.5px;color:var(--text-3)')}>
+          {paths?.length ? 'no files match the reference paths' : 'no files'}
+        </div>
+      ) : (
+        <RefDirBody repoId={repoId} dir={root} depth={0} openPath={openPath} />
+      )}
     </div>
   );
 }
@@ -61,6 +131,7 @@ export function Tree() {
   const projectsQ = useProjects(app.branch);
   const activeRefs = projectsQ.data?.find((p) => p.id === app.repoId)?.references || [];
   const refNames = activeRefs.map((r) => r.source);
+  const refPaths = Object.fromEntries(activeRefs.map((r) => [r.source, r.paths]));
   const readOnlyRepos = (repos.data || []).filter(
     (r) => r.kind === 'source' && (refNames.length === 0 || refNames.includes(r.id)),
   );
@@ -119,7 +190,7 @@ export function Tree() {
           </div>
         ))}
         {readOnlyRepos.map((r) => (
-          <ReadOnlyRepoSection key={r.id} repoId={r.id} syncedAt={r.syncedAt} okf={r.okf} openPath={openPath} />
+          <ReadOnlyRepoSection key={r.id} repoId={r.id} syncedAt={r.syncedAt} okf={r.okf} paths={refPaths[r.id]} openPath={openPath} />
         ))}
       </div>
       <div style={sx("height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-2)")}>

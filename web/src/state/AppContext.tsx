@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRepos, useSnapshot } from '../api/hooks';
 import { api } from '../api/client';
 import { buildModel, WorkspaceModel } from '../lib/model';
@@ -67,6 +68,7 @@ const RANK = { viewer: 0, editor: 1, maintainer: 2, admin: 3 } as const;
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
+  const qc = useQueryClient();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
   const projects = (repos.data || []).filter((r) => r.kind === 'project');
@@ -98,13 +100,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [urlPid, repos.data]);
 
   // forge mode has no background sync loops (fetching needs the user's own
-  // token) — fetch once when a project is opened so its state is fresh
+  // token) — fetch once when a project is opened so its state is fresh. The
+  // fetch can change what /api/repos and /api/projects report (in-repo
+  // `sources:`/`references:` are read from the clone, which was stale or
+  // absent until now), so those queries refetch once it lands.
   const fetchedFor = useRef<string>('');
   useEffect(() => {
     const id = writable?.id;
     if (!id || writable?.mergeMode !== 'forge' || fetchedFor.current === id) return;
     fetchedFor.current = id;
-    api(`/api/repos/${id}/fetch`, { method: 'POST', body: '{}' }).catch(() => { /* offline forge — stale is fine */ });
+    api(`/api/repos/${id}/fetch`, { method: 'POST', body: '{}' })
+      .then(() => {
+        void qc.invalidateQueries({ queryKey: ['repos'] });
+        void qc.invalidateQueries({ queryKey: ['projects'] });
+        void qc.invalidateQueries({ queryKey: ['branches', id] });
+      })
+      .catch(() => { /* offline forge — stale is fine */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [writable?.id, writable?.mergeMode]);
 

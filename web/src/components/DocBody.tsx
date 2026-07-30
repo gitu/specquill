@@ -72,7 +72,7 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
 
     el.querySelectorAll('a[href]').forEach((a) => {
       const href = a.getAttribute('href') || '';
-      if (/^(https?:|#|mailto:)/.test(href) || !/\.(md|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
+      if (/^(https?:|#|mailto:)/.test(href) || !/\.(md|adoc|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
       (a as HTMLElement).style.cursor = 'pointer';
       a.addEventListener('click', (e) => {
         e.preventDefault();

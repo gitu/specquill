@@ -15,7 +15,7 @@ import (
 // Reference selects a granted source for the project.
 type Reference struct {
 	Source    string   `yaml:"source"`
-	Paths     []string `yaml:"paths"`     // optional prefix filters (grounding only)
+	Paths     []string `yaml:"paths"`     // optional prefix filters (grounding + sidebar listing)
 	Grounding bool     `yaml:"grounding"` // include in speccy context
 }
 

@@ -19,7 +19,9 @@ import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
 import { knownTargets, linkifyReferences, suggestReferences } from '../lib/refs';
 import { DocBody } from '../components/DocBody';
+import { AsciiDoc } from '../components/AsciiDoc';
 import { ConfigDoc } from '../components/ConfigDoc';
+import { isCodeExt } from '../lib/langs';
 import { useDraft } from '../hooks/useDraft';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useToasts } from '../components/Toast';
@@ -146,11 +148,19 @@ export function docTabsStrip(active: 'editor' | 'graph', docName: string, nav: (
   );
 }
 
-type Kind = 'md' | 'mermaid' | 'excalidraw' | 'yaml' | 'text';
+type Kind = 'md' | 'mermaid' | 'excalidraw' | 'yaml' | 'image' | 'adoc' | 'code' | 'text';
 
 function kindOf(name: string): Kind {
-  const ext = name.split('.').pop()!;
-  return ext === 'md' ? 'md' : ext === 'excalidraw' ? 'excalidraw' : ext === 'mermaid' ? 'mermaid' : ext === 'yml' || ext === 'yaml' ? 'yaml' : 'text';
+  const ext = name.split('.').pop()!.toLowerCase();
+  if (/^(png|jpe?g|gif|webp|svg)$/.test(ext)) return 'image'; // the /raw asset types
+  if (ext === 'md' || ext === 'markdown') return 'md';
+  if (ext === 'excalidraw') return 'excalidraw';
+  if (ext === 'mermaid' || ext === 'mmd') return 'mermaid';
+  if (ext === 'yml' || ext === 'yaml') return 'yaml';
+  if (ext === 'adoc' || ext === 'asciidoc') return 'adoc';
+  // json stays 'text': the view route renders it through ConfigDoc
+  if (ext !== 'json' && isCodeExt(ext)) return 'code';
+  return 'text';
 }
 
 export function EditorView() {
@@ -171,7 +181,10 @@ export function EditorView() {
   const generated = isReservedMd(path);
   const name = path.split('/').pop()!;
   const kind = kindOf(name);
-  const file = useFileQuery(fileRepo, fileRef, path);
+  const ext = name.split('.').pop()!.toLowerCase();
+  // images never travel through the JSON files endpoint (it would mangle the
+  // bytes) — they render straight off /raw
+  const file = useFileQuery(fileRepo, fileRef, kind === 'image' ? undefined : path);
   const save = useSaveFile(app.repoId, app.branch); // sketch-file creation
   const toasts = useToasts();
   const narrow = useNarrow();
@@ -196,7 +209,7 @@ export function EditorView() {
     branch: app.branch,
     path,
     file,
-    enabled: !readOnly && !generated && !app.isProtectedBranch,
+    enabled: !readOnly && !generated && !app.isProtectedBranch && kind !== 'image',
     onRecovered: () => toasts.push({ text: `Recovered unsaved changes for ${name}`, kind: 'info' }),
     beforePersist: () => {
       const fresh = editorApi.current?.flush();
@@ -375,11 +388,15 @@ export function EditorView() {
   const change = app.model?.changes.find((c) => c.status === 'triage');
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
-  // the draft briefly still holds the previous document
-  const ready = !!file.data && draft.path === path && draft.raw !== '';
+  // the draft briefly still holds the previous document; images skip the file
+  // query entirely and are always ready
+  const ready = kind === 'image' || (!!file.data && draft.path === path && draft.raw !== '');
   const editable = kind === 'md' && !readOnly && !generated;
-  // a persisted 'edit' choice degrades gracefully on files that can't be edited
-  const effMode = mode === 'edit' && !editable ? 'view' : mode;
+  // a persisted 'edit'/'source' choice degrades gracefully on files where the
+  // mode doesn't exist
+  const effMode = (mode === 'edit' && !editable) || (mode === 'source' && kind === 'image') ? 'view' : mode;
+  // sketches are editable straight from their image view (workspace only)
+  const sketchEditable = /\.excalidraw\.png$/i.test(name) && !readOnly && !generated;
 
   // outline: h1-h3 headings for the sticky TOC (code fences skipped)
   const outline = useMemo(() => {
@@ -476,7 +493,9 @@ export function EditorView() {
           {editable && (
             <span onClick={() => void enterEdit()} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'edit'))}>Edit</span>
           )}
-          <span onClick={() => setMode('source')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'source'))}>Source</span>
+          {kind !== 'image' && (
+            <span onClick={() => setMode('source')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'source'))}>Source</span>
+          )}
           <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
         </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
@@ -628,7 +647,21 @@ export function EditorView() {
               </div>
             )}
             {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
-            {kind === 'excalidraw' && !readOnly ? (
+            {kind === 'image' ? (
+              fileRepo && (
+                <div
+                  onClick={sketchEditable ? () => void ensureWritableBranch().then(() => setExcalidrawPath(path)) : undefined}
+                  title={sketchEditable ? 'Click to edit the sketch' : undefined}
+                  style={sx('text-align:center' + (sketchEditable ? ';cursor:pointer' : ''))}
+                >
+                  <img
+                    src={rawUrl(fileRepo, fileRef, path) + '&v=' + sketchGen}
+                    alt={name}
+                    style={sx('max-width:100%;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px')}
+                  />
+                </div>
+              )
+            ) : kind === 'excalidraw' && !readOnly ? (
               <div
                 onClick={() => void ensureWritableBranch().then(() => setExcalidrawPath(path))}
                 title="Click to edit the sketch"
@@ -638,8 +671,14 @@ export function EditorView() {
               </div>
             ) : kind === 'yaml' || name.endsWith('.json') ? (
               <ConfigDoc path={path} raw={draft.raw} />
+            ) : kind === 'adoc' ? (
+              // raw0 keeps the ~repo/ prefix so relative assets and links in
+              // reference docs resolve within THEIR repo, not the workspace
+              <AsciiDoc raw={draft.raw} docPath={raw0} />
+            ) : kind === 'code' ? (
+              <SourceEditor value={draft.raw} lang={ext} onChange={() => {}} readOnly />
             ) : (
-              <DocBody html={viewHtml} docPath={path} />
+              <DocBody html={viewHtml} docPath={raw0} />
             )}
             {app.aiSuggestions && change && kind === 'md' && !readOnly && (
               <div style={sx('margin-top:24px;border:1px solid var(--ai-line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)')}>
@@ -726,7 +765,7 @@ export function EditorView() {
           <div style={sx('max-width:960px;margin:0 auto')}>
             <SourceEditor
               value={draft.raw}
-              lang={kind === 'md' ? 'markdown' : kind === 'yaml' ? 'yaml' : 'text'}
+              lang={kind === 'md' ? 'markdown' : kind === 'yaml' ? 'yaml' : ext}
               onChange={onRawChange}
               readOnly={readOnly || generated}
               baseline={headBaseline.data?.content}
