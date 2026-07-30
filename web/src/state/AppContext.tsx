@@ -53,6 +53,8 @@ interface AppState {
   entities: EntityDef[];          // effective document families (builtin + config)
   files?: Record<string, string>; // snapshot content the model was built from
   schema?: PropertySchema;
+  /** what actually resolved: config properties:, legacy schema.json, or defaults */
+  schemaSource: 'config' | 'legacy' | 'default';
   configYml?: string;
   snapshotError?: string;
 }
@@ -202,10 +204,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const files = snapshot.data?.files;
     const configYml = files?.['.specquill/config.yml'] || '';
     const wcfg = workspaceConfig(configYml);
-    // properties: config section > legacy .specquill/schema.json > defaults
+    // properties: config section > legacy .specquill/schema.json > defaults —
+    // a schema.json that fails to parse resolves to the defaults, and
+    // schemaSource reports what actually applied (the Model view labels it)
     let schema: PropertySchema = wcfg.properties;
+    let schemaSource: 'config' | 'legacy' | 'default' = wcfg.hasProperties ? 'config' : 'default';
     if (!wcfg.hasProperties && files?.['.specquill/schema.json']) {
-      try { schema = JSON.parse(files['.specquill/schema.json']); } catch { schema = DEFAULT_PROPERTIES; }
+      try {
+        const parsed: unknown = JSON.parse(files['.specquill/schema.json']);
+        if (parsed && typeof parsed === 'object') { schema = parsed as PropertySchema; schemaSource = 'legacy'; }
+        else { schema = DEFAULT_PROPERTIES; }
+      } catch { schema = DEFAULT_PROPERTIES; }
     }
     const wsView = (configYml.match(/^\s*default_view:\s*([\w-]+)/m) || [])[1];
     const workspaceDefaultView = VIEWS.includes(wsView as ViewName) ? (wsView as ViewName) : null;
@@ -269,6 +278,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       entities: wcfg.entities,
       files,
       schema,
+      schemaSource,
       configYml: files?.['.specquill/config.yml'],
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };

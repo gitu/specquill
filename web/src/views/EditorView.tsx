@@ -551,7 +551,7 @@ export function EditorView() {
               <div style={sx('margin-top:10px')}>
                 <button
                   onClick={() => void (async () => {
-                    const content = scaffoldFor(path, app.repoId || '') ?? newDocTemplate(path, app.entities);
+                    const content = scaffoldFor(path, app.repoId || '') ?? newDocTemplate(path, app.entities, { schema: app.schema });
                     const branch = await ensureWritableBranch();
                     await api<{ sha: string }>(`/api/repos/${app.repoId}/files/${path}?branch=${encodeURIComponent(branch)}`, {
                       method: 'PUT',

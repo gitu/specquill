@@ -90,7 +90,7 @@ export function NewDocDialog({ initialKind, onClose }: { initialKind?: string; o
       const branch = await ensureWritableBranch();
       await api<{ sha: string }>(`/api/repos/${app.repoId}/files/${path}?branch=${encodeURIComponent(branch)}`, {
         method: 'PUT',
-        body: JSON.stringify({ content: newDocTemplate(path, entities, { id, title: title.trim() || id }), baseSha: '' }),
+        body: JSON.stringify({ content: newDocTemplate(path, entities, { id, title: title.trim() || id, schema: app.schema }), baseSha: '' }),
       });
       qc.invalidateQueries({ queryKey: ['status', app.repoId] });
       qc.invalidateQueries({ queryKey: ['snapshot', app.repoId] });

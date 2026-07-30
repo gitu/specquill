@@ -52,8 +52,10 @@ export function ModelView() {
     nav('/editor/' + path);
   };
   const missingCfg = files['.specquill/config.yml'] === undefined;
-  // stand-alone schema.json keeps working until a properties: section exists
-  const legacySchema = !wcfg.hasProperties && files['.specquill/schema.json'] !== undefined;
+  // stand-alone schema.json keeps working until a properties: section exists;
+  // AppContext resolved what actually applies (a broken schema.json falls
+  // back to defaults, so file presence alone must not claim the label)
+  const legacySchema = app.schemaSource === 'legacy';
   const docsIn = (folder: string) => Object.keys(files).filter((p) => p.startsWith(folder) && !isReservedMd(p)).sort();
   // every configured document family renders a card, empty ones included —
   // the card is where users learn what the family is for
@@ -61,9 +63,11 @@ export function ModelView() {
     const docs = docsIn(e.folder);
     return { ...e, count: docs.length, first: docs[0] || '' };
   });
+  // families with no group, or one naming no axis, land in OTHER (key '')
+  const axisOf = (e: { group?: string }) => (e.group && GROUPS.some((g) => g.key === e.group) ? e.group : '');
   const groups = GROUPS.map((g) => ({
     ...g,
-    entities: entities.filter((e) => (e.group || '') === g.key || (g.key === '' && e.group && !GROUPS.some((x) => x.key === e.group))),
+    entities: entities.filter((e) => axisOf(e) === g.key),
   })).filter((g) => g.entities.length);
   const schema = app.schema || { fields: {}, order: [] };
   const schemaFields = (schema.order || []).filter((k) => (schema.fields || {})[k]).map((k) => {
@@ -161,7 +165,7 @@ export function ModelView() {
             <span style={sx('font-weight:700;font-size:13.5px')}>Property schema</span>
             <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>
               Frontmatter attributes — types &amp; enum values drive the Properties panel
-              {legacySchema ? ' · from .specquill/schema.json (legacy)' : wcfg.hasProperties ? ' · from config.yml properties:' : ' · built-in defaults'}
+              {legacySchema ? ' · from .specquill/schema.json (legacy)' : app.schemaSource === 'config' ? ' · from config.yml properties:' : ' · built-in defaults'}
             </span>
             <div style={sx('flex:1')} />
             <span onClick={() => void openOrCreate(legacySchema ? '.specquill/schema.json' : '.specquill/config.yml')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>{legacySchema ? 'Edit schema.json →' : missingCfg ? 'Create config.yml →' : 'Edit config.yml →'}</span>

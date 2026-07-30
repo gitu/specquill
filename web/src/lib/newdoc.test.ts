@@ -41,4 +41,12 @@ describe('newDocTemplate', () => {
   it('omits the id line when no id is given', () => {
     expect(newDocTemplate('specs/venue.md', undefined, { title: 'Venue' })).not.toContain('id:');
   });
+
+  it('seeds link-typed attributes as empty lists — workspace-defined fields included', () => {
+    const e: EntityDef = { ...ent('requirement', 'requirements/'), attributes: ['id', 'title', 'status', 'depends_on', 'implements', 'owner'] };
+    const out = newDocTemplate('requirements/REQ-1.md', [e], { schema: { fields: { depends_on: { type: 'links' } } } });
+    expect(out).toContain('depends_on: []'); // link field only the workspace schema knows
+    expect(out).toContain('implements: []'); // built-in link field seeds even with a trimmed schema
+    expect(out).not.toContain('owner:');     // scalar attributes are not pre-seeded
+  });
 });
