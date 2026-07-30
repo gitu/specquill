@@ -143,6 +143,37 @@ When asked to draft a change record (changes/*.md):
 - Keep the impact list honest — it feeds the traceability graph; do not pad it.
 `,
 	},
+	"work-items": {
+		Key: "work-items", Dir: "work-items", Title: "Work items (WHEN work lands)",
+		Starter: `---
+type: Work Item
+id: WI-001
+title: Example work item
+status: backlog
+priority: should
+owner: unassigned
+delivers: []
+---
+
+# Example work item
+
+WHEN work lands: a planned unit of delivery. Link the requirements and specs
+this item delivers in the frontmatter and track it from backlog to done.
+`,
+		Skill: `---
+type: Skill
+title: Writing work items
+---
+
+# Skill: writing work items
+
+When asked to draft or edit a work item (work-items/WI-*.md):
+
+- One deliverable per file, id WI-<nnn>; frontmatter: id, title, status (backlog|in_progress|done), priority, owner, delivers (the requirements/specs this item ships), due (yyyy-mm-dd, optional).
+- The body answers: what ships, why now (link the driving change records), and how we know it is done (acceptance checks referencing the linked requirements).
+- Keep delivers accurate — it is the WHEN edge of the traceability graph; do not pad it.
+`,
+	},
 	"decisions": {
 		Key: "decisions", Dir: "decisions", Title: "Decision records (ADRs)",
 		Starter: `---
@@ -200,24 +231,172 @@ title: Maintaining the glossary
 	},
 }
 
-const schemaJSON = `{
-  "order": ["id", "type", "status", "priority", "owner", "drivers", "implements", "satisfies", "maps_to", "verifies", "created", "updated"],
-  "fields": {
-    "id": { "label": "ID", "type": "mono" },
-    "type": { "label": "Type", "type": "text" },
-    "status": { "label": "Status", "type": "badge", "values": { "draft": "reg", "review": "prod", "approved": "data", "accepted": "data", "triage": "reg", "superseded": "text" } },
-    "priority": { "label": "Priority", "type": "badge", "values": { "must": "reg", "should": "prod", "could": "text" } },
-    "owner": { "label": "Owner", "type": "text" },
-    "drivers": { "label": "Drivers", "type": "links" },
-    "implements": { "label": "Implements", "type": "links" },
-    "satisfies": { "label": "Satisfies", "type": "links" },
-    "maps_to": { "label": "Maps to", "type": "links" },
-    "verifies": { "label": "Verified by", "type": "links" },
-    "created": { "label": "Created", "type": "date" },
-    "updated": { "label": "Updated", "type": "date" }
-  }
-}
+// configStarter is the combined workspace config: the WHY/WHAT/HOW/WHEN model
+// (entities, drivers, statuses, link types, ID schemes) plus the property
+// schema that used to live in .specquill/schema.json. Every section is
+// optional and spells out the built-in default, so the file changes nothing
+// until edited. MIRRORS web/src/lib/scaffold.ts scaffoldConfigYml — keep the
+// two in sync (the web side carries the drift test against its defaults).
+func configStarter(project string) string {
+	return `# specquill workspace config — the workspace model in one file.
+# EVERY section is optional: delete what you don't customize and the built-in
+# defaults apply. This sample spells the defaults out in full, so importing
+# it as-is changes nothing — edit from here.
+#
+# The model reads WHY -> WHAT -> HOW -> WHEN: drivers explain WHY work exists,
+# requirements say WHAT the product must do, specs say HOW it is realized,
+# work items say WHEN it lands.
+version: 2
+project: ` + project + `
+
+# view shown when opening the workspace (dashboard | editor | changes | graph | model)
+ui:
+  default_view: editor
+
+# ── document families ──────────────────────────────────────────────────────
+# "group" places a family on the model axis (why | what | how | when).
+# Add your own families, override single fields of a built-in (only the keys
+# you provide change), or remove one with "hidden: true". "attributes" seeds
+# the frontmatter of documents created in the family.
+entities:
+  regulation:
+    group: why
+    folder: "regulations/"
+    label: "Regulations"
+    icon: "◈"
+    color: "var(--reg)"
+    attributes: [id, title, status]
+    description: "External rules the product must comply with — the origin of regulatory drivers and change records."
+  change:
+    group: why
+    folder: "changes/"
+    label: "Changes"
+    icon: "⚑"
+    color: "var(--reg)"
+    attributes: [title, status, source, published]
+    description: "Incoming change records (regulatory, product, technical) triaged against the documents they impact."
+  requirement:
+    group: what
+    folder: "requirements/"
+    label: "Requirements"
+    icon: "▤"
+    color: "var(--prod)"
+    attributes: [id, title, status, priority, owner, drivers, implements, verifies]
+    description: "WHAT the product must do — atomic, testable statements carrying drivers and traceability links."
+  spec:
+    group: how
+    folder: "specs/"
+    label: "Specs"
+    icon: "◈"
+    color: "var(--text-2)"
+    attributes: [title, status, satisfies, maps_to]
+    description: "HOW requirements are realized — designs that satisfy requirements and map onto data fields."
+  data_mapping:
+    group: how
+    folder: "data-mappings/"
+    label: "Data mappings"
+    icon: "⇄"
+    color: "var(--data)"
+    attributes: [title]
+    description: "Field-level source → target mappings; drift against the specs is detected here."
+  diagram:
+    group: how
+    folder: "diagrams/"
+    label: "Diagrams"
+    icon: "✎"
+    color: "var(--ai)"
+    attributes: []
+    description: "Sketches and text diagrams embedded in documents — portable formats, no tool lock-in."
+  work_item:
+    group: when
+    folder: "work-items/"
+    label: "Work items"
+    icon: "⧗"
+    color: "var(--data)"
+    attributes: [id, title, status, priority, owner, delivers, due]
+    description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
+
+# ── WHY: driver taxonomy ───────────────────────────────────────────────────
+# The categories behind driver frontmatter entries — what a requirement can
+# be driven by (chips in the Properties panel and the dashboards).
+drivers:
+  regulatory: { label: "Regulatory", icon: "⚖", color: "#b06f16" }
+  product:    { label: "Product",    icon: "◆", color: "#2563c9" }
+  technical:  { label: "Technical",  icon: "⚙", color: "#5a616b" }
+
+# document lifecycle states
+statuses: [draft, in_review, approved, deprecated]
+
+# ── linkage: the typed edges of the traceability graph ─────────────────────
+link_types:
+  drives:     { from: [regulation, change], to: requirement }         # WHY -> WHAT
+  implements: { from: requirement,          to: spec }                # WHAT -> HOW
+  satisfies:  { from: spec,                 to: requirement }         # HOW -> WHAT
+  delivers:   { from: work_item,            to: [requirement, spec] } # WHEN -> WHAT/HOW
+  maps_to:    { from: spec,                 to: data_field }
+  verifies:   { from: test,                 to: requirement }
+
+# ── ID schemes for new documents ───────────────────────────────────────────
+# Tokens: {seq} / {seq:N} (next number in the family, zero-padded), {rand:N}
+# digits, {hex:N}, {adj} {word} (memorable pairs like "brisk-heron"), {yy}
+# {yyyy}, {slug} (from the title). Families without a scheme use built-ins
+# (REQ-/REG-/CHG-/MAP-/WI-/ADR-{seq:3}) or {slug}.
+ids:
+  requirement:  { pattern: "REQ-{seq:3}" }
+  regulation:   { pattern: "REG-{seq:3}" }
+  change:       { pattern: "CHG-{seq:3}" }
+  data_mapping: { pattern: "MAP-{seq:3}" }
+  work_item:    { pattern: "WI-{seq:3}" }
+
+# ── attributes: the property schema ────────────────────────────────────────
+# Frontmatter fields — labels, types and enum colors drive the Properties
+# panel. Types: text | code | tag | user | date | enum | percent | links.
+# Enum colors: green | blue | amber | violet | slate.
+# (Replaces the former .specquill/schema.json, which is still honored while
+# this section is absent.)
+properties:
+  order: [id, type, status, priority, owner, source, due, drivers, implements, satisfies, delivers, maps_to, verifies, created, updated]
+  fields:
+    id:         { label: "ID", type: code }
+    type:       { label: "Type", type: tag }
+    status:     { label: "Status", type: enum, values: { draft: slate, in_review: amber, approved: green, deprecated: slate, triage: amber, backlog: slate, in_progress: blue, done: green, active: green } }
+    priority:   { label: "Priority", type: enum, values: { must: amber, should: blue, could: slate } }
+    owner:      { label: "Owner", type: user }
+    source:     { label: "Source", type: enum, values: { regulatory: amber, product: blue, technical: slate } }
+    due:        { label: "Due", type: date }
+    drivers:    { label: "Drivers", type: links }
+    implements: { label: "Implements", type: links }
+    satisfies:  { label: "Satisfies", type: links }
+    delivers:   { label: "Delivers", type: links }
+    maps_to:    { label: "Maps to", type: links }
+    verifies:   { label: "Verified by", type: links }
+    created:    { label: "Created", type: date }
+    updated:    { label: "Updated", type: date }
+
+# ── read-only reference sources ────────────────────────────────────────────
+# Local-auth deployments: names must exist in the server's catalog (selection
+# can never mint access). Forge-PAT deployments: define the repos here under
+# sources: instead — each user fetches them with their own token.
+references: []
+# references:
+#   - source: regulations
+#     paths: [regulations/]    # optional prefix filter
+#     grounding: true          # excerpt into the AI prompt (tools reach it either way)
+
+# forge-PAT mode only — define the reference repos in-repo (https remotes on
+# allowlisted hosts; fetched per user with their own token):
+# sources:
+#   - name: regulations
+#     remote: https://git.example.com/acme/regulations.git
+#     default_branch: main
+
+# Extra rules appended to the Speccy system prompt (structure/content
+# expectations). Longer-form guidance belongs in .specquill/instructions.md.
+# speccy:
+#   instructions: |
+#     Every requirement gets a rationale paragraph before its statements.
 `
+}
 
 // instructionsStarter seeds .specquill/instructions.md — the workspace's own
 // structure/content expectations, pinned into every speccy prompt alongside
@@ -246,7 +425,7 @@ title: Authoring in this workspace
 
 General rules the AI follows for every document it drafts or edits here:
 
-- Plain markdown with YAML frontmatter; typed links (drivers, implements, satisfies, maps_to, verifies) build the traceability graph — keep them accurate and minimal.
+- Plain markdown with YAML frontmatter; typed links (drivers, implements, satisfies, delivers, maps_to, verifies) build the traceability graph — keep them accurate and minimal.
 - Reference other documents by relative path (e.g. ../specs/example.md); never link files that do not exist.
 - RFC-2119 keywords (MUST/SHALL/SHOULD/MAY) appear only in requirements, and only in their normative statements.
 - Edits are surgical: preserve the author's structure and wording outside the requested change.

@@ -46,6 +46,16 @@ Key properties:
 
 - **The server never parses frontmatter** — it serves files + git operations; the model
   (graph, dashboards) is computed in the browser from a `/snapshot` of the branch.
+- **The type model is configuration, not code.** Document families sit on a
+  WHY → WHAT → HOW → WHEN axis: drivers (regulation, product, technical) explain WHY
+  work exists, requirements say WHAT the product must do, specs say HOW it is
+  realized, work items say WHEN it lands. The whole type system — entities, drivers,
+  statuses, link types, ID schemes and the property schema — lives in ONE optional
+  file, `.specquill/config.yml`; every section it omits runs on the built-in
+  defaults, entities merge (override single fields, add families, or drop one with
+  `hidden: true`), and the Model view shows a **sample config** spelling out the full
+  default setup — importable in one click when no config exists. A stand-alone
+  `.specquill/schema.json` keeps working as the legacy property-schema form.
 - **Protected main, personal workspaces.** The default branch is never edited directly:
   the first edit transparently creates/switches to the user's `ws/<user>` branch
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected
@@ -108,8 +118,8 @@ Key properties:
   reference edges in the traceability graph.
 - **Workspace onboarding.** `specquill init <dir> [-types requirements,specs,changes,…]`
   scaffolds a new workspace repo: folder skeleton per chosen document family
-  (requirements, specs, regulations, data-mappings, changes, decisions, glossary),
-  the `.specquill/schema.json` property schema, starter documents, a server-config
+  (requirements, specs, regulations, data-mappings, changes, work-items, decisions, glossary),
+  the combined `.specquill/config.yml` (model + property schema), starter documents, a server-config
   stub — and the speccy's workspace-side brain: **authoring skills** under
   `.specquill/skills/`, an **instructions** starter (`.specquill/instructions.md`,
   with `speccy.instructions` in `config.yml` as the short inline form) and the
@@ -203,6 +213,75 @@ The authoritative version of this table is
 [`specs/forge-auth.md`](repo-product/docs/specs/specs/forge-auth.md); the
 authorization reasoning is [`REQ-004`](repo-product/docs/specs/requirements/REQ-004.md)
 and [`REQ-024`](repo-product/docs/specs/requirements/REQ-024.md).
+
+### Example: forge-PAT deployment with reference sources
+
+A specs workspace grounded on regulatory texts, with the implementation repo
+that is *built from* these specs selected as a read-only source — so the speccy
+can check the code against the requirements (drift detection).
+
+Server YAML — minimal and credential-free; the top-level `sources:` block must
+stay empty in this mode:
+
+```yaml
+listen: ":8080"
+data_dir: /var/lib/specquill
+base_url: https://specquill.acme.com
+
+projects:
+  - id: trading-specs
+    remote: https://gitlab.acme.com/trading/trading-specs.git
+    default_branch: main
+
+auth:
+  forge:
+    kind: gitlab
+    base_url: https://gitlab.acme.com
+    # in-repo source remotes may only name the forge/project hosts;
+    # extra hosts (e.g. a public mirror) must be listed here
+    allowed_source_hosts: [gitlab.esma-mirror.org]
+  admin_emails: [ops@acme.com]
+
+ai:
+  enabled: true
+  base_url: https://api.openai.com/v1
+  model: gpt-4o
+  quick_model: gpt-4o-mini
+  api_key_env: SPECQUILL_AI_KEY
+```
+
+`.specquill/config.yml` in the workspace repo — sources are **defined** here
+(git repos, https only, no credentials; each user fetches them with their own
+PAT, so a definition never mints access) and **selected** under `references:`:
+
+```yaml
+version: 2
+project: trading-specs
+default_branch: main
+
+sources:
+  - name: regulations            # regulatory texts the requirements derive from
+    remote: https://gitlab.acme.com/compliance/regulations.git
+  - name: esma-rts               # public mirror — needs the allowed_source_hosts entry
+    remote: https://gitlab.esma-mirror.org/esma/rts-texts.git
+    default_branch: master
+  - name: trading-platform       # the implementation built from these specs
+    remote: https://gitlab.acme.com/trading/trading-platform.git
+
+references:
+  # small, load-bearing texts: pin into the speccy system prompt
+  - source: regulations
+    grounding: true
+  - source: esma-rts
+    grounding: true
+    paths: [rts22/]              # grounding-only prefix filter
+  # the implementation is too big to prompt-stuff: no grounding — the speccy
+  # still reads it on demand via its list_files/search/read_file tools
+  - source: trading-platform
+```
+
+`grounding: true` only decides what gets excerpted into the prompt; every
+selected source is fully explorable through the chat tools regardless.
 
 ## Verify
 

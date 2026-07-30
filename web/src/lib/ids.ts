@@ -17,6 +17,10 @@
 //   {slug}         kebab-case of the document title (memorable word pair
 //                  while the title is still empty)
 
+import { idSchemes } from './config';
+
+export { idSchemes };
+
 // Curated for memorability: short, concrete, visually distinct, no two words
 // that sound alike. 40×44 word pairs ≈ 1760 combos per family.
 const ADJECTIVES = [
@@ -45,19 +49,8 @@ const DEFAULT_PATTERNS: Record<string, string> = {
   change: 'CHG-{seq:3}',
   data_mapping: 'MAP-{seq:3}',
   decision: 'ADR-{seq:3}',
+  work_item: 'WI-{seq:3}',
 };
-
-/** The config's `ids:` entries (kind → pattern), in file order. */
-export function idSchemes(configYml?: string): { kind: string; pattern: string }[] {
-  const block = ((configYml || '').match(/(?:^|\n)ids:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/) || [])[1] || '';
-  const out: { kind: string; pattern: string }[] = [];
-  for (const line of block.split('\n')) {
-    const m = line.match(/^\s{2}([\w-]+):\s*\{(.*)\}\s*$/);
-    const p = m && (m[2].match(/pattern:\s*"([^"]*)"/) || [])[1];
-    if (m && p) out.push({ kind: m[1], pattern: p });
-  }
-  return out;
-}
 
 /** Effective ID pattern for an entity kind (config `ids:` > built-in > {slug}). */
 export function idPattern(kind: string, configYml?: string): string {

@@ -4,7 +4,8 @@
 
 import { Change, DataField, PropEntry, Requirement, WorkspaceModel, isReservedMd, parseProps, stripFrontmatter } from './model';
 import type { EntityDef } from './entities';
-import type { PropertySchema } from '../state/AppContext';
+import { workspaceConfig } from './config';
+import type { PropertySchema } from './config';
 
 export const srcMeta = (s: string) =>
   ({
@@ -101,8 +102,8 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
 export interface PropItem { text: string; style: string; openPath?: string }
 export interface PropRow { key: string; rawKey: string; items: PropItem[] }
 
-// schema.json `values` colors — the second row aliases the css-var names some
-// workspaces use (e.g. the specquill product repo) onto the same palette
+// property-schema `values` colors — the second row aliases the css-var names
+// some workspaces use (e.g. the specquill product repo) onto the same palette
 export const PAL: Record<string, { fg: string; bg: string }> = {
   green: { fg: 'var(--data)', bg: 'var(--data-bg)' }, amber: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
   blue: { fg: 'var(--prod)', bg: 'var(--prod-bg)' }, violet: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
@@ -510,22 +511,10 @@ export function sourceLines(raw: string): SourceLine[] {
 
 // ---------------------------------------------------------------- model view (taxonomy)
 
+/** Effective taxonomy: the config's sections over the built-in defaults. */
 export function parseTaxonomy(configYml: string) {
-  const yml = configYml || '';
-  const driverBlock = (yml.match(/drivers:\s*\n([\s\S]*?)(?=\nstatuses:|\n[a-z_]+:\s*\n|$)/) || [])[1] || '';
-  const drivers: { key: string; label: string; icon: string; color: string }[] = [];
-  driverBlock.split('\n').forEach((l) => {
-    const m = l.match(/^\s{2}([\w-]+):\s*\{\s*label:\s*"([^"]*)",\s*icon:\s*"([^"]*)",\s*color:\s*"([^"]*)"/);
-    if (m) drivers.push({ key: m[1], label: m[2], icon: m[3], color: m[4] });
-  });
-  const statuses = ((yml.match(/statuses:\s*\[(.*?)\]/) || [])[1] || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const linkBlock = (yml.match(/link_types:\s*\n([\s\S]*?)(?=\npaths:|\n[a-z_]+:\s*\n|$)/) || [])[1] || '';
-  const links: { name: string; from: string; to: string }[] = [];
-  linkBlock.split('\n').forEach((l) => {
-    const m = l.match(/^\s{2}([\w-]+):\s*\{\s*from:\s*(\[[^\]]*\]|[\w-]+),\s*to:\s*([\w-]+)/);
-    if (m) links.push({ name: m[1], from: m[2].replace(/[[\]]/g, ''), to: m[3] });
-  });
-  return { drivers, statuses, links };
+  const c = workspaceConfig(configYml);
+  return { drivers: c.drivers, statuses: c.statuses, links: c.linkTypes };
 }
 
 // ---------------------------------------------------------------- misc

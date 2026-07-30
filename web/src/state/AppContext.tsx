@@ -3,13 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useRepos, useSnapshot } from '../api/hooks';
 import { api } from '../api/client';
 import { buildModel, WorkspaceModel } from '../lib/model';
-import { EntityDef, parseEntities } from '../lib/entities';
+import type { EntityDef } from '../lib/entities';
+import { DEFAULT_PROPERTIES, PropertySchema, workspaceConfig } from '../lib/config';
 import { flushAllDrafts } from '../lib/draftRegistry';
 
-export interface PropertySchema {
-  order?: string[];
-  fields?: Record<string, { label?: string; type?: string; values?: Record<string, string> }>;
-}
+export type { PropertySchema } from '../lib/config';
 
 export const VIEWS = ['dashboard', 'editor', 'changes', 'graph', 'model'] as const;
 export type ViewName = (typeof VIEWS)[number];
@@ -55,6 +53,8 @@ interface AppState {
   entities: EntityDef[];          // effective document families (builtin + config)
   files?: Record<string, string>; // snapshot content the model was built from
   schema?: PropertySchema;
+  /** what actually resolved: config properties:, legacy schema.json, or defaults */
+  schemaSource: 'config' | 'legacy' | 'default';
   configYml?: string;
   snapshotError?: string;
 }
@@ -202,9 +202,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppState>(() => {
     const files = snapshot.data?.files;
-    let schema: PropertySchema | undefined;
-    try { schema = files?.['.specquill/schema.json'] ? JSON.parse(files['.specquill/schema.json']) : undefined; } catch { schema = undefined; }
     const configYml = files?.['.specquill/config.yml'] || '';
+    const wcfg = workspaceConfig(configYml);
+    // properties: config section > legacy .specquill/schema.json > defaults —
+    // a schema.json that fails to parse resolves to the defaults, and
+    // schemaSource reports what actually applied (the Model view labels it)
+    let schema: PropertySchema = wcfg.properties;
+    let schemaSource: 'config' | 'legacy' | 'default' = wcfg.hasProperties ? 'config' : 'default';
+    if (!wcfg.hasProperties && files?.['.specquill/schema.json']) {
+      try {
+        const parsed: unknown = JSON.parse(files['.specquill/schema.json']);
+        if (parsed && typeof parsed === 'object') { schema = parsed as PropertySchema; schemaSource = 'legacy'; }
+        else { schema = DEFAULT_PROPERTIES; }
+      } catch { schema = DEFAULT_PROPERTIES; }
+    }
     const wsView = (configYml.match(/^\s*default_view:\s*([\w-]+)/m) || [])[1];
     const workspaceDefaultView = VIEWS.includes(wsView as ViewName) ? (wsView as ViewName) : null;
     const protectedBranches = writable?.protectedBranches || [];
@@ -264,9 +275,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       aiSuggestions,
       toggleAI: () => setAI((v) => !v),
       model: files ? buildModel(files) : undefined,
-      entities: parseEntities(configYml),
+      entities: wcfg.entities,
       files,
       schema,
+      schemaSource,
       configYml: files?.['.specquill/config.yml'],
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
