@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGraph, buildProps, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, collectBacklinks, focusGraph } from './derive';
+import { buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, collectBacklinks, filterRefPaths, focusGraph } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 
@@ -17,6 +17,35 @@ describe('buildTree', () => {
     expect(by['requirements/REQ-001.md']).toBe(false);
     expect(by['requirements/index.md']).toBe(true);
     expect(by['requirements/log.md']).toBe(true);
+  });
+});
+
+describe('filterRefPaths', () => {
+  const files = ['docs/api/auth.md', 'docs/guide.md', 'src/main.go', 'README.md'];
+
+  it('keeps everything without prefixes', () => {
+    expect(filterRefPaths(files)).toEqual(files);
+    expect(filterRefPaths(files, [])).toEqual(files);
+  });
+
+  it('matches whole path segments like the server filter, trailing slash or not', () => {
+    expect(filterRefPaths(files, ['docs'])).toEqual(['docs/api/auth.md', 'docs/guide.md']);
+    expect(filterRefPaths(files, ['docs/'])).toEqual(['docs/api/auth.md', 'docs/guide.md']);
+    expect(filterRefPaths(files, ['doc'])).toEqual([]); // no partial-segment match
+    expect(filterRefPaths(files, ['README.md'])).toEqual(['README.md']); // exact file
+  });
+});
+
+describe('buildRefTree', () => {
+  it('nests a flat listing into sorted directories', () => {
+    const root = buildRefTree(['b/two.md', 'a/deep/one.md', 'top.md', 'a/zero.md']);
+    expect(root.files.map((f) => f.name)).toEqual(['top.md']);
+    expect(root.dirs.map((d) => d.name)).toEqual(['a', 'b']);
+    const a = root.dirs[0];
+    expect(a.path).toBe('a');
+    expect(a.files.map((f) => f.path)).toEqual(['a/zero.md']);
+    expect(a.dirs[0].path).toBe('a/deep');
+    expect(a.dirs[0].files[0]).toEqual({ name: 'one.md', path: 'a/deep/one.md' });
   });
 });
 

@@ -97,6 +97,40 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
   });
 }
 
+// ---------------------------------------------------------------- reference tree
+
+export interface RefDir { name: string; path: string; dirs: RefDir[]; files: { name: string; path: string }[] }
+
+/**
+ * Mirrors the server's filterByPaths prefix semantics (speccy.go): a file
+ * survives when it equals a prefix or sits under one; no prefixes keeps all.
+ */
+export function filterRefPaths(paths: string[], prefixes?: string[]): string[] {
+  if (!prefixes || prefixes.length === 0) return paths;
+  return paths.filter((p) => prefixes.some((pre) => p === pre || p.startsWith(pre.replace(/\/+$/, '') + '/')));
+}
+
+/** Nests a flat recursive file listing into directories, everything sorted. */
+export function buildRefTree(paths: string[]): RefDir {
+  const root: RefDir = { name: '', path: '', dirs: [], files: [] };
+  const dirAt = new Map<string, RefDir>([['', root]]);
+  const dirFor = (p: string): RefDir => {
+    const hit = dirAt.get(p);
+    if (hit) return hit;
+    const cut = p.lastIndexOf('/');
+    const node: RefDir = { name: p.slice(cut + 1), path: p, dirs: [], files: [] };
+    dirAt.set(p, node);
+    dirFor(cut < 0 ? '' : p.slice(0, cut)).dirs.push(node);
+    return node;
+  };
+  // sorted input ⇒ dirs and files land in each parent already sorted
+  for (const p of [...paths].sort()) {
+    const cut = p.lastIndexOf('/');
+    dirFor(cut < 0 ? '' : p.slice(0, cut)).files.push({ name: p.slice(cut + 1), path: p });
+  }
+  return root;
+}
+
 // ---------------------------------------------------------------- properties
 
 export interface PropItem { text: string; style: string; openPath?: string }

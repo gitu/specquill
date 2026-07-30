@@ -40,6 +40,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 ::-webkit-scrollbar-thumb:hover{background:var(--text-3);background-clip:padding-box}
 @keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
 @keyframes pulse{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.25)}}
+@keyframes skel{0%,100%{opacity:.45}50%{opacity:1}}
 .mrow:hover{background:var(--surface-2)}
 
 /* rendered-markdown typography (scoped to file-rendered docs) */
