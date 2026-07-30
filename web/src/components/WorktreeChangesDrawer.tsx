@@ -14,11 +14,13 @@ const EMPTY = "<div style=\"padding:20px;color:var(--text-3);font-size:11px;text
 // before/after preview for binary-like changes: PNG sketches (and plain
 // images) render as images — the committed side reads the HEAD blob via
 // at=head, the uncommitted side the worktree state. Legacy .excalidraw JSON
-// keeps the themed SVG shim.
-function WorktreeArtifact({ path, status }: { path: string; status: string }) {
+// keeps the themed SVG shim. Renames read the committed side from the OLD
+// path — that is where HEAD still has the blob.
+function WorktreeArtifact({ path, oldPath, status }: { path: string; oldPath?: string; status: string }) {
   const app = useApp();
+  const beforePath = oldPath || path;
   const legacyJson = /\.excalidraw$/i.test(path);
-  const before = useFileAtHead(legacyJson ? app.repoId : undefined, app.branch, path, true);
+  const before = useFileAtHead(legacyJson ? app.repoId : undefined, app.branch, beforePath, true);
   const after = useFileQuery(legacyJson ? app.repoId : undefined, app.branch, path);
   // bust the raw endpoint's short cache once per drawer mount
   const v = useMemo(() => Date.now().toString(36), []);
@@ -37,7 +39,7 @@ function WorktreeArtifact({ path, status }: { path: string; status: string }) {
           <div style={sx('padding:20px;color:var(--text-3);font-size:11px;text-align:center')}>—</div>
         ) : (
           <img
-            src={rawUrl(app.repoId!, app.branch, path) + (right ? '' : '&at=head') + '&v=' + v}
+            src={rawUrl(app.repoId!, app.branch, right ? path : beforePath) + (right ? '' : '&at=head') + '&v=' + v}
             alt={label + ' ' + path}
             style={sx(IMG_STYLE)}
           />
@@ -93,7 +95,7 @@ export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
         <div style={sx('flex:1;overflow-y:auto;padding:16px')}>
           {files.map((f) => (
             <div key={f.path}>
-              <DiffCard file={f} artifact={f.binaryLike ? <WorktreeArtifact path={f.path} status={f.status} /> : undefined} />
+              <DiffCard file={f} artifact={f.binaryLike ? <WorktreeArtifact path={f.path} oldPath={f.oldPath} status={f.status} /> : undefined} />
               <div style={sx('margin:-10px 0 16px;display:flex;justify-content:flex-end;gap:14px')}>
                 <span onClick={() => reject(f.oldPath ? [f.path, f.oldPath] : [f.path])}
                   style={sx('font-size:11.5px;color:var(--del);cursor:pointer;font-weight:600')}>
