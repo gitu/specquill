@@ -73,6 +73,13 @@ func (r *Repo) regenerateOKF(wt string) {
 // maxOKFLogEntries. This is the on-the-fly source for the exported bundle's
 // log.md.
 func (r *Repo) OKFLogEntries(ref, subdir string) ([]okf.LogEntry, error) {
+	// every ref funnels through the barrier before reaching git argv — the
+	// current caller passes the configured default branch, but the guarantee
+	// stays local (see ValidRef)
+	ref, err := r.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	// %as = author date short, %an = author name, %s = subject
 	args := []string{"log", "--pretty=format:%as\x1f%an\x1f%s", "-n", strconv.Itoa(maxOKFLogEntries), ref}
 	if subdir != "" {
