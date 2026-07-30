@@ -24,7 +24,7 @@ export function AsciiDoc({ raw, docPath }: { raw: string; docPath: string }) {
         if (!live) return;
         setHtml(DOMPurify.sanitize(String(out)));
       })
-      .catch(() => setHtml('<pre style="white-space:pre-wrap"><code>' + esc(raw) + '</code></pre>'));
+      .catch(() => { if (live) setHtml('<pre style="white-space:pre-wrap"><code>' + esc(raw) + '</code></pre>'); });
     return () => { live = false; };
   }, [raw]);
   if (html === null) {

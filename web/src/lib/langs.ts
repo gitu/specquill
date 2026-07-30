@@ -44,12 +44,16 @@ const CODE_MODES: Record<string, StreamParser<unknown>> = {
   html: html, htm: html, vue: html, svelte: html,
 };
 
+// own-property check: extensions come from arbitrary filenames (reference
+// repos included), and `in`/plain indexing would also hit prototype keys
+// like "constructor"
+const hasMode = (ext: string) => Object.prototype.hasOwnProperty.call(CODE_MODES, ext.toLowerCase());
+
 export function isCodeExt(ext: string): boolean {
-  return ext.toLowerCase() in CODE_MODES;
+  return hasMode(ext);
 }
 
 /** CodeMirror language extension for a source-code file extension, if known. */
 export function codeLang(ext: string): Extension | null {
-  const mode = CODE_MODES[ext.toLowerCase()];
-  return mode ? StreamLanguage.define(mode) : null;
+  return hasMode(ext) ? StreamLanguage.define(CODE_MODES[ext.toLowerCase()]) : null;
 }

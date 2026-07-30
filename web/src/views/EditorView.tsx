@@ -672,11 +672,13 @@ export function EditorView() {
             ) : kind === 'yaml' || name.endsWith('.json') ? (
               <ConfigDoc path={path} raw={draft.raw} />
             ) : kind === 'adoc' ? (
-              <AsciiDoc raw={draft.raw} docPath={path} />
+              // raw0 keeps the ~repo/ prefix so relative assets and links in
+              // reference docs resolve within THEIR repo, not the workspace
+              <AsciiDoc raw={draft.raw} docPath={raw0} />
             ) : kind === 'code' ? (
               <SourceEditor value={draft.raw} lang={ext} onChange={() => {}} readOnly />
             ) : (
-              <DocBody html={viewHtml} docPath={path} />
+              <DocBody html={viewHtml} docPath={raw0} />
             )}
             {app.aiSuggestions && change && kind === 'md' && !readOnly && (
               <div style={sx('margin-top:24px;border:1px solid var(--ai-line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)')}>
