@@ -112,9 +112,11 @@ Key properties:
   browsable in the tree (🔒), and refuse writes server-side.
 - **OKF bundles.** Workspaces conform to the
   [Open Knowledge Format](repo-product/docs/specs/specs/okf.md) (v0.1): every document carries a
-  `type`, and opted-in bundles get `index.md` listings + a `log.md` change
-  history regenerated on every commit — readable by any OKF consumer or
-  agent straight from git. Untyped OKF body links show up as dashed
+  `type`, and opted-in bundles get `index.md` listings regenerated on every
+  commit — readable by any OKF consumer or agent straight from git. The
+  `log.md` change history is NOT materialized in the repo (git is the
+  history): it is generated on the fly and injected only when the OKF bundle
+  is exported through a share link. Untyped OKF body links show up as dashed
   reference edges in the traceability graph.
 - **Workspace onboarding.** `specquill init <dir> [-types requirements,specs,changes,…]`
   scaffolds a new workspace repo: folder skeleton per chosen document family

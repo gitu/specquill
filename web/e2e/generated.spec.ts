@@ -1,6 +1,7 @@
-// OKF derived reserved files (index.md, log.md) are generated at commit time
-// — the UI marks them as such: grayed tree rows with a GEN tag, a view-only
-// editor without Edit/Move, and creation/rename refusing the reserved names.
+// OKF derived index.md files are generated at commit time (log.md renders on
+// the fly at bundle export only) — the UI marks reserved files as generated:
+// grayed tree rows with a GEN tag, a view-only editor without Edit/Move, and
+// creation/rename refusing the reserved names.
 import { expect, test } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });

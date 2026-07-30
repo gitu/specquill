@@ -7,10 +7,13 @@
 package project
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
 	"strings"
 
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/okf"
 )
 
 type Project struct {
@@ -138,8 +141,60 @@ func (p *Project) FileAt(ref, rel string) (string, string, error) {
 // ---------------------------------------------------------------- writes
 
 // ArchiveZip zips the project's content at ref (paths project-relative).
+// When the content opted into OKF, log.md is generated ON THE FLY from git
+// history and injected into the archive — the change log is a bundle-export
+// artifact, never a file materialized in the repo. Injection is best-effort:
+// a bundle without a log is still valid, so failures fall back to the plain
+// archive rather than breaking the download.
 func (p *Project) ArchiveZip(ref string) ([]byte, error) {
-	return p.Repo.ArchiveZip(ref, p.ContentRoot)
+	raw, err := p.Repo.ArchiveZip(ref, p.ContentRoot)
+	if err != nil {
+		return nil, err
+	}
+	idx, _, err := p.FileAt(ref, "index.md")
+	if err != nil || !okf.EnabledContent(idx) {
+		return raw, nil
+	}
+	entries, err := p.Repo.OKFLogEntries(ref, p.ContentRoot)
+	if err != nil || len(entries) == 0 {
+		return raw, nil
+	}
+	withLog, err := zipWithFile(raw, "log.md", okf.RenderLog(entries))
+	if err != nil {
+		return raw, nil
+	}
+	return withLog, nil
+}
+
+// zipWithFile returns the archive with name's content set — replacing an
+// existing entry (bundles pre-dating on-the-fly logs carried a committed
+// log.md) or appending a new one.
+func zipWithFile(raw []byte, name, content string) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range zr.File {
+		if f.Name == name {
+			continue
+		}
+		if err := zw.Copy(f); err != nil {
+			return nil, err
+		}
+	}
+	w, err := zw.Create(name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write([]byte(content)); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (p *Project) writeGuard() error {
