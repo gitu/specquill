@@ -35,7 +35,7 @@ describe('setFmValue', () => {
     expect(next).toContain('status: approved');
     // untouched neighbours keep their exact formatting
     expect(next).toContain('value_statement: "Avoids MiFID RTS 22 reporting fines');
-    expect(next).toContain('  - type: regulatory');
+    expect(next).toContain('  - regulations/mifid-ii.md#rts-22-art-26');
     expect(next).toContain('coverage: 0.82');
   });
 
@@ -60,7 +60,7 @@ describe('setFmValue', () => {
     const next = setFmValue(fm, 'jurisdiction', 'EU');
     expect(next.trimEnd().endsWith('jurisdiction: EU')).toBe(true);
     expect(next).toContain('value_statement: "Avoids MiFID RTS 22 reporting fines');
-    expect(next).toContain('  - type: regulatory');
+    expect(next).toContain('  - regulations/mifid-ii.md#rts-22-art-26');
   });
 
   it('creates frontmatter from scratch for a doc without any', () => {
@@ -83,7 +83,7 @@ describe('touchUpdated', () => {
     const { fm } = stripFrontmatter(raw);
     const next = touchUpdated(fm, now);
     expect(fmToJS(next).updated).toBe('2026-07-29');
-    expect(next).toContain('  - type: regulatory');
+    expect(next).toContain('  - regulations/mifid-ii.md#rts-22-art-26');
   });
 
   it('adds the key when frontmatter exists without one', () => {

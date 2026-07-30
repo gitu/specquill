@@ -14,8 +14,6 @@ status: draft
 priority: must
 owner: unassigned
 drivers: []
-implements: []
-verifies: []
 ---
 
 # Example requirement
@@ -35,7 +33,7 @@ title: Writing requirements
 When asked to draft or edit a requirement (requirements/REQ-*.md):
 
 - One requirement per file, id ` + "`REQ-<nnn>`" + `; the frontmatter id, filename and title heading agree.
-- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and the traceability links — drivers (regulations/change records that motivate it), implements (specs realizing it), verifies (test artifacts).
+- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and drivers — the WHY documents (regulations/change records) that motivate it, as a plain path list. Specs point back via their implements list.
 - Body: one short context paragraph, then atomic sub-requirements as blockquotes: "**REQ-<nnn>.<m> · MUST** — <single testable statement>" using RFC-2119 keywords (MUST/SHALL/SHOULD/MAY).
 - Each statement is verifiable: no "user-friendly", "fast", "appropriate" without a measurable bound.
 - Never invent regulation references — link only files that exist in the workspace.
@@ -47,13 +45,13 @@ When asked to draft or edit a requirement (requirements/REQ-*.md):
 type: Specification
 title: Example specification
 status: draft
-satisfies: []
+implements: []
 ---
 
 # Example specification
 
 Describes HOW requirements are realized. Link the requirements this spec
-satisfies in the frontmatter; requirements point back via implements.
+implements in the frontmatter; backlinks on the requirement are computed.
 `,
 		Skill: `---
 type: Skill
@@ -65,7 +63,7 @@ title: Writing specifications
 When asked to draft or edit a spec (specs/*.md):
 
 - A spec describes HOW one or more requirements are realized — mechanisms, flows, formats, interfaces. Keep normative language out; the WHAT lives in requirements.
-- Frontmatter: title, status, satisfies (list of requirement files/ids this spec realizes).
+- Frontmatter: title, status, implements (list of requirement files this spec realizes).
 - Structure: overview paragraph → behavior sections → edge cases. Prefer a mermaid flowchart for branching flows and tables for field/format definitions.
 - When a spec changes behavior a requirement depends on, call out the affected REQ ids so reviewers see the blast radius.
 `,
@@ -82,7 +80,7 @@ title: Referencing regulations
 When working with regulations/*.md:
 
 - Regulation files are reference material — quote and link them (path#anchor), never rewrite their normative text.
-- Requirements cite them via the drivers frontmatter list with type: regulatory and a ref like regulations/<file>.md#<article-anchor>.
+- Requirements cite them via the drivers frontmatter list as plain paths like regulations/<file>.md#<article-anchor>; the regulatory type is derived from the target.
 - When summarizing a regulatory change, list the driven requirements and where their coverage stands.
 `,
 	},
@@ -254,13 +252,22 @@ ui:
   default_view: editor
 
 # ── document families ──────────────────────────────────────────────────────
-# "group" places a family on the model axis (why | what | how | when).
+# A document's family is decided by its frontmatter "type:" matching the
+# family's "doc_type" (or the family key); "folder" is only the DEFAULT
+# location new documents go — files keep their family wherever they live.
+# "group" places a family on the model axis (why | what | how | when) — the
+# lower level always links UP: WHAT documents cite WHY, HOW implements WHAT,
+# WHEN delivers HOW. "driver" (WHY families) names the driver type documents
+# of the family stand for; families without one derive it from each
+# document's "source:" frontmatter.
 # Add your own families, override single fields of a built-in (only the keys
 # you provide change), or remove one with "hidden: true". "attributes" seeds
 # the frontmatter of documents created in the family.
 entities:
   regulation:
+    doc_type: "Regulation"
     group: why
+    driver: regulatory
     folder: "regulations/"
     label: "Regulations"
     icon: "◈"
@@ -268,30 +275,37 @@ entities:
     attributes: [id, title, status]
     description: "External rules the product must comply with — the origin of regulatory drivers and change records."
   change:
+    doc_type: "Change Record"
     group: why
     folder: "changes/"
     label: "Changes"
     icon: "⚑"
     color: "var(--reg)"
+    inbox: true                        # this family IS the change inbox
+    attention_statuses: [triage]       # needs a human — review card, sort first
+    closed_statuses: [done, merged]    # out of the open count and the feed
     attributes: [title, status, source, published]
     description: "Incoming change records (regulatory, product, technical) triaged against the documents they impact."
   requirement:
+    doc_type: "Requirement"
     group: what
     folder: "requirements/"
     label: "Requirements"
     icon: "▤"
     color: "var(--prod)"
-    attributes: [id, title, status, priority, owner, drivers, implements, verifies]
-    description: "WHAT the product must do — atomic, testable statements carrying drivers and traceability links."
+    attributes: [id, title, status, priority, owner, drivers]
+    description: "WHAT the product must do — atomic, testable statements citing the WHY documents that drive them."
   spec:
+    doc_type: "Specification"
     group: how
     folder: "specs/"
     label: "Specs"
     icon: "◈"
     color: "var(--text-2)"
-    attributes: [title, status, satisfies, maps_to]
-    description: "HOW requirements are realized — designs that satisfy requirements and map onto data fields."
+    attributes: [title, status, implements, maps_to]
+    description: "HOW requirements are realized — designs that implement requirements and map onto data fields."
   data_mapping:
+    doc_type: "Data Mapping"
     group: how
     folder: "data-mappings/"
     label: "Data mappings"
@@ -300,6 +314,7 @@ entities:
     attributes: [title]
     description: "Field-level source → target mappings; drift against the specs is detected here."
   diagram:
+    doc_type: "Diagram"
     group: how
     folder: "diagrams/"
     label: "Diagrams"
@@ -308,6 +323,7 @@ entities:
     attributes: []
     description: "Sketches and text diagrams embedded in documents — portable formats, no tool lock-in."
   work_item:
+    doc_type: "Work Item"
     group: when
     folder: "work-items/"
     label: "Work items"
@@ -317,8 +333,10 @@ entities:
     description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
 
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
-# The categories behind driver frontmatter entries — what a requirement can
-# be driven by (chips in the Properties panel and the dashboards).
+# The categories a driver can fall into (chips in the Properties panel and
+# the dashboards). A drivers link's type is DERIVED from the referenced
+# document — its "source:" frontmatter, else its family's "driver" key —
+# never written on the link itself.
 drivers:
   regulatory: { label: "Regulatory", icon: "⚖", color: "#b06f16" }
   product:    { label: "Product",    icon: "◆", color: "#2563c9" }
@@ -328,13 +346,26 @@ drivers:
 statuses: [draft, in_review, approved, deprecated]
 
 # ── linkage: the typed edges of the traceability graph ─────────────────────
+# Chain links live on the LOWER level pointing up; backlinks are computed.
+# "inverse" names the relation as read from the TARGET side (the Context
+# panel shows "implemented by" on a requirement, not "implements").
 link_types:
-  drives:     { from: [regulation, change], to: requirement }         # WHY -> WHAT
-  implements: { from: requirement,          to: spec }                # WHAT -> HOW
-  satisfies:  { from: spec,                 to: requirement }         # HOW -> WHAT
-  delivers:   { from: work_item,            to: [requirement, spec] } # WHEN -> WHAT/HOW
-  maps_to:    { from: spec,                 to: data_field }
-  verifies:   { from: test,                 to: requirement }
+  drivers:    { from: requirement,            to: [regulation, change], inverse: "drives" }        # WHAT -> WHY
+  implements: { from: [spec, data_mapping],   to: requirement,          inverse: "implemented by" } # HOW -> WHAT
+  delivers:   { from: work_item,              to: [spec, requirement],  inverse: "delivered by" }  # WHEN -> HOW (or WHAT directly)
+  maps_to:    { from: spec,                   to: data_field,           inverse: "mapped by" }
+  verifies:   { from: requirement,            to: test,                 inverse: "verified by" }
+
+# ── traceability: the dashboard's health bars ──────────────────────────────
+# One bar per entry. "measure: from" = share of source docs CARRYING the
+# link; "measure: to" = share of target docs COVERED by it (computed from
+# backlinks). The population is the first kind on the measured side;
+# "when" hides the bar unless that entity exists. label/color optional.
+traceability:
+  - { link: drivers,    measure: from }
+  - { link: implements, measure: to }
+  - { link: delivers,   measure: to }
+  - { link: maps_to,    measure: from, label: "Specs → data fields", when: data_mapping }
 
 # ── ID schemes for new documents ───────────────────────────────────────────
 # Tokens: {seq} / {seq:N} (next number in the family, zero-padded), {rand:N}
@@ -355,7 +386,7 @@ ids:
 # (Replaces the former .specquill/schema.json, which is still honored while
 # this section is absent.)
 properties:
-  order: [id, type, status, priority, owner, source, due, drivers, implements, satisfies, delivers, maps_to, verifies, created, updated]
+  order: [id, type, status, priority, owner, source, due, drivers, implements, delivers, maps_to, verifies, created, updated]
   fields:
     id:         { label: "ID", type: code }
     type:       { label: "Type", type: tag }
@@ -366,7 +397,6 @@ properties:
     due:        { label: "Due", type: date }
     drivers:    { label: "Drivers", type: links }
     implements: { label: "Implements", type: links }
-    satisfies:  { label: "Satisfies", type: links }
     delivers:   { label: "Delivers", type: links }
     maps_to:    { label: "Maps to", type: links }
     verifies:   { label: "Verified by", type: links }
@@ -425,9 +455,46 @@ title: Authoring in this workspace
 
 General rules the AI follows for every document it drafts or edits here:
 
-- Plain markdown with YAML frontmatter; typed links (drivers, implements, satisfies, delivers, maps_to, verifies) build the traceability graph — keep them accurate and minimal.
+- Plain markdown with YAML frontmatter; typed links (drivers, implements, delivers, maps_to, verifies) build the traceability graph — keep them accurate and minimal.
 - Reference other documents by relative path (e.g. ../specs/example.md); never link files that do not exist.
 - RFC-2119 keywords (MUST/SHALL/SHOULD/MAY) appear only in requirements, and only in their normative statements.
 - Edits are surgical: preserve the author's structure and wording outside the requested change.
 - When unsure which document type a change belongs to, prefer a change record and list the documents it will touch.
+`
+
+// documentModelSkill spells out the WHY ← WHAT ← HOW ← WHEN chain and the
+// create / ensure / migrate playbooks the user can invoke by name in chat.
+// Deliberately compact — skills are pinned into every speccy prompt.
+const documentModelSkill = `---
+type: Skill
+title: Document model — create, ensure, migrate
+---
+
+# Skill: the document model (WHY ← WHAT ← HOW ← WHEN)
+
+The lower level always carries the frontmatter link UP: requirements cite
+their WHY docs in ` + "`drivers:`" + `, specs cite requirements in ` + "`implements:`" + `,
+work items cite specs (or requirements) in ` + "`delivers:`" + `. All link values are
+plain root-relative path lists — a driver's type (regulatory/product/…) is
+derived from the referenced document, never written on the link.
+
+## Create
+Place the document in its family folder, seed the family's attributes, and
+set the upward link to a REAL upper-level document — list_files/search first
+to find it, ask_user when ambiguous. Never invent target paths.
+
+## Ensure ("audit the model")
+Walk the workspace and report per level: documents missing their upward link,
+links whose target is the wrong kind, and legacy shapes (` + "`{type, ref}`" + ` driver
+maps, ` + "`satisfies:`" + `, ` + "`implements:`" + ` on requirements). Report first; fix only on
+request.
+
+## Migrate
+Per file, as uncommitted drafts the user reviews: flatten driver maps to path
+lists (drop the type — it derives from the target); move ` + "`implements:`" + ` values
+found on requirements onto the referenced spec's ` + "`implements:`" + ` (merge, dedupe)
+and delete the requirement-side field; rename ` + "`satisfies:`" + ` to ` + "`implements:`" + `;
+move_file stray documents into their family's folder (the folder is the
+default location; the frontmatter type decides the family). ask_user before
+any delete_file. Work in small batches and summarize what changed.
 `

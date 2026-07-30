@@ -94,10 +94,11 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
     .toContain('updated: 2026-07-28');
 
-  // the driver ref is a search-picker over workspace docs AND their anchors,
-  // with folder facet chips and an anchors-only toggle
-  const driverRef = page.getByRole('combobox', { name: 'driver ref' });
-  await driverRef.click();
+  // drivers edit as a flat path list: the add-picker searches workspace docs
+  // AND their anchors, with folder facet chips and an anchors-only toggle.
+  // Adding an entry rewrites the legacy {type, ref} block to the flat form.
+  const addDriver = page.getByRole('combobox', { name: 'add drivers' });
+  await addDriver.click();
   await expect(page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ })).toBeVisible();
   await page.getByRole('button', { name: 'filter products' }).click();
   await expect(page.getByRole('option', { name: /products\/ops-t1-settlement-sla\.md/ })).toBeVisible();
@@ -109,7 +110,7 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   for (const t of anchorOnly) expect(t).toContain('#');
   await page.getByRole('option', { name: /regulations\/gdpr\.md#art-17-erasure/ }).click();
   await expect.poll(() => fileContent(request, branch), { timeout: 15_000 })
-    .toContain('ref: regulations/gdpr.md#art-17-erasure');
+    .toContain('- regulations/gdpr.md#art-17-erasure');
 
   // the anchors list offers the document's own headings as ids — minus the
   // ones already listed (props-a is present in the frontmatter)
@@ -123,7 +124,8 @@ test('combobox popups offer options, dates are read-only, add/remove stays byte-
   // opening a frontmatter ref must NOT resolve against the doc's folder
   // (this doc lives in requirements/ — a relative resolve would 404 on
   // requirements/regulations/gdpr.md)
-  await page.getByTitle('open regulations/gdpr.md').click();
+  // .first(): the collapsed link-debug panel carries the same open-title
+  await page.getByTitle('open regulations/gdpr.md').first().click();
   await expect(page).toHaveURL(/\/editor\/regulations\/gdpr\.md$/);
 
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
@@ -136,10 +138,16 @@ test('documents show computed backlinks: drivers, typed relations, text mentions
   await page.getByText('REQ-090', { exact: true }).first().click();
   await expect(page).toHaveURL(/editor\/requirements\/REQ-090\.md/);
 
-  // a spec collects implements-backlinks from its requirements
-  await page.goto('/p/trading-specs/editor/specs/txn-report.md');
+  // the chain reads upward now: a REQUIREMENT collects implements-backlinks
+  // from the specs that realize it — shown with the target-side inverse name
+  await page.goto('/p/trading-specs/editor/requirements/REQ-042.md');
   await expect(page.getByText('· computed from links to this document — not stored in it')).toBeVisible();
-  await expect(page.getByText('implements', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('implemented by', { exact: true }).first()).toBeVisible();
+
+  // view-mode driver chips render the FLAT driver list as linked doc chips
+  // with the derived type (not raw path text)
+  await expect(page.getByTitle('open regulations/mifid-ii.md').first()).toBeVisible();
+  await expect(page.getByTitle('open products/ops-t1-settlement-sla.md').first()).toBeVisible();
 });
 
 test('badge-typed schema fields (product repo) get the combobox too', async ({ page }) => {

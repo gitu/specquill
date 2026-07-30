@@ -115,3 +115,15 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 .milkdown-link-edit .link-edit-confirm:hover,.milkdown-link-preview .button:hover{background:var(--surface-2);color:var(--text)}
 /* editable task-list checkboxes */
 .milkdown-editable li[data-checked] input[type="checkbox"]{accent-color:var(--data);margin-right:6px}
+
+/* Caret: the native text cursor inherits the text color, which reads faint
+   on dark surfaces — an accent caret stays visible on both themes. */
+:root{--caret:oklch(0.50 0.15 215)}
+body[data-theme="dark"]{--caret:oklch(0.88 0.11 215)}
+input,textarea,[contenteditable],[contenteditable] *{caret-color:var(--caret)}
+
+/* Embedded sketches (*.excalidraw.png) are baked pixels and cannot re-theme
+   like the mermaid/JSON renderers do — approximate dark mode by inverting
+   (the hue rotation keeps colors roughly true). The editing modal and the
+   legacy .excalidraw SVG renderer follow the theme natively. */
+body[data-theme="dark"] img[src*=".excalidraw.png"]{filter:invert(0.9) hue-rotate(180deg)}

@@ -23,12 +23,36 @@ export interface EntityDef {
   color: string;       // CSS color (var(--…) or hex)
   description: string; // one-sentence "what is this" shown to users
   group?: string;      // model axis: why | what | how | when
+  driver?: string;     // WHY entities: the driver type docs of this kind stand for
+  docType?: string;    // frontmatter `type:` value the family's documents carry
+  inbox?: boolean;     // this family IS the change inbox (feed, review, dashboards)
+  closedStatuses?: string[];    // inbox lifecycle: statuses that count as done
+  attentionStatuses?: string[]; // inbox statuses that need a human decision
   attributes?: string[]; // frontmatter keys new documents are seeded with
   builtin: boolean;
 }
 
 export interface DriverDef { key: string; label: string; icon: string; color: string }
-export interface LinkTypeDef { name: string; from: string; to: string }
+export interface LinkTypeDef {
+  name: string; from: string; to: string;
+  /** how the relation reads from the TARGET side ("implemented by") */
+  inverse?: string;
+}
+
+/**
+ * One Traceability-health bar: which link type it measures and from which
+ * side — `from` = share of source docs CARRYING the link (requirements with
+ * drivers), `to` = share of target docs COVERED by it (requirements
+ * implemented by specs). The population is the first kind on the measured
+ * side; `when` gates the bar on an entity existing (hidden ⇒ no bar).
+ */
+export interface TraceabilityDef {
+  link: string;
+  measure: 'from' | 'to';
+  label?: string;
+  color?: string;
+  when?: string;
+}
 
 export interface PropertySchema {
   order?: string[];
@@ -40,6 +64,7 @@ export interface WorkspaceConfig {
   drivers: DriverDef[];
   statuses: string[];
   linkTypes: LinkTypeDef[];
+  traceability: TraceabilityDef[];
   properties: PropertySchema;
   /** the config declared its own properties: section (vs default/schema.json) */
   hasProperties: boolean;
@@ -47,40 +72,43 @@ export interface WorkspaceConfig {
 
 // ---------------------------------------------------------------- defaults
 
-// The default model — WHY drives WHAT, HOW realizes it, WHEN delivers it.
+// The default model — the chain reads WHY ← WHAT ← HOW ← WHEN: every level
+// carries the frontmatter link UP to the level it exists for (requirements
+// cite drivers, specs implement requirements, work items deliver specs).
 export const BUILTIN_ENTITIES: EntityDef[] = [
   {
-    kind: 'regulation', group: 'why', folder: 'regulations/', label: 'Regulations', icon: '◈', color: 'var(--reg)', builtin: true,
+    kind: 'regulation', group: 'why', driver: 'regulatory', docType: 'Regulation', folder: 'regulations/', label: 'Regulations', icon: '◈', color: 'var(--reg)', builtin: true,
     attributes: ['id', 'title', 'status'],
     description: 'External rules the product must comply with — the origin of regulatory drivers and change records.',
   },
   {
-    kind: 'requirement', group: 'what', folder: 'requirements/', label: 'Requirements', icon: '▤', color: 'var(--prod)', builtin: true,
-    attributes: ['id', 'title', 'status', 'priority', 'owner', 'drivers', 'implements', 'verifies'],
-    description: 'WHAT the product must do — atomic, testable statements carrying drivers and traceability links.',
+    kind: 'requirement', group: 'what', docType: 'Requirement', folder: 'requirements/', label: 'Requirements', icon: '▤', color: 'var(--prod)', builtin: true,
+    attributes: ['id', 'title', 'status', 'priority', 'owner', 'drivers'],
+    description: 'WHAT the product must do — atomic, testable statements citing the WHY documents that drive them.',
   },
   {
-    kind: 'spec', group: 'how', folder: 'specs/', label: 'Specs', icon: '◈', color: 'var(--text-2)', builtin: true,
-    attributes: ['title', 'status', 'satisfies', 'maps_to'],
-    description: 'HOW requirements are realized — designs that satisfy requirements and map onto data fields.',
+    kind: 'spec', group: 'how', docType: 'Specification', folder: 'specs/', label: 'Specs', icon: '◈', color: 'var(--text-2)', builtin: true,
+    attributes: ['title', 'status', 'implements', 'maps_to'],
+    description: 'HOW requirements are realized — designs that implement requirements and map onto data fields.',
   },
   {
-    kind: 'data_mapping', group: 'how', folder: 'data-mappings/', label: 'Data mappings', icon: '⇄', color: 'var(--data)', builtin: true,
+    kind: 'data_mapping', group: 'how', docType: 'Data Mapping', folder: 'data-mappings/', label: 'Data mappings', icon: '⇄', color: 'var(--data)', builtin: true,
     attributes: ['title'],
     description: 'Field-level source → target mappings; drift against the specs is detected here.',
   },
   {
-    kind: 'diagram', group: 'how', folder: 'diagrams/', label: 'Diagrams', icon: '✎', color: 'var(--ai)', builtin: true,
+    kind: 'diagram', group: 'how', docType: 'Diagram', folder: 'diagrams/', label: 'Diagrams', icon: '✎', color: 'var(--ai)', builtin: true,
     attributes: [],
     description: 'Sketches and text diagrams embedded in documents — portable formats, no tool lock-in.',
   },
   {
-    kind: 'change', group: 'why', folder: 'changes/', label: 'Changes', icon: '⚑', color: 'var(--reg)', builtin: true,
+    kind: 'change', group: 'why', docType: 'Change Record', folder: 'changes/', label: 'Changes', icon: '⚑', color: 'var(--reg)', builtin: true,
+    inbox: true, closedStatuses: ['done', 'merged'], attentionStatuses: ['triage'],
     attributes: ['title', 'status', 'source', 'published'],
     description: 'Incoming change records (regulatory, product, technical) triaged against the documents they impact.',
   },
   {
-    kind: 'work_item', group: 'when', folder: 'work-items/', label: 'Work items', icon: '⧗', color: 'var(--data)', builtin: true,
+    kind: 'work_item', group: 'when', docType: 'Work Item', folder: 'work-items/', label: 'Work items', icon: '⧗', color: 'var(--data)', builtin: true,
     attributes: ['id', 'title', 'status', 'priority', 'owner', 'delivers', 'due'],
     description: 'WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done.',
   },
@@ -94,17 +122,28 @@ export const DEFAULT_DRIVERS: DriverDef[] = [
 
 export const DEFAULT_STATUSES = ['draft', 'in_review', 'approved', 'deprecated'];
 
+// Every chain link is stored on the LOWER level pointing up; the graph and
+// backlinks derive the other direction.
 export const DEFAULT_LINK_TYPES: LinkTypeDef[] = [
-  { name: 'drives', from: 'regulation, change', to: 'requirement' },       // WHY → WHAT
-  { name: 'implements', from: 'requirement', to: 'spec' },                 // WHAT → HOW
-  { name: 'satisfies', from: 'spec', to: 'requirement' },                  // HOW → WHAT
-  { name: 'delivers', from: 'work_item', to: 'requirement, spec' },        // WHEN → WHAT/HOW
-  { name: 'maps_to', from: 'spec', to: 'data_field' },
-  { name: 'verifies', from: 'test', to: 'requirement' },
+  { name: 'drivers', from: 'requirement', to: 'regulation, change', inverse: 'drives' },        // WHAT → WHY
+  { name: 'implements', from: 'spec, data_mapping', to: 'requirement', inverse: 'implemented by' }, // HOW → WHAT
+  { name: 'delivers', from: 'work_item', to: 'spec, requirement', inverse: 'delivered by' },    // WHEN → HOW (or WHAT directly)
+  { name: 'maps_to', from: 'spec', to: 'data_field', inverse: 'mapped by' },
+  { name: 'verifies', from: 'requirement', to: 'test', inverse: 'verified by' },
+];
+
+// The default health bars follow the chain: WHATs cite drivers (outbound),
+// WHATs are covered by implements, HOWs by delivers (inbound), and specs
+// map onto data fields — shown only while data mappings exist at all.
+export const DEFAULT_TRACEABILITY: TraceabilityDef[] = [
+  { link: 'drivers', measure: 'from' },
+  { link: 'implements', measure: 'to' },
+  { link: 'delivers', measure: 'to' },
+  { link: 'maps_to', measure: 'from', label: 'Specs → data fields', when: 'data_mapping' },
 ];
 
 export const DEFAULT_PROPERTIES: PropertySchema = {
-  order: ['id', 'type', 'status', 'priority', 'owner', 'source', 'due', 'drivers', 'implements', 'satisfies', 'delivers', 'maps_to', 'verifies', 'created', 'updated'],
+  order: ['id', 'type', 'status', 'priority', 'owner', 'source', 'due', 'drivers', 'implements', 'delivers', 'maps_to', 'verifies', 'created', 'updated'],
   fields: {
     id: { label: 'ID', type: 'code' },
     type: { label: 'Type', type: 'tag' },
@@ -115,7 +154,6 @@ export const DEFAULT_PROPERTIES: PropertySchema = {
     due: { label: 'Due', type: 'date' },
     drivers: { label: 'Drivers', type: 'links' },
     implements: { label: 'Implements', type: 'links' },
-    satisfies: { label: 'Satisfies', type: 'links' },
     delivers: { label: 'Delivers', type: 'links' },
     maps_to: { label: 'Maps to', type: 'links' },
     verifies: { label: 'Verified by', type: 'links' },
@@ -131,15 +169,22 @@ export const isLinkAttr = (key: string) => DEFAULT_PROPERTIES.fields![key]?.type
 
 interface RawEntity {
   folder?: unknown; label?: unknown; icon?: unknown; color?: unknown;
-  description?: unknown; group?: unknown; attributes?: unknown; hidden?: unknown;
+  description?: unknown; group?: unknown; driver?: unknown; doc_type?: unknown;
+  inbox?: unknown; closed_statuses?: unknown; attention_statuses?: unknown;
+  attributes?: unknown; hidden?: unknown;
 }
+
+/** 'work_item' → 'Work Item' — the default `type:` for custom families. */
+export const titleCaseKind = (s: string) =>
+  s.split(/[_-]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 /** The config sections as WRITTEN — no defaults. Undefined = section absent. */
 export interface RawConfig {
   entities?: Record<string, RawEntity>;
   drivers?: Record<string, { label?: unknown; icon?: unknown; color?: unknown }>;
   statuses?: string[];
-  link_types?: Record<string, { from?: unknown; to?: unknown }>;
+  link_types?: Record<string, { from?: unknown; to?: unknown; inverse?: unknown }>;
+  traceability?: TraceabilityDef[];
   ids?: Record<string, { pattern?: unknown }>;
   properties?: PropertySchema;
 }
@@ -161,6 +206,15 @@ export function parseRawConfig(yml: string | undefined): RawConfig {
   if (isMap(doc.drivers)) out.drivers = doc.drivers as RawConfig['drivers'];
   if (Array.isArray(doc.statuses)) out.statuses = doc.statuses.map(str).filter(Boolean);
   if (isMap(doc.link_types)) out.link_types = doc.link_types as RawConfig['link_types'];
+  if (Array.isArray(doc.traceability)) {
+    out.traceability = doc.traceability.filter(isMap).map((t) => {
+      const def: TraceabilityDef = { link: str(t.link), measure: str(t.measure) === 'to' ? 'to' : 'from' };
+      if (str(t.label)) def.label = str(t.label);
+      if (str(t.color)) def.color = str(t.color);
+      if (str(t.when)) def.when = str(t.when);
+      return def;
+    }).filter((t) => t.link);
+  }
   if (isMap(doc.ids)) out.ids = doc.ids as RawConfig['ids'];
   if (isMap(doc.properties)) {
     const p = doc.properties as Record<string, unknown>;
@@ -208,6 +262,11 @@ function effectiveEntities(raw: RawConfig): EntityDef[] {
         color: str(spec.color) || cur.color,
         description: str(spec.description) || cur.description,
         group: str(spec.group) || cur.group,
+        driver: str(spec.driver) || cur.driver,
+        docType: str(spec.doc_type) || cur.docType,
+        inbox: spec.inbox === true || (spec.inbox === undefined ? cur.inbox : undefined),
+        closedStatuses: Array.isArray(spec.closed_statuses) ? spec.closed_statuses.map(str).filter(Boolean) : cur.closedStatuses,
+        attentionStatuses: Array.isArray(spec.attention_statuses) ? spec.attention_statuses.map(str).filter(Boolean) : cur.attentionStatuses,
         attributes: attributes ?? cur.attributes,
       };
     } else {
@@ -219,6 +278,11 @@ function effectiveEntities(raw: RawConfig): EntityDef[] {
         color: str(spec.color) || 'var(--text-2)',
         description: str(spec.description) || '',
         group: str(spec.group) || undefined,
+        driver: str(spec.driver) || undefined,
+        docType: str(spec.doc_type) || titleCaseKind(kind),
+        inbox: spec.inbox === true || undefined,
+        closedStatuses: Array.isArray(spec.closed_statuses) ? spec.closed_statuses.map(str).filter(Boolean) : undefined,
+        attentionStatuses: Array.isArray(spec.attention_statuses) ? spec.attention_statuses.map(str).filter(Boolean) : undefined,
         attributes,
         builtin: false,
       });
@@ -236,7 +300,9 @@ const driverList = (raw: RawConfig['drivers']): DriverDef[] =>
 const linkTypeList = (raw: RawConfig['link_types']): LinkTypeDef[] =>
   Object.entries(raw || {}).map(([name, l0]) => {
     const l = isMap(l0) ? l0 : {};
-    return { name, from: strList(l.from).join(', '), to: strList(l.to).join(', ') };
+    const out: LinkTypeDef = { name, from: strList(l.from).join(', '), to: strList(l.to).join(', ') };
+    if (str(l.inverse)) out.inverse = str(l.inverse);
+    return out;
   });
 
 /** Effective workspace config: the file's sections over the built-in defaults. */
@@ -247,6 +313,7 @@ export function workspaceConfig(yml?: string): WorkspaceConfig {
     drivers: raw.drivers ? driverList(raw.drivers) : DEFAULT_DRIVERS,
     statuses: raw.statuses?.length ? raw.statuses : DEFAULT_STATUSES,
     linkTypes: raw.link_types ? linkTypeList(raw.link_types) : DEFAULT_LINK_TYPES,
+    traceability: raw.traceability?.length ? raw.traceability : DEFAULT_TRACEABILITY,
     properties: raw.properties || DEFAULT_PROPERTIES,
     hasProperties: !!raw.properties,
   };
@@ -273,4 +340,33 @@ export function idSchemes(configYml?: string): { kind: string; pattern: string }
   return Object.entries(raw.ids || {})
     .map(([kind, s]) => ({ kind, pattern: str(isMap(s) ? s.pattern : '') }))
     .filter((s) => s.pattern);
+}
+
+// ---------------------------------------------------------------- model axis
+
+/** The fixed WHY ← WHAT ← HOW ← WHEN axis order (graph columns, dashboards). */
+export const GROUP_ORDER = ['why', 'what', 'how', 'when'] as const;
+
+/**
+ * The primary entity of a group: the first non-hidden entity carrying that
+ * `group`, in config order with built-ins first — what the Dashboard's
+ * new-doc button and headline tiles speak for.
+ */
+export function primaryEntity(entities: EntityDef[], group: string): EntityDef | undefined {
+  return entities.find((e) => e.group === group);
+}
+
+/** A link type's `from`/`to` kind lists, split out of the comma strings. */
+export function linkKinds(l: LinkTypeDef): { from: string[]; to: string[] } {
+  const split = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
+  return { from: split(l.from), to: split(l.to) };
+}
+
+/**
+ * The chain fields a document of `kind` carries pointing UP: every link type
+ * whose `from` includes the kind. (`drivers` for requirements, `implements`
+ * for specs, `delivers` for work items under the defaults.)
+ */
+export function upwardLinkFields(cfg: WorkspaceConfig, kind: string): LinkTypeDef[] {
+  return cfg.linkTypes.filter((l) => linkKinds(l).from.includes(kind));
 }

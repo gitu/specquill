@@ -2,30 +2,53 @@ import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useDiscard, useFileAtHead, useFileQuery, useStatus, useWorktreeDiff } from '../api/hooks';
+import { rawUrl } from '../api/client';
 import { DiffCard } from './DiffCard';
 import { CommitDialog } from './CommitDialog';
 import { EXCALIDRAW_CMAP, excalidrawToSvg } from '../lib/model';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-// before/after sketch preview for uncommitted .excalidraw changes
-function WorktreeArtifact({ path }: { path: string }) {
+const IMG_STYLE = 'max-width:100%;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:6px';
+const EMPTY = "<div style=\"padding:20px;color:var(--text-3);font-size:11px;text-align:center\">—</div>";
+
+// before/after preview for binary-like changes: PNG sketches (and plain
+// images) render as images — the committed side reads the HEAD blob via
+// at=head, the uncommitted side the worktree state. Legacy .excalidraw JSON
+// keeps the themed SVG shim.
+function WorktreeArtifact({ path, status }: { path: string; status: string }) {
   const app = useApp();
-  const before = useFileAtHead(app.repoId, app.branch, path, true);
-  const after = useFileQuery(app.repoId, app.branch, path);
-  const render = (raw?: string) => {
-    if (!raw) return '<div style="padding:20px;color:var(--text-3);font-size:11px;text-align:center">—</div>';
+  const legacyJson = /\.excalidraw$/i.test(path);
+  const before = useFileAtHead(legacyJson ? app.repoId : undefined, app.branch, path, true);
+  const after = useFileQuery(legacyJson ? app.repoId : undefined, app.branch, path);
+  // bust the raw endpoint's short cache once per drawer mount
+  const v = useMemo(() => Date.now().toString(36), []);
+  const renderJson = (raw?: string) => {
+    if (!raw) return EMPTY;
     try { return excalidrawToSvg(JSON.parse(raw), EXCALIDRAW_CMAP); } catch { return '<div style="padding:20px;color:var(--reg)">malformed</div>'; }
+  };
+  const side = (label: string, right: boolean) => {
+    const missing = right ? status === 'D' : status === 'A';
+    return (
+      <div style={sx('padding:14px;min-width:0;' + (right ? '' : 'border-right:1px solid var(--border)'))}>
+        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>{label}</div>
+        {legacyJson ? (
+          <div dangerouslySetInnerHTML={{ __html: renderJson(right ? after.data?.content : before.data?.content) }} />
+        ) : missing ? (
+          <div style={sx('padding:20px;color:var(--text-3);font-size:11px;text-align:center')}>—</div>
+        ) : (
+          <img
+            src={rawUrl(app.repoId!, app.branch, path) + (right ? '' : '&at=head') + '&v=' + v}
+            alt={label + ' ' + path}
+            style={sx(IMG_STYLE)}
+          />
+        )}
+      </div>
+    );
   };
   return (
     <div style={sx('display:grid;grid-template-columns:1fr 1fr')}>
-      <div style={sx('padding:14px;border-right:1px solid var(--border)')}>
-        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>committed</div>
-        <div dangerouslySetInnerHTML={{ __html: render(before.data?.content) }} />
-      </div>
-      <div style={sx('padding:14px')}>
-        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>uncommitted</div>
-        <div dangerouslySetInnerHTML={{ __html: render(after.data?.content) }} />
-      </div>
+      {side('committed', false)}
+      {side('uncommitted', true)}
     </div>
   );
 }
@@ -70,7 +93,7 @@ export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
         <div style={sx('flex:1;overflow-y:auto;padding:16px')}>
           {files.map((f) => (
             <div key={f.path}>
-              <DiffCard file={f} artifact={f.binaryLike ? <WorktreeArtifact path={f.path} /> : undefined} />
+              <DiffCard file={f} artifact={f.binaryLike ? <WorktreeArtifact path={f.path} status={f.status} /> : undefined} />
               <div style={sx('margin:-10px 0 16px;display:flex;justify-content:flex-end;gap:14px')}>
                 <span onClick={() => reject(f.oldPath ? [f.path, f.oldPath] : [f.path])}
                   style={sx('font-size:11.5px;color:var(--del);cursor:pointer;font-weight:600')}>

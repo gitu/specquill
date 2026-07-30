@@ -148,7 +148,7 @@ export function ModelView() {
         <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);margin-top:18px;overflow:hidden')}>
           <div style={sx('padding:14px 18px;border-bottom:1px solid var(--border)')}>
             <span style={sx('font-weight:700;font-size:13.5px')}>Link types</span>
-            <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>The typed edges the graph is computed from</span>
+            <span style={sx('font-size:11.5px;color:var(--text-2);margin-left:8px')}>The typed edges of the graph — stored on the lower level pointing up (WHY ← WHAT ← HOW ← WHEN)</span>
           </div>
           {wcfg.linkTypes.map((l) => (
             <div key={l.name} style={sx('display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border)')}>
@@ -156,6 +156,9 @@ export function ModelView() {
               <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.from}</span>
               <IconArrowLR />
               <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:2px 8px;border-radius:5px;background:var(--surface-2);color:var(--text-2)")}>{l.to}</span>
+              {l.inverse && (
+                <span title={`how the relation reads from the target side`} style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>⇄ {l.inverse}</span>
+              )}
             </div>
           ))}
         </div>

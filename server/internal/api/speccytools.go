@@ -12,7 +12,9 @@ import (
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/mdfm"
+	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
+	"specquill/server/internal/sketch"
 )
 
 // speccyToolbox binds the chat tool set to one request: a project, the branch
@@ -101,6 +103,27 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 				"content": str("full file content"),
 			}, "path", "content"),
 		},
+		ai.ToolSpec{
+			Name:        "move_file",
+			Description: "Move or rename one workspace file — or a whole folder when both paths end with a slash (notes/ → archive/notes/). Inbound references in other documents (typed frontmatter links and body links) are rewritten automatically. Reference sources (~source/...) are read-only. The move is an uncommitted draft on the current branch.",
+			Parameters: obj(map[string]any{
+				"from": str("current workspace-relative path (trailing / moves the folder)"),
+				"to":   str("new workspace-relative path, in the right family folder"),
+			}, "from", "to"),
+		},
+		ai.ToolSpec{
+			Name:        "delete_file",
+			Description: "Delete one workspace file (uncommitted draft on the current branch). Inbound references are NOT removed — search for them first, and confirm via ask_user when other documents still reference the file.",
+			Parameters:  obj(map[string]any{"path": str("workspace-relative path of the file to delete")}, "path"),
+		},
+		ai.ToolSpec{
+			Name: "draw_sketch",
+			Description: "Create or replace an excalidraw drawing (path must end .excalidraw — scene JSON, rendered inline and editable in the sketch editor). Scene: {\"elements\": [...]}. Element subset that renders everywhere: {type: rectangle|ellipse|diamond, x, y, width, height, strokeColor?, backgroundColor?}, {type: text, x, y, text, fontSize?}, {type: arrow, x, y, points: [[0,0],[dx,dy]]}. Coordinates in px; keep boxes around 170x60 with 40px gaps, label boxes with separate text elements placed inside them, connect with arrows between box edges. To read an existing *.excalidraw.png sketch use read_file (returns the embedded scene); to change one, draw a .excalidraw next to it and tell the user.",
+			Parameters: obj(map[string]any{
+				"path":  str("workspace-relative path ending in .excalidraw, e.g. diagrams/flow.excalidraw"),
+				"scene": str("scene JSON: an object with an elements array (appState/files optional), or a bare elements array"),
+			}, "path", "scene"),
+		},
 	)
 	return tools
 }
@@ -154,6 +177,27 @@ func (tb *speccyToolbox) exec(name, args string) (string, bool, error) {
 		}
 		out, err := tb.createFile(a.Path, a.Content)
 		return out, false, err
+	case "move_file":
+		var a struct{ From, To string }
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", false, fmt.Errorf("invalid arguments: %v", err)
+		}
+		out, err := tb.moveFile(a.From, a.To)
+		return out, false, err
+	case "delete_file":
+		var a struct{ Path string }
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", false, fmt.Errorf("invalid arguments: %v", err)
+		}
+		out, err := tb.deleteFile(a.Path)
+		return out, false, err
+	case "draw_sketch":
+		var a struct{ Path, Scene string }
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", false, fmt.Errorf("invalid arguments: %v", err)
+		}
+		out, err := tb.drawSketch(a.Path, a.Scene)
+		return out, false, err
 	}
 	return "", false, fmt.Errorf("unknown tool %q", name)
 }
@@ -176,6 +220,14 @@ func (tb *speccyToolbox) readFile(path string) (string, error) {
 	content, _, err := tb.repo.File(tb.branch, path)
 	if err != nil {
 		return "", fmt.Errorf("not found: %s", path)
+	}
+	// *.excalidraw.png sketches: the useful content is the embedded scene
+	if strings.HasSuffix(path, ".excalidraw.png") {
+		scene, err := sketch.ExtractScene([]byte(content))
+		if err != nil {
+			return "", fmt.Errorf("%s: %v", path, err)
+		}
+		return "embedded excalidraw scene of " + path + ":\n" + scene, nil
 	}
 	return content, nil
 }
@@ -273,6 +325,9 @@ func (tb *speccyToolbox) editFile(path, search, replace string) (string, error) 
 	if strings.HasPrefix(path, "~") {
 		return "", fmt.Errorf("reference sources are read-only")
 	}
+	if strings.HasSuffix(path, ".excalidraw.png") {
+		return "", fmt.Errorf("%s is a binary sketch — read its scene with read_file and draw a .excalidraw with draw_sketch instead", path)
+	}
 	if search == "" || search == replace {
 		return "", fmt.Errorf("empty or no-op edit")
 	}
@@ -309,6 +364,9 @@ func (tb *speccyToolbox) createFile(path, content string) (string, error) {
 	if strings.HasPrefix(path, "~") {
 		return "", fmt.Errorf("reference sources are read-only")
 	}
+	if strings.HasSuffix(path, ".excalidraw.png") || strings.HasSuffix(path, ".excalidraw") {
+		return "", fmt.Errorf("sketches are drawn with draw_sketch, not created as text")
+	}
 	if _, _, err := tb.repo.File(tb.branch, path); err == nil {
 		return "", fmt.Errorf("%s already exists — use edit_file", path)
 	}
@@ -323,6 +381,147 @@ func (tb *speccyToolbox) createFile(path, content string) (string, error) {
 	return "created " + path + " (uncommitted draft)", nil
 }
 
+func (tb *speccyToolbox) moveFile(from, to string) (string, error) {
+	if !tb.writable {
+		return "", fmt.Errorf("editing is disabled for this conversation")
+	}
+	if strings.HasPrefix(from, "~") || strings.HasPrefix(to, "~") {
+		return "", fmt.Errorf("reference sources are read-only")
+	}
+	// trailing slash on either path: move the whole folder
+	if strings.HasSuffix(from, "/") || strings.HasSuffix(to, "/") {
+		fromDir, toDir := strings.Trim(from, "/"), strings.Trim(to, "/")
+		moved, rewritten, err := tb.repo.MoveFolderRewriting(tb.branch, fromDir, toDir)
+		if err != nil {
+			return "", err
+		}
+		// re-key the conversation's snapshot to the new locations
+		for p, content := range tb.files {
+			if strings.HasPrefix(p, fromDir+"/") {
+				delete(tb.files, p)
+				tb.files[toDir+"/"+p[len(fromDir)+1:]] = content
+			}
+		}
+		for _, p := range rewritten {
+			if content, _, err := tb.repo.File(tb.branch, p); err == nil {
+				tb.files[p] = content
+			}
+		}
+		tb.publish()
+		return fmt.Sprintf("moved %s/ → %s/ (%d file%s, %d reference%s updated, uncommitted draft)",
+			fromDir, toDir, moved, plural(moved), len(rewritten), plural(len(rewritten))), nil
+	}
+	if okf.Reserved(base(from)) || okf.Reserved(base(to)) {
+		return "", fmt.Errorf("index.md and log.md are generated at commit time — never move them")
+	}
+	rewritten, err := tb.repo.MoveFileRewriting(tb.branch, from, to)
+	if err != nil {
+		return "", err
+	}
+	// keep the conversation's snapshot truthful: the moved blob plus every
+	// rewritten referencing doc (list_files/search read from it)
+	if content, ok := tb.files[from]; ok {
+		delete(tb.files, from)
+		tb.files[to] = content
+	}
+	for _, p := range rewritten {
+		if content, _, err := tb.repo.File(tb.branch, p); err == nil {
+			tb.files[p] = content
+		}
+	}
+	tb.publish()
+	if len(rewritten) > 0 {
+		return fmt.Sprintf("moved %s → %s (uncommitted draft, %d inbound reference%s updated)", from, to, len(rewritten), plural(len(rewritten))), nil
+	}
+	return fmt.Sprintf("moved %s → %s (uncommitted draft)", from, to), nil
+}
+
+func (tb *speccyToolbox) deleteFile(path string) (string, error) {
+	if !tb.writable {
+		return "", fmt.Errorf("editing is disabled for this conversation")
+	}
+	if strings.HasPrefix(path, "~") {
+		return "", fmt.Errorf("reference sources are read-only")
+	}
+	if okf.Reserved(base(path)) {
+		return "", fmt.Errorf("index.md and log.md are generated at commit time — never delete them")
+	}
+	if err := tb.repo.DeleteFile(tb.branch, path); err != nil {
+		return "", err
+	}
+	delete(tb.files, path)
+	tb.publish()
+	return "deleted " + path + " (uncommitted draft)", nil
+}
+
+// drawSketch creates or replaces a legacy-format .excalidraw drawing from
+// scene JSON — text, so it diffs/renders/edits everywhere. Accepts a full
+// scene object or a bare elements array; the saved document always carries
+// the standard envelope.
+func (tb *speccyToolbox) drawSketch(path, scene string) (string, error) {
+	if !tb.writable {
+		return "", fmt.Errorf("editing is disabled for this conversation")
+	}
+	if strings.HasPrefix(path, "~") {
+		return "", fmt.Errorf("reference sources are read-only")
+	}
+	if !strings.HasSuffix(path, ".excalidraw") {
+		return "", fmt.Errorf("draw_sketch writes .excalidraw scene files — got %s", path)
+	}
+	scene = strings.TrimSpace(scene)
+	var elements []any
+	appState := map[string]any{}
+	files := map[string]any{}
+	if strings.HasPrefix(scene, "[") {
+		if err := json.Unmarshal([]byte(scene), &elements); err != nil {
+			return "", fmt.Errorf("scene is not valid JSON: %v", err)
+		}
+	} else {
+		var doc struct {
+			Elements []any          `json:"elements"`
+			AppState map[string]any `json:"appState"`
+			Files    map[string]any `json:"files"`
+		}
+		if err := json.Unmarshal([]byte(scene), &doc); err != nil {
+			return "", fmt.Errorf("scene is not valid JSON: %v", err)
+		}
+		if doc.Elements == nil {
+			return "", fmt.Errorf("scene needs an elements array")
+		}
+		elements = doc.Elements
+		if doc.AppState != nil {
+			appState = doc.AppState
+		}
+		if doc.Files != nil {
+			files = doc.Files
+		}
+	}
+	out, err := json.MarshalIndent(map[string]any{
+		"type": "excalidraw", "version": 2, "source": "specquill",
+		"elements": elements, "appState": appState, "files": files,
+	}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	// create-or-replace: the current sha (if any) is the staleness guard
+	_, sha, _ := tb.repo.File(tb.branch, path)
+	if _, err := tb.repo.SaveFile(tb.branch, path, string(out)+"\n", sha); err != nil {
+		return "", err
+	}
+	tb.files[path] = string(out)
+	tb.publish()
+	return fmt.Sprintf("drew %s (%d element%s, uncommitted draft)", path, len(elements), plural(len(elements))), nil
+}
+
+func base(p string) string { return p[strings.LastIndex(p, "/")+1:] }
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // finishMarkdown enforces the write-tool post-conditions on markdown files:
 // the frontmatter must still parse (broken YAML bounces back to the model as
 // a tool error) and the created/updated dates are maintained server-side.
@@ -334,6 +533,118 @@ func (tb *speccyToolbox) finishMarkdown(path, content string, isNew bool) (strin
 		return "", fmt.Errorf("rejected: %v — fix the edit so the frontmatter stays valid", err)
 	}
 	return mdfm.Touch(content, isNew, time.Now())
+}
+
+// modelRules renders the workspace's effective WHY ← WHAT ← HOW ← WHEN model
+// for the chat system prompt: which folder holds which level and which
+// frontmatter field links each level upward. Read from the branch's
+// .specquill/config.yml with the built-in defaults as fallback (mirroring
+// web/src/lib/config.ts), so the rules are accurate with zero workspace
+// boilerplate.
+func modelRules(files map[string]string) string {
+	type ent struct{ folder, group string }
+	entities := map[string]ent{
+		"regulation":   {"regulations/", "why"},
+		"change":       {"changes/", "why"},
+		"requirement":  {"requirements/", "what"},
+		"spec":         {"specs/", "how"},
+		"data_mapping": {"data-mappings/", "how"},
+		"diagram":      {"diagrams/", "how"},
+		"work_item":    {"work-items/", "when"},
+	}
+	type link struct {
+		name     string
+		from, to []string
+	}
+	links := []link{
+		{"drivers", []string{"requirement"}, []string{"regulation", "change"}},
+		{"implements", []string{"spec", "data_mapping"}, []string{"requirement"}},
+		{"delivers", []string{"work_item"}, []string{"spec", "requirement"}},
+	}
+
+	var cfg struct {
+		Entities map[string]struct {
+			Folder string `yaml:"folder"`
+			Group  string `yaml:"group"`
+			Hidden bool   `yaml:"hidden"`
+		} `yaml:"entities"`
+		LinkTypes map[string]struct {
+			From any `yaml:"from"`
+			To   any `yaml:"to"`
+		} `yaml:"link_types"`
+	}
+	_ = yaml.Unmarshal([]byte(files[".specquill/config.yml"]), &cfg)
+	for kind, e := range cfg.Entities {
+		if e.Hidden {
+			delete(entities, kind)
+			continue
+		}
+		cur := entities[kind]
+		if e.Folder != "" {
+			cur.folder = strings.TrimSuffix(e.Folder, "/") + "/"
+		} else if cur.folder == "" {
+			cur.folder = kind + "s/"
+		}
+		if e.Group != "" {
+			cur.group = e.Group
+		}
+		entities[kind] = cur
+	}
+	if len(cfg.LinkTypes) > 0 { // a declared section replaces the defaults wholesale
+		kinds := func(v any) []string {
+			switch t := v.(type) {
+			case string:
+				var out []string
+				for _, k := range strings.Split(t, ",") {
+					if k = strings.TrimSpace(k); k != "" {
+						out = append(out, k)
+					}
+				}
+				return out
+			case []any:
+				var out []string
+				for _, k := range t {
+					if s, ok := k.(string); ok {
+						out = append(out, strings.TrimSpace(s))
+					}
+				}
+				return out
+			}
+			return nil
+		}
+		links = links[:0]
+		names := make([]string, 0, len(cfg.LinkTypes))
+		for name := range cfg.LinkTypes {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			l := cfg.LinkTypes[name]
+			links = append(links, link{name, kinds(l.From), kinds(l.To)})
+		}
+	}
+
+	folders := func(ks []string) string {
+		var out []string
+		for _, k := range ks {
+			if e, ok := entities[k]; ok {
+				out = append(out, e.folder+" ("+e.group+")")
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+	var b strings.Builder
+	b.WriteString("\n# Document model (WHY ← WHAT ← HOW ← WHEN)\n")
+	b.WriteString("Documents are classified by their frontmatter `type:` (each family's folder is the DEFAULT location for new documents); the LOWER level carries the frontmatter link UP to the level it exists for:\n")
+	for _, l := range links {
+		from, to := folders(l.from), folders(l.to)
+		if from == "" || to == "" {
+			continue // link type between kinds this workspace doesn't have
+		}
+		b.WriteString("- `" + l.name + ":` on " + from + " → " + to + "\n")
+	}
+	b.WriteString("Link values are plain root-relative path lists (never {type, ref} maps). A driver's type is derived from the referenced document — its `source:` frontmatter, else its family — and is never written on the link. Every new document carries its upward link.\n")
+	return b.String()
 }
 
 // workspaceVocabulary summarizes the workspace's real value sets for the

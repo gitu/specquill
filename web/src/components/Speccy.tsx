@@ -98,11 +98,22 @@ export function Speccy() {
     let lastText = '';
     try {
       let sawTool = false;
+      // a move/delete of the OPEN document must not leave the editor on a
+      // vanished path — follow the move, or step off the deleted file
+      let openMovedTo: string | null = null;
+      let openDeleted = false;
       const result = await streamChat(
         app.repoId,
         { messages, focusPath, branch: app.branch, allowEdits },
         (t) => { lastText = t; setStreamText(t); },
-        (t) => { sawTool = true; appendEntry(repoKey, chatId, { kind: 'tool', tool: t }); },
+        (t) => {
+          sawTool = true;
+          if (t.status === 'ok' && focusPath) {
+            if (t.name === 'move_file' && t.path?.startsWith(focusPath + ' → ')) openMovedTo = t.path.split(' → ')[1] || null;
+            if (t.name === 'delete_file' && t.path === focusPath) openDeleted = true;
+          }
+          appendEntry(repoKey, chatId, { kind: 'tool', tool: t });
+        },
       );
       // the server errors on empty terminal replies, but never let a stream
       // end without SOME visible outcome (the "chat just stops" bug class)
@@ -123,6 +134,8 @@ export function Speccy() {
         qc.invalidateQueries({ queryKey: ['snapshot', app.repoId, app.branch] });
         qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
       }
+      if (openMovedTo) nav('/editor/' + openMovedTo);
+      else if (openDeleted) nav('/editor');
     } catch (e) {
       console.error('speccy: chat turn failed', e);
       // keep whatever streamed before the failure — a half answer plus a
@@ -345,8 +358,10 @@ export function Speccy() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input); } }}
-              placeholder={enabled ? 'Ask about requirements, changes, mappings…' : 'Configure ai: in specquill.yml to enable Speccy'}
+              // cmd/ctrl+enter sends; plain enter is a normal newline
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void ask(input); } }}
+              title="⌘/Ctrl+Enter sends — Enter starts a new line"
+              placeholder={enabled ? 'Ask about requirements, changes, mappings… (⌘⏎ to send)' : 'Configure ai: in specquill.yml to enable Speccy'}
               disabled={!enabled || busy}
               rows={1}
               style={{ ...sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5'), height: composerH, overflowY: 'auto' }}
@@ -362,18 +377,22 @@ export function Speccy() {
   );
 }
 
-// ToolChip: one executed tool call — edit/create/read activity in the flow.
+// ToolChip: one executed tool call — edit/create/move/delete/read activity.
 function ToolChip({ tool, onOpen }: { tool: ToolEvent; onOpen: (path: string) => void }) {
   const err = tool.status === 'error';
-  const icon = tool.name === 'read_file' ? '👁' : tool.name === 'create_file' ? '+' : '✎';
-  const openable = !!tool.path && !err && tool.name !== 'read_file' && !tool.path.startsWith('~');
+  const icon = tool.name === 'read_file' ? '👁' : tool.name === 'create_file' ? '+'
+    : tool.name === 'move_file' ? '⇢' : tool.name === 'delete_file' ? '✕' : '✎';
+  // move_file's path reads "from → to" — clicking opens the destination; a
+  // deleted path no longer exists, so it never opens
+  const openTarget = tool.name === 'move_file' ? (tool.path || '').split(' → ')[1] || '' : tool.path || '';
+  const openable = !!openTarget && !err && tool.name !== 'read_file' && tool.name !== 'delete_file' && !openTarget.startsWith('~');
   return (
     <div style={sx("display:flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid " + (err ? 'var(--reg-line)' : 'var(--ai-line)') + ";border-radius:8px;background:" + (err ? 'var(--reg-bg)' : 'var(--ai-bg)') + ";font-family:'JetBrains Mono',monospace;font-size:11px;color:" + (err ? 'var(--reg)' : 'var(--ai)'))}>
       <span>{icon}</span>
       <span style={sx('font-weight:600')}>{tool.name.replace(/_/g, ' ')}</span>
       {tool.path && (
         <span
-          onClick={openable ? () => onOpen(tool.path!) : undefined}
+          onClick={openable ? () => onOpen(openTarget) : undefined}
           style={openable ? { cursor: 'pointer', textDecoration: 'underline' } : undefined}
         >
           {tool.path}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { srcMeta } from '../lib/derive';
+import { driverMeta } from '../lib/derive';
 
 interface Hit {
   key: string;
@@ -53,7 +53,7 @@ export function SearchPalette() {
       ...M.regs.map((r) => ({ key: 'reg' + r.path, icon: '◈', color: 'var(--reg)', label: r.title, sub: r.path, to: '/editor/' + r.path })),
       ...M.maps.map((m) => ({ key: 'map' + m.path, icon: '⇄', color: 'var(--data)', label: m.name, sub: m.path, to: '/editor/' + m.path })),
       ...M.fields.map((f) => ({ key: 'field' + f.name, icon: '⊞', color: 'var(--data)', label: f.name, sub: `${f.source} → ${f.name}${f.drift ? ' · ⚠ drift' : ''}`, to: '/editor/' + f.map })),
-      ...M.changes.map((c) => ({ key: 'chg' + c.path, icon: srcMeta(c.source).icon, color: srcMeta(c.source).fg, label: c.title, sub: c.path, to: '/changes?sel=' + encodeURIComponent(c.path) })),
+      ...M.changes.map((c) => ({ key: 'chg' + c.path, icon: driverMeta(M, c.source).icon, color: driverMeta(M, c.source).fg, label: c.title, sub: c.path, to: '/changes?sel=' + encodeURIComponent(c.path) })),
     ];
   }, [app.model]);
 

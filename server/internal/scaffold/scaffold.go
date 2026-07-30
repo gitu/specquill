@@ -63,9 +63,10 @@ func Init(dir, project string, chosen []string) error {
 	files := map[string]string{
 		"README.md":                    workspaceReadme(project, picked),
 		"index.md":                     "---\nokf_version: \"" + okf.Version + "\"\n---\n\n# Index\n",
-		".specquill/config.yml":          configStarter(pid),
-		".specquill/skills/authoring.md": authoringSkill,
-		".specquill/instructions.md":     instructionsStarter,
+		".specquill/config.yml":               configStarter(pid),
+		".specquill/skills/authoring.md":      authoringSkill,
+		".specquill/skills/document-model.md": documentModelSkill,
+		".specquill/instructions.md":          instructionsStarter,
 	}
 	for _, t := range picked {
 		files[".specquill/skills/"+t.Key+".md"] = t.Skill

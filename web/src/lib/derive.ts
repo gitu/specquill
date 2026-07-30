@@ -2,9 +2,9 @@
 // build*/renderVals methods. Styles are composed as strings (rendered via sx())
 // exactly like the design; navigation is carried as paths, not callbacks.
 
-import { Change, DataField, PropEntry, Requirement, WorkspaceModel, isReservedMd, parseProps, stripFrontmatter } from './model';
+import { Change, DataField, DocNode, PropEntry, Requirement, WorkspaceModel, getList, isReservedMd, parseDriverEntries, parseProps, resolveFmRef, stripFrontmatter } from './model';
 import type { EntityDef } from './entities';
-import { workspaceConfig } from './config';
+import { GROUP_ORDER, primaryEntity, workspaceConfig } from './config';
 import type { PropertySchema } from './config';
 
 export const srcMeta = (s: string) =>
@@ -13,6 +13,19 @@ export const srcMeta = (s: string) =>
     product: { icon: '◆', label: 'Product', fg: 'var(--prod)', bg: 'var(--prod-bg)' },
     technical: { icon: '⚙', label: 'Technical', fg: 'var(--text-2)', bg: 'var(--surface-2)' },
   })[s] || { icon: '•', label: s || 'Change', fg: 'var(--text-2)', bg: 'var(--surface-2)' };
+
+/**
+ * Chip meta for a driver/source key: the built-in trio keeps its themed
+ * fg/bg pairs, custom taxonomy entries take their configured icon + color —
+ * so a workspace's own driver kinds render first-class, not as gray dots.
+ */
+export function driverMeta(model: WorkspaceModel, key: string) {
+  const builtin = { regulatory: 1, product: 1, technical: 1 } as Record<string, 1>;
+  if (builtin[key]) return srcMeta(key);
+  const dd = model.driverDefs.find((d) => d.key === key);
+  if (dd) return { icon: dd.icon, label: dd.label, fg: dd.color, bg: 'var(--surface-2)' };
+  return srcMeta(key);
+}
 
 export function statusMeta(s: string): { label: string; color: string } {
   const v = String(s || '').toLowerCase();
@@ -55,10 +68,15 @@ export interface TreeFile {
   path: string; name: string; icon: string; color: string;
   badge: string; badgeStyle: string; active: boolean;
   generated: boolean; // OKF reserved file, regenerated at commit time
+  title?: string;     // frontmatter title (filter + optional row detail)
+  docType?: string;   // the classified family's doc type, ditto
 }
-export interface TreeFolder { name: string; desc?: string; files: TreeFile[] }
+/** A workspace directory: nested subdirectories plus its direct files. */
+export interface TreeDir { name: string; path: string; desc?: string; dirs: TreeDir[]; files: TreeFile[] }
+export type TreeFolder = TreeDir; // top-level entry — same shape
 
-export function buildTree(files: Record<string, string>, openPath: string | undefined, gitStatus: Record<string, string>, entities: EntityDef[]): TreeFolder[] {
+export function buildTree(files: Record<string, string>, openPath: string | undefined, gitStatus: Record<string, string>, entities: EntityDef[], model?: WorkspaceModel, opts?: { all?: boolean; extraPaths?: string[] }): TreeDir[] {
+  const all = !!opts?.all;
   const meta: Record<string, { icon: string; color: string; desc: string }> = {};
   const order: string[] = [];
   entities.forEach((e) => {
@@ -66,35 +84,79 @@ export function buildTree(files: Record<string, string>, openPath: string | unde
     meta[name] = { icon: e.icon, color: e.color, desc: e.description };
     order.push(name);
   });
+  // per-document meta from the CLASSIFIED model: a doc typed into another
+  // family shows that family's icon/color, not its folder's
+  const docMeta: Record<string, { title: string; docType: string; icon?: string; color?: string }> = {};
+  model?.docs.forEach((d) => {
+    const e = model.entities.find((en) => en.kind === d.kind);
+    docMeta[d.path] = { title: d.title, docType: e?.docType || d.kind, icon: e?.icon, color: e?.color };
+  });
   const byFolder: Record<string, string[]> = {};
-  Object.keys(files).forEach((p) => {
+  const rootFiles: string[] = [];
+  // all mode: merge the FULL repo listing (binaries the text snapshot skips,
+  // e.g. *.excalidraw.png) into the visible set
+  const paths = new Set(Object.keys(files));
+  if (all) opts?.extraPaths?.forEach((p) => paths.add(p));
+  paths.forEach((p) => {
     const folder = p.split('/')[0];
-    // root files and dot-folders (.specquill) stay out of the tree
-    if (!p.includes('/') || folder.startsWith('.')) return;
+    // root files and dot-folders (.specquill) stay out of the tree — unless
+    // the all-files mode asks for the whole repository
+    if (!p.includes('/')) {
+      if (all) rootFiles.push(p);
+      return;
+    }
+    if (folder.startsWith('.') && !all) return;
     (byFolder[folder] = byFolder[folder] || []).push(p);
   });
   // entity folders first (config order), then any other folder alphabetically
   const names = [...order.filter((f) => byFolder[f]), ...Object.keys(byFolder).filter((f) => !meta[f]).sort()];
-  return names.map((folder) => {
+  const dirs = names.map((folder) => {
     const fm = meta[folder] || { icon: '▢', color: 'var(--text-2)', desc: '' };
-    return {
-      name: folder,
-      desc: fm.desc,
-      files: byFolder[folder].sort().map((path) => {
-        const n = path.split('/').pop()!;
-        const badge = gitStatus[path] || '';
-        return {
-          path, name: n,
-          icon: n.endsWith('.mermaid') ? '⌗' : fm.icon,
-          color: fm.color,
-          badge,
-          badgeStyle: badge === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
-          active: path === openPath,
-          generated: isReservedMd(path),
-        };
-      }),
+    const root: TreeDir = { name: folder, path: folder, desc: fm.desc, dirs: [], files: [] };
+    // nest subdirectories, mirroring buildRefTree: sorted input lands dirs
+    // and files in each parent already sorted
+    const dirAt = new Map<string, TreeDir>([[folder, root]]);
+    const dirFor = (p: string): TreeDir => {
+      const hit = dirAt.get(p);
+      if (hit) return hit;
+      const cut = p.lastIndexOf('/');
+      const node: TreeDir = { name: p.slice(cut + 1), path: p, dirs: [], files: [] };
+      dirAt.set(p, node);
+      dirFor(p.slice(0, cut)).dirs.push(node);
+      return node;
     };
+    for (const path of byFolder[folder].sort()) {
+      const n = path.split('/').pop()!;
+      const badge = gitStatus[path] || '';
+      const dm = docMeta[path];
+      dirFor(path.slice(0, path.lastIndexOf('/'))).files.push({
+        path, name: n,
+        icon: n.endsWith('.mermaid') ? '⌗' : dm?.icon || fm.icon,
+        color: dm?.color || fm.color,
+        badge,
+        badgeStyle: badge === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
+        active: path === openPath,
+        generated: isReservedMd(path),
+        title: dm?.title || undefined,
+        docType: dm?.docType,
+      });
+    }
+    return root;
   });
+  if (rootFiles.length) {
+    dirs.push({
+      name: '/', path: '', desc: 'repository root', dirs: [],
+      files: rootFiles.sort().map((path) => ({
+        path, name: path,
+        icon: '▢', color: 'var(--text-2)',
+        badge: gitStatus[path] || '',
+        badgeStyle: (gitStatus[path] || '') === 'A' ? 'color:var(--add)' : 'color:var(--reg)',
+        active: path === openPath,
+        generated: isReservedMd(path),
+      })),
+    });
+  }
+  return dirs;
 }
 
 // ---------------------------------------------------------------- reference tree
@@ -268,20 +330,34 @@ export function docAnchorOptions(body: string): RefTarget[] {
 
 export interface DocBacklink { from: string; kind: string; type?: string; id: string; title: string }
 
-const BACKLINK_KIND_RANK: Record<string, number> = { driver: 0, implements: 1, 'maps to': 2, verifies: 3, 'in text': 9 };
+// chain order: the level below comes first (drivers < implements < delivers)
+const BACKLINK_KIND_RANK: Record<string, number> = { driver: 0, implements: 1, delivers: 2, 'maps to': 3, verifies: 4, 'in text': 9 };
+const KIND_LABEL: Record<string, string> = { drivers: 'driver', maps_to: 'maps to' };
 
 /**
- * Every inbound link to a document: driver citations, the other typed
- * frontmatter lists (implements, maps_to, verifies), and untyped body-text
- * references. Computed — never stored in the target document (this replaced
- * the manual `drives:` frontmatter, so backlinks can never drift from the
- * forward links). A text mention is suppressed when the same source document
- * already links the target through a typed relation.
+ * How a backlink reads from the TARGET document's side: the link type's
+ * `inverse` label ("implemented by", "drives"), falling back to the raw kind.
+ * Body mentions read "mentioned in".
+ */
+export function backlinkLabel(model: WorkspaceModel, kind: string): string {
+  if (kind === 'in text') return 'mentioned in';
+  const lt = model.linkTypes.find((l) =>
+    l.name === kind || l.name.replace(/_/g, ' ') === kind || (kind === 'driver' && l.name === 'drivers'));
+  return lt?.inverse || kind;
+}
+
+/**
+ * Every inbound link to a document, generalized over the workspace's typed
+ * link fields (the chain reads upward, so a WHY doc collects `driver`
+ * backlinks from WHATs, a WHAT collects `implements` from HOWs, a HOW
+ * collects `delivers` from WHENs), plus untyped body-text references.
+ * Computed — never stored in the target document, so backlinks can never
+ * drift from the forward links. A text mention is suppressed when the same
+ * source document already links the target through a typed relation.
  */
 export function collectBacklinks(model: WorkspaceModel): Record<string, DocBacklink[]> {
   const meta: Record<string, { id: string; title: string }> = {};
-  [...model.regs, ...model.requirements, ...model.specs, ...model.changes].forEach((d) => { meta[d.path] = { id: d.id, title: d.title }; });
-  model.maps.forEach((m) => { meta[m.path] = { id: m.name.replace(/\.md$/, ''), title: '' }; });
+  model.docs.forEach((d) => { meta[d.path] = { id: d.id, title: d.title }; });
   const out: Record<string, DocBacklink[]> = {};
   const seen = new Set<string>();
   const pairSeen = new Set<string>();
@@ -297,20 +373,86 @@ export function collectBacklinks(model: WorkspaceModel): Record<string, DocBackl
     const m = meta[from] || { id: '', title: '' };
     (out[p] = out[p] || []).push({ from, kind, type, id: m.id || from.split('/').pop()!, title: m.title });
   };
-  model.requirements.forEach((r) => {
-    r.drivers.forEach((d) => add(d.ref, r.path, 'driver', d.type));
-    r.implements.forEach((t) => add(t, r.path, 'implements'));
-    r.maps_to.forEach((t) => add(t, r.path, 'maps to'));
-    r.verifies.forEach((t) => add(t, r.path, 'verifies'));
-  });
-  model.specs.forEach((s) => {
-    s.implements.forEach((t) => add(t, s.path, 'implements'));
-    s.maps_to.forEach((t) => add(t, s.path, 'maps to'));
+  model.docs.forEach((d) => {
+    d.driversTyped.forEach((dr) => add(dr.ref, d.path, 'driver', dr.type || undefined));
+    Object.entries(d.links).forEach(([field, refs]) => {
+      if (field === 'drivers') return; // handled above with the derived type
+      refs.forEach((t) => add(t, d.path, KIND_LABEL[field] || field.replace(/_/g, ' ')));
+    });
   });
   (model.references || []).forEach((ref) => { if (!ref.external) add(ref.to, ref.from, 'in text', undefined, true); });
   Object.values(out).forEach((links) =>
     links.sort((a, b) => (BACKLINK_KIND_RANK[a.kind] ?? 5) - (BACKLINK_KIND_RANK[b.kind] ?? 5) || a.from.localeCompare(b.from)));
   return out;
+}
+
+// ---------------------------------------------------------------- link report
+
+export interface LinkReportEntry {
+  field: string;   // frontmatter key, or 'body' for prose links
+  ref: string;     // the value as written (anchor included)
+  target: string;  // resolved document path ('' when not a path)
+  kind: string;    // target's entity kind ('' = file exists but unclassified)
+  status: 'ok' | 'missing' | 'external' | 'prose' | 'undeclared';
+  type?: string;   // derived driver type (drivers entries only)
+}
+
+/**
+ * Everything the model sees (and does NOT see) as links in one document —
+ * the debug view behind "why doesn't this backlink/edge show up". Includes
+ * every parsed typed link with its resolution, untyped body references, and
+ * — the usual culprit — list fields that LOOK like doc links but are not
+ * declared link fields in this workspace (status `undeclared`: they produce
+ * no backlinks and no graph edges).
+ */
+export function docLinkReport(files: Record<string, string>, model: WorkspaceModel, path: string) {
+  const doc = model.docs.find((d) => d.path === path);
+  const kindOf = (p: string) => model.docs.find((d) => d.path === p)?.kind || '';
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+  const fm = files[path] !== undefined ? stripFrontmatter(files[path]).fm : '';
+  const out: LinkReportEntry[] = [];
+  // ref = as written; target = what the tolerant resolution lands on (the
+  // panel shows both when they differ, so relative forms are visible)
+  const entry = (field: string, ref: string, type?: string): LinkReportEntry => {
+    if (ref.startsWith('~')) return { field, ref, target: ref, kind: '', status: 'external', type };
+    const target = resolveFmRef(dir, ref, files).split('#')[0];
+    if (files[target] !== undefined) return { field, ref, target, kind: kindOf(target), status: 'ok', type };
+    if (!target.includes('/')) return { field, ref, target: '', kind: '', status: 'prose', type };
+    return { field, ref, target, kind: '', status: 'missing', type };
+  };
+  if (doc) {
+    for (const field of Object.keys(doc.links)) {
+      const written = field === 'drivers' ? parseDriverEntries(fm).map((x) => x.ref) : getList(fm, field);
+      written.forEach((ref) => {
+        const resolved = resolveFmRef(dir, ref, files);
+        const type = field === 'drivers' ? doc.driversTyped.find((x) => x.ref === resolved)?.type : undefined;
+        out.push(entry(field, ref, type));
+      });
+    }
+  }
+  // list fields carrying path-looking values that are NOT declared link
+  // fields — invisible to backlinks/graph, which is exactly what this view
+  // is for (e.g. `satisfies:` in a workspace running on the defaults)
+  const declared = new Set(model.linkFields);
+  const pathLike = /^[\w-]+\/[\w./-]+$/;
+  if (files[path] !== undefined) {
+    for (const e of parseProps(stripFrontmatter(files[path]).fm)) {
+      if (e.type !== 'list' || declared.has(e.key) || e.key === 'anchors') continue;
+      if (!e.items.some((it) => pathLike.test(it.split('#')[0]))) continue;
+      e.items.forEach((ref) => out.push({ ...entry(e.key, ref), status: 'undeclared' }));
+    }
+  }
+  (model.references || []).filter((r) => r.from === path).forEach((r) =>
+    out.push(r.external
+      ? { field: 'body', ref: r.to, target: r.to, kind: '', status: 'external' }
+      : { field: 'body', ref: r.to, target: r.to, kind: kindOf(r.to), status: 'ok' }));
+  return {
+    classified: !!doc,
+    kind: doc?.kind || '',
+    group: doc?.group || '',
+    outbound: out,
+    inbound: collectBacklinks(model)[path] || [],
+  };
 }
 
 // ---------------------------------------------------------------- changes
@@ -320,12 +462,17 @@ export interface ChangeItem extends Change {
 }
 
 export function buildChanges(model: WorkspaceModel, filter: string, selPath?: string | null) {
-  const order: Record<string, number> = { triage: 0, in_progress: 1, auto_remapped: 2, backlog: 3 };
+  // ordering follows the CONFIGURED inbox lifecycle: attention statuses
+  // first, closed last, everything else in between (stable)
+  const attention = new Set(model.inbox?.attention || ['triage']);
+  const closed = new Set(model.inbox?.closed || ['done', 'merged']);
+  const rank = (st: string) => (attention.has(st) ? 0 : closed.has(st) ? 9 : 1);
   const all: ChangeItem[] = model.changes
     .map((c) => ({ ...c, ago: daysAgo(c.published), nImpacted: c.impReqs.length + c.impSpecs.length + c.impMaps.length }))
-    .sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
-  const counts = { all: all.length, regulatory: 0, product: 0, technical: 0 };
-  all.forEach((c) => { if (c.source in counts) counts[c.source as keyof typeof counts]++; });
+    .sort((a, b) => rank(a.status) - rank(b.status));
+  const counts: Record<string, number> = { all: all.length };
+  model.driverDefs.forEach((d) => { counts[d.key] = 0; });
+  all.forEach((c) => { if (c.source in counts) counts[c.source]++; });
   const items = all.filter((c) => filter === 'all' || c.source === filter);
   const sel = all.find((c) => c.path === (selPath || (items[0] && items[0].path))) || items[0] || null;
   return { items, sel, counts };
@@ -333,26 +480,106 @@ export function buildChanges(model: WorkspaceModel, filter: string, selPath?: st
 
 // ---------------------------------------------------------------- dashboard
 
+export interface DashTile { key: string; label: string; value: string; sub: string; valueStyle?: string }
+
+/**
+ * The Overview, steered by the workspace's type config: KPI tiles, the
+ * traceability-health bars and the feed all derive from the configured
+ * entities/groups/drivers — what the workspace doesn't have simply drops out
+ * instead of rendering as zeros. Health follows the upward-reference chain:
+ * WHATs cite drivers (outbound), WHATs are covered by inbound `implements`
+ * from HOWs, HOWs by inbound `delivers` from WHENs.
+ */
 export function buildDashboard(model: WorkspaceModel) {
-  const openChanges = model.changes.filter((c) => c.status !== 'done' && c.status !== 'merged');
-  const bySource = { regulatory: 0, product: 0, technical: 0 };
-  openChanges.forEach((c) => { if (c.source in bySource) bySource[c.source as keyof typeof bySource]++; });
+  const ents = model.entities;
+  const what = primaryEntity(ents, 'what');
+  const how = primaryEntity(ents, 'how');
+  const when = primaryEntity(ents, 'when');
+  const changeEnt = ents.find((e) => e.inbox);
+  const mapEnt = ents.find((e) => e.kind === 'data_mapping');
+  const whatDocs = model.docs.filter((d) => d.group === 'what');
+  const lower = (s: string) => s.toLowerCase();
+  const singular = (s: string) => lower(s).replace(/ies$/, 'y').replace(/s$/, '');
+
+  const backlinks = collectBacklinks(model);
+  const groupOf: Record<string, string> = {};
+  model.docs.forEach((d) => { groupOf[d.path] = d.group || ''; });
+  const covered = (docs: DocNode[], kind: string, fromGroup: string) =>
+    docs.filter((t) => (backlinks[t.path] || []).some((b) => b.kind === kind && groupOf[b.from] === fromGroup)).length;
+
+  const closedSet = new Set(model.inbox?.closed || ['done', 'merged']);
+  const openChanges = model.changes.filter((c) => !closedSet.has(c.status));
   const drifts = model.fields.filter((f) => f.drift).length;
   const covVals = model.requirements.map((r) => r.coverage).filter((n) => n > 0);
   const cov = covVals.length ? Math.round((covVals.reduce((a, b) => a + b, 0) / covVals.length) * 100) : 0;
-  const reqWithDriver = model.requirements.filter((r) => r.drivers.length).length;
-  const reqWithSpec = model.requirements.filter((r) => r.implements.some((p) => p.startsWith('specs/'))).length;
-  const specWithField = model.specs.filter((s) => s.maps_to.length).length;
   const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
+
+  // health bars come from the CONFIGURED traceability section: each entry
+  // measures one link type from one side — `from` = share of source docs
+  // carrying the link, `to` = share of target docs covered by it. The
+  // population is the first kind on the measured side; bars whose kinds
+  // aren't configured (or whose `when` entity is hidden) drop out.
+  const entByKind: Record<string, EntityDef> = {};
+  ents.forEach((e) => { entByKind[e.kind] = e; });
+  const kindDocs = (kind: string) => model.docs.filter((d) => d.kind === kind);
+  const backlinkKind = (link: string) => (link === 'drivers' ? 'driver' : link === 'maps_to' ? 'maps to' : link);
+  const palette = ['var(--reg)', 'var(--prod)', 'var(--ai)', 'var(--data)'];
+  const health: { label: string; pct: number; color: string }[] = [];
+  model.traceability.forEach((def, i) => {
+    const lt = model.linkTypes.find((l) => l.name === def.link);
+    if (!lt) return;
+    if (def.when && !entByKind[def.when]) return;
+    const split = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean);
+    const fromKinds = split(lt.from), toKinds = split(lt.to);
+    const fromEnt = entByKind[fromKinds[0]];
+    if (!fromEnt) return;
+    const color = def.color || palette[i % palette.length];
+    if (def.measure === 'to') {
+      const toEnt = entByKind[toKinds[0]];
+      if (!toEnt) return;
+      const base = kindDocs(toEnt.kind);
+      if (!base.length) return;
+      const kind = backlinkKind(def.link);
+      const fromSet = new Set(fromKinds);
+      const cov = base.filter((t) => (backlinks[t.path] || []).some((b) =>
+        b.kind === kind && fromSet.has(model.docs.find((d) => d.path === b.from)?.kind || ''))).length;
+      health.push({ label: def.label || `${toEnt.label} ← ${lower(fromEnt.label)}`, pct: pct(cov, base.length), color });
+    } else {
+      const base = kindDocs(fromEnt.kind);
+      if (!base.length) return;
+      const cov = base.filter((d) => (d.links[def.link] || []).length > 0).length;
+      health.push({ label: def.label || `${fromEnt.label} → ${def.link.replace(/_/g, ' ')}`, pct: pct(cov, base.length), color });
+    }
+  });
+
+  // KPI tiles — the change inbox iterates the CONFIGURED driver taxonomy
+  const tiles: DashTile[] = [];
+  if (changeEnt) {
+    tiles.push({
+      key: 'changes', label: `Open ${lower(changeEnt.label)}`, value: String(openChanges.length),
+      sub: model.driverDefs.map((dd) => `${openChanges.filter((c) => c.source === dd.key).length} ${lower(dd.label)}`).join(' · '),
+    });
+  }
+  if (what) {
+    const whatImplemented = covered(whatDocs, 'implements', 'how');
+    tiles.push({
+      key: 'what', label: what.label, value: String(whatDocs.length),
+      sub: how ? `${whatImplemented} of ${whatDocs.length} implemented` : `${lower(what.description).split('—')[0].trim()}`,
+    });
+  }
+  if (mapEnt) {
+    tiles.push({ key: 'drifts', label: 'Mapping drifts', value: String(drifts), sub: 'need re-validation', valueStyle: 'color:var(--reg)' });
+  }
+
   return {
-    openCount: openChanges.length, bySource,
-    specCount: model.specs.length, reqCount: model.requirements.length, drifts, cov,
-    feed: buildChanges(model, 'all').items.slice(0, 3),
-    health: [
-      { label: 'Requirements → drivers', pct: pct(reqWithDriver, model.requirements.length), color: 'var(--reg)' },
-      { label: 'Requirements → specs', pct: pct(reqWithSpec, model.requirements.length), color: 'var(--prod)' },
-      { label: 'Specs → data fields', pct: pct(specWithField, model.specs.length), color: 'var(--data)' },
-    ],
+    openCount: openChanges.length, drifts, cov,
+    showCov: !!what && whatDocs.length > 0,
+    tiles,
+    feed: changeEnt ? buildChanges(model, 'all').items.slice(0, 3) : [],
+    changeEntity: changeEnt ? { label: changeEnt.label, lower: lower(changeEnt.label) } : null,
+    newDoc: what ? { kind: what.kind, label: singular(what.label) } : null,
+    mapEntity: !!mapEnt,
+    health,
   };
 }
 
@@ -387,15 +614,54 @@ export function edgeCurve(x1: number, y1: number, x2: number, y2: number, seed: 
   return `M${x1} ${y1} C${c1x} ${y1 + bow} ${c2x} ${y2 - bow} ${x2} ${y2}`;
 }
 
+// group column meta: display label + legend colors along the axis
+export const GROUP_META: Record<string, { label: string; fg: string; bg: string }> = {
+  why: { label: 'Why', fg: 'var(--reg)', bg: 'var(--reg-bg)' },
+  what: { label: 'What', fg: 'var(--prod)', bg: 'var(--prod-bg)' },
+  how: { label: 'How', fg: 'var(--text-2)', bg: 'var(--surface-2)' },
+  when: { label: 'When', fg: 'var(--ai)', bg: 'var(--ai-bg)' },
+  field: { label: 'Data fields', fg: 'var(--data)', bg: 'var(--data-bg)' },
+};
+
+export interface GraphStat { key: string; label: string; fg: string; bg: string; count: number }
+
+const graphStats = (nodes: GraphNode[], cols: string[]): GraphStat[] => {
+  const stats = cols.map((g, i) => ({
+    key: g, ...GROUP_META[g],
+    count: nodes.filter((n) => n.col === i && n.kind !== 'field' && n.kind !== 'ext').length,
+  }));
+  const f = nodes.filter((n) => n.kind === 'field').length;
+  if (f) stats.push({ key: 'field', ...GROUP_META.field, count: f });
+  return stats;
+};
+
+/**
+ * The traceability graph, config-driven: nodes are the classified documents
+ * (custom entities included), columns are the groups present on the
+ * WHY → WHAT → HOW → WHEN axis, and edges come from every typed link field a
+ * document carries — the chain links read upward (lower level holds the
+ * reference), drawn left→right along the axis. Data-mapping FIELD anchors
+ * stay as nodes in the `how` column; `~source` body links join the leftmost
+ * column as dashed externals.
+ */
 export function buildGraph(model: WorkspaceModel) {
-  const reqs = model.requirements, specs = model.specs, fields = model.fields;
-  const srcMap: Record<string, { key: string; type: string; ref: string }> = {};
-  reqs.forEach((r) => r.drivers.forEach((d) => { const k = d.type + '|' + d.ref; if (!srcMap[k]) srcMap[k] = { key: k, type: d.type, ref: d.ref }; }));
-  const sources = Object.values(srcMap);
+  const docs = model.docs.filter((d) => d.group && (GROUP_ORDER as readonly string[]).includes(d.group));
+  const fields = model.fields;
+  const cols = GROUP_ORDER.filter((g) => docs.some((d) => d.group === g));
+  if (!cols.length) cols.push('what' as (typeof GROUP_ORDER)[number]);
+  const colOf: Record<string, number> = {};
+  cols.forEach((g, i) => { colOf[g] = i; });
+  const nCols = cols.length;
+  const colX = cols.map((_, i) => (nCols > 1 ? 16 + Math.round((696 * i) / (nCols - 1)) : 364));
+  const colW = cols.map((_, i) => (i === nCols - 1 ? 176 : i === 0 ? 156 : 150));
+  const H = 540;
   const short = (ref: string) => ref.split('/').pop()!.split('#')[0].replace('.md', '');
-  const sColor = (t: string) => (t === 'regulatory' ? 'var(--reg)' : t === 'product' ? 'var(--prod)' : 'var(--text-2)');
-  const sIcon = (t: string) => (t === 'regulatory' ? '⚖' : t === 'product' ? '◆' : '⚙');
-  const colX = [16, 250, 486, 712], colW = [156, 150, 150, 176], H = 540;
+  const dColor = (t: string) => (t === 'regulatory' ? 'var(--reg)' : t === 'product' ? 'var(--prod)' : t === 'technical' ? 'var(--text-2)'
+    : model.driverDefs.find((d) => d.key === t)?.color || 'var(--text-2)');
+  const dIcon = (t: string) => (t === 'regulatory' ? '⚖' : t === 'product' ? '◆' : t === 'technical' ? '⚙'
+    : model.driverDefs.find((d) => d.key === t)?.icon || '');
+  const entByKind: Record<string, EntityDef> = {};
+  model.entities.forEach((e) => { entByKind[e.kind] = e; });
   const nodes: GraphNode[] = [];
   const idOf: Record<string, GraphNode> = {};
   const scatter = (o: GraphNode, c: number, i: number, count: number) => {
@@ -408,82 +674,116 @@ export function buildGraph(model: WorkspaceModel) {
     const node = { ...o, id, col, x: 0, y: 0, w: 0, boxStyle: '', labelStyle: '', subStyle: '' } as GraphNode & { color?: string; drift?: boolean };
     nodes.push(node); idOf[id] = node;
   };
-  // clicking a node opens its document; only refs that are workspace docs get one
-  const docRef = (ref: string) => { const p = ref.split('#')[0]; return /\.md$/.test(p) ? p : undefined; };
-  sources.forEach((s) => push('src:' + s.key, 0, { label: sIcon(s.type) + ' ' + short(s.ref), sub: s.type, kind: 'src', color: sColor(s.type), go: docRef(s.ref) }));
-  reqs.forEach((r) => push('req:' + r.path, 1, { label: r.id, sub: r.title, kind: 'req', go: r.path }));
-  specs.forEach((sp) => push('spec:' + sp.path, 2, { label: sp.name, sub: 'spec', kind: 'spec', go: sp.path }));
-  fields.forEach((f) => push('field:' + f.name, 3, { label: f.name, sub: f.drift ? '⚠ drift' : '', kind: 'field', drift: f.drift, go: f.map }));
-  [0, 1, 2, 3].forEach((c) => {
+  docs.forEach((d) => {
+    const ent = entByKind[d.kind];
+    const col = colOf[d.group!];
+    if (d.group === 'why') {
+      // WHY docs carry their derived driver type as icon, accent color + sub
+      const type = d.source || ent?.driver || '';
+      const icon = (type && dIcon(type)) || ent?.icon || '◈';
+      push('doc:' + d.path, col, { label: icon + ' ' + short(d.path), sub: type || ent?.kind.replace(/_/g, ' ') || '', kind: d.kind, color: type ? dColor(type) : ent?.color || 'var(--text-2)', go: d.path });
+    } else if (d.group === 'what') {
+      push('doc:' + d.path, col, { label: d.id || d.name, sub: d.title, kind: d.kind, go: d.path });
+    } else if (d.group === 'when') {
+      push('doc:' + d.path, col, { label: d.id || d.name, sub: d.title || ent?.kind.replace(/_/g, ' ') || '', kind: d.kind, color: ent?.color, go: d.path });
+    } else {
+      push('doc:' + d.path, col, { label: d.name, sub: ent?.kind.replace(/_/g, ' ') || 'spec', kind: d.kind, go: d.path });
+    }
+  });
+  if (colOf.how !== undefined) {
+    fields.forEach((f) => push('field:' + f.name, colOf.how, { label: f.name, sub: f.drift ? '⚠ drift' : '', kind: 'field', drift: f.drift, go: f.map }));
+  }
+  cols.forEach((_, c) => {
     const col = nodes.filter((n) => n.col === c);
     col.forEach((o, i) => scatter(o, c, i, col.length));
   });
-  nodes.forEach((o) => {
-    const n = o as GraphNode & { color?: string; drift?: boolean };
+  const styleOf = (o: GraphNode & { color?: string; drift?: boolean }) => {
     const base = 'position:absolute;left:' + o.x + 'px;top:' + (o.y - 20) + 'px;width:' + o.w + 'px;padding:8px 10px;border-radius:9px;box-shadow:var(--shadow);';
-    if (o.kind === 'src') o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2);border-left:3px solid ' + n.color;
-    else if (o.kind === 'field') o.boxStyle = base + (n.drift ? 'background:var(--reg-bg);border:1px solid var(--reg-line)' : 'background:var(--data-bg);border:1px solid var(--data-line)');
-    else o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2)';
-    o.labelStyle = o.kind === 'src' ? "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:" + n.color
-      : o.kind === 'field' ? "font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--data)"
-      : o.kind === 'spec' ? 'font-size:12px;font-weight:600'
-      : "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)";
-    o.subStyle = o.kind === 'field' ? 'font-size:10px;color:var(--reg);margin-top:1px'
-      : o.kind === 'spec' ? "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3);margin-top:1px"
-      : 'font-size:12px;font-weight:600;margin-top:1px;text-transform:capitalize';
-  });
+    const group = entByKind[o.kind]?.group;
+    if (o.kind === 'ext') {
+      o.boxStyle = base + 'background:var(--surface);border:1px dashed var(--border-2)';
+      o.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:var(--text-2)";
+      o.subStyle = 'font-size:11px;font-weight:600;margin-top:1px;color:var(--text-3)';
+    } else if (o.kind === 'field') {
+      o.boxStyle = base + (o.drift ? 'background:var(--reg-bg);border:1px solid var(--reg-line)' : 'background:var(--data-bg);border:1px solid var(--data-line)');
+      o.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--data)";
+      o.subStyle = 'font-size:10px;color:var(--reg);margin-top:1px';
+    } else if (group === 'why') {
+      o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2);border-left:3px solid ' + (o.color || 'var(--text-2)');
+      o.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:" + (o.color || 'var(--text-2)');
+      o.subStyle = 'font-size:12px;font-weight:600;margin-top:1px;text-transform:capitalize';
+    } else if (group === 'when') {
+      o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2);border-left:3px solid ' + (o.color || 'var(--data)');
+      o.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:var(--text-2)";
+      o.subStyle = 'font-size:11.5px;font-weight:600;margin-top:1px';
+    } else if (group === 'how') {
+      o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2)';
+      o.labelStyle = 'font-size:12px;font-weight:600';
+      o.subStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3);margin-top:1px";
+    } else {
+      o.boxStyle = base + 'background:var(--surface);border:1px solid var(--border-2)';
+      o.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)";
+      o.subStyle = 'font-size:12px;font-weight:600;margin-top:1px';
+    }
+  };
+  nodes.forEach((o) => styleOf(o));
   const edges: GraphEdge[] = [];
+  // edges draw left→right along the axis whichever side holds the link
   const edge = (a: string, b: string, stroke: string, dash?: boolean) => {
-    const p = idOf[a], q = idOf[b];
-    if (!p || !q) return;
-    const x1 = p.x + p.w, y1 = p.y, x2 = q.x, y2 = q.y;
-    edges.push({ d: edgeCurve(x1, y1, x2, y2, a + '>' + b), stroke, dash, a, b });
+    let p = idOf[a], q = idOf[b];
+    if (!p || !q || a === b) return;
+    if (q.col < p.col || (q.col === p.col && q.x < p.x)) { [p, q] = [q, p]; [a, b] = [b, a]; }
+    edges.push({ d: edgeCurve(p.x + p.w, p.y, q.x, q.y, a + '>' + b), stroke, dash, a, b });
   };
   const resolveField = (ref: string): DataField | undefined => {
     const a = ref.split('#')[1] || '';
     return fields.find((f) => f.name === a || f.name.endsWith('.' + a));
   };
-  reqs.forEach((r) => {
-    r.drivers.forEach((d) => edge('src:' + (d.type + '|' + d.ref), 'req:' + r.path, sColor(d.type)));
-    r.implements.filter((p) => p.startsWith('specs/')).forEach((sp) => edge('req:' + r.path, 'spec:' + sp, 'var(--border-2)'));
-    r.maps_to.forEach((ref) => { const f = resolveField(ref); if (f) edge('req:' + r.path, 'field:' + f.name, 'var(--border-2)'); });
+  const typed = new Set<string>();
+  docs.forEach((d) => {
+    Object.entries(d.links).forEach(([field, refs]) => {
+      refs.forEach((ref) => {
+        if (field === 'maps_to') {
+          const f = resolveField(ref);
+          if (f) edge('doc:' + d.path, 'field:' + f.name, 'var(--border-2)');
+          return;
+        }
+        const tp = ref.split('#')[0];
+        if (!idOf['doc:' + tp]) return;
+        const stroke = field === 'drivers' ? dColor(d.driversTyped.find((x) => x.ref === ref)?.type || '') : 'var(--border-2)';
+        edge('doc:' + d.path, 'doc:' + tp, stroke);
+        typed.add('doc:' + d.path + '>doc:' + tp);
+        typed.add('doc:' + tp + '>doc:' + d.path);
+      });
+    });
   });
   // untyped body-link references (OKF linking model) — dashed, and only
   // where both documents have a node; typed edges take precedence
-  const nodeIdFor = (path: string) => (idOf['req:' + path] ? 'req:' + path : idOf['spec:' + path] ? 'spec:' + path : '');
-  const typed = new Set(reqs.flatMap((r) => r.implements.map((sp) => 'req:' + r.path + '>spec:' + sp)));
   (model.references || []).forEach((ref) => {
     if (ref.external) return; // handled below
-    const a = nodeIdFor(ref.from), b = nodeIdFor(ref.to);
-    if (a && b && !typed.has(a + '>' + b) && !typed.has(b + '>' + a)) edge(a, b, 'var(--border-2)', true);
+    const a = 'doc:' + ref.from, b = 'doc:' + ref.to;
+    if (idOf[a] && idOf[b] && !typed.has(a + '>' + b)) edge(a, b, 'var(--border-2)', true);
   });
-  // cross-repo references ("~source/path"): external nodes join the sources
+  // cross-repo references ("~source/path"): external nodes join the leftmost
   // column with dashed borders + dashed edges from the linking document
-  const externals = (model.references || []).filter((r) => r.external && nodeIdFor(r.from));
+  const externals = (model.references || []).filter((r) => r.external && idOf['doc:' + r.from]);
   if (externals.length) {
     const seenExt = new Set<string>();
     externals.forEach((ref) => {
       const extID = 'ext:' + ref.to;
       if (!seenExt.has(extID)) {
         seenExt.add(extID);
-        const short = ref.to.split('/').pop()!.replace('.md', '');
         const srcName = ref.to.slice(1).split('/')[0];
-        push(extID, 0, { label: '⇲ ' + short, sub: '~' + srcName, kind: 'src', color: 'var(--text-2)', go: ref.to });
+        push(extID, 0, { label: '⇲ ' + short(ref.to), sub: '~' + srcName, kind: 'ext', go: ref.to });
       }
     });
-    // relayout + restyle the sources column with the new members
+    // relayout + restyle the leftmost column with the new members
     const col = nodes.filter((n) => n.col === 0);
     col.forEach((o, i) => scatter(o, 0, i, col.length));
-    seenExt.forEach((extID) => {
-      const n = idOf[extID];
-      const base = 'position:absolute;left:' + n.x + 'px;top:' + (n.y - 20) + 'px;width:' + n.w + 'px;padding:8px 10px;border-radius:9px;box-shadow:var(--shadow);';
-      n.boxStyle = base + 'background:var(--surface);border:1px dashed var(--border-2)';
-      n.labelStyle = "font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:var(--text-2)";
-      n.subStyle = 'font-size:11px;font-weight:600;margin-top:1px;color:var(--text-3)';
-    });
-    externals.forEach((ref) => edge('ext:' + ref.to, nodeIdFor(ref.from), 'var(--border-2)', true));
+    col.forEach((o) => styleOf(o));
+    externals.forEach((ref) => edge('ext:' + ref.to, 'doc:' + ref.from, 'var(--border-2)', true));
   }
-  return { nodes, edges, H, stats: { s: sources.length, r: reqs.length, sp: specs.length, f: fields.length } };
+  return { nodes, edges, H, cols: cols as string[], stats: graphStats(nodes, cols as string[]) };
 }
 
 /**
@@ -514,12 +814,11 @@ export function focusGraph(g: ReturnType<typeof buildGraph>, docPath: string): R
     const gap = g.H / (col.length + 1);
     col.forEach((n, i) => { n.y = Math.round(gap * (i + 1)); });
   });
-  const count = (k: string) => nodes.filter((n) => n.kind === k).length;
   return {
     ...g,
     nodes,
     edges: g.edges.filter((e) => keep.has(e.a) && keep.has(e.b)),
-    stats: { s: count('src'), r: count('req'), sp: count('spec'), f: count('field') },
+    stats: graphStats(nodes, g.cols),
   };
 }
 

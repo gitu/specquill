@@ -21,14 +21,23 @@ ui:
   default_view: editor
 
 # ── document families ──────────────────────────────────────────────────────
-# \`group\` places a family on the model axis (why | what | how | when).
+# A document's family is decided by its frontmatter \`type:\` matching the
+# family's \`doc_type\` (or the family key); \`folder\` is only the DEFAULT
+# location new documents go — files keep their family wherever they live.
+# \`group\` places a family on the model axis (why | what | how | when) — the
+# lower level always links UP: WHAT documents cite WHY, HOW implements WHAT,
+# WHEN delivers HOW. \`driver\` (WHY families) names the driver type documents
+# of the family stand for; families without one derive it from each
+# document's \`source:\` frontmatter.
 # Add your own families, override single fields of a built-in (only the keys
 # you provide change), or remove one with \`hidden: true\`. \`attributes\` seeds
 # the frontmatter of documents created in the family; colors take any CSS
 # color (hex or the app's var(--…) palette).
 entities:
   regulation:
+    doc_type: "Regulation"
     group: why
+    driver: regulatory
     folder: "regulations/"
     label: "Regulations"
     icon: "◈"
@@ -36,30 +45,37 @@ entities:
     attributes: [id, title, status]
     description: "External rules the product must comply with — the origin of regulatory drivers and change records."
   change:
+    doc_type: "Change Record"
     group: why
     folder: "changes/"
     label: "Changes"
     icon: "⚑"
     color: "var(--reg)"
+    inbox: true                        # this family IS the change inbox
+    attention_statuses: [triage]       # needs a human — review card, sort first
+    closed_statuses: [done, merged]    # out of the open count and the feed
     attributes: [title, status, source, published]
     description: "Incoming change records (regulatory, product, technical) triaged against the documents they impact."
   requirement:
+    doc_type: "Requirement"
     group: what
     folder: "requirements/"
     label: "Requirements"
     icon: "▤"
     color: "var(--prod)"
-    attributes: [id, title, status, priority, owner, drivers, implements, verifies]
-    description: "WHAT the product must do — atomic, testable statements carrying drivers and traceability links."
+    attributes: [id, title, status, priority, owner, drivers]
+    description: "WHAT the product must do — atomic, testable statements citing the WHY documents that drive them."
   spec:
+    doc_type: "Specification"
     group: how
     folder: "specs/"
     label: "Specs"
     icon: "◈"
     color: "var(--text-2)"
-    attributes: [title, status, satisfies, maps_to]
-    description: "HOW requirements are realized — designs that satisfy requirements and map onto data fields."
+    attributes: [title, status, implements, maps_to]
+    description: "HOW requirements are realized — designs that implement requirements and map onto data fields."
   data_mapping:
+    doc_type: "Data Mapping"
     group: how
     folder: "data-mappings/"
     label: "Data mappings"
@@ -68,6 +84,7 @@ entities:
     attributes: [title]
     description: "Field-level source → target mappings; drift against the specs is detected here."
   diagram:
+    doc_type: "Diagram"
     group: how
     folder: "diagrams/"
     label: "Diagrams"
@@ -76,6 +93,7 @@ entities:
     attributes: []
     description: "Sketches and text diagrams embedded in documents — portable formats, no tool lock-in."
   work_item:
+    doc_type: "Work Item"
     group: when
     folder: "work-items/"
     label: "Work items"
@@ -86,8 +104,10 @@ entities:
   # decision: { group: why, folder: "decisions/", label: "Decisions", icon: "◆", color: "#7c5cd6", description: "Why the system is shaped this way." }
 
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
-# The categories behind \`drivers:\` frontmatter entries — what a requirement
-# can be driven by (chips in the Properties panel and the dashboards).
+# The categories a driver can fall into (chips in the Properties panel and
+# the dashboards). A \`drivers:\` link's type is DERIVED from the referenced
+# document — its \`source:\` frontmatter, else its family's \`driver\` key —
+# never written on the link itself.
 drivers:
   regulatory: { label: "Regulatory", icon: "⚖", color: "#b06f16" }
   product:    { label: "Product",    icon: "◆", color: "#2563c9" }
@@ -97,13 +117,26 @@ drivers:
 statuses: [draft, in_review, approved, deprecated]
 
 # ── linkage: the typed edges of the traceability graph ─────────────────────
+# Chain links live on the LOWER level pointing up; backlinks are computed.
+# \`inverse\` names the relation as read from the TARGET side (the Context
+# panel shows "implemented by" on a requirement, not "implements").
 link_types:
-  drives:     { from: [regulation, change], to: requirement }         # WHY → WHAT
-  implements: { from: requirement,          to: spec }                # WHAT → HOW
-  satisfies:  { from: spec,                 to: requirement }         # HOW → WHAT
-  delivers:   { from: work_item,            to: [requirement, spec] } # WHEN → WHAT/HOW
-  maps_to:    { from: spec,                 to: data_field }
-  verifies:   { from: test,                 to: requirement }
+  drivers:    { from: requirement,            to: [regulation, change], inverse: "drives" }        # WHAT → WHY
+  implements: { from: [spec, data_mapping],   to: requirement,          inverse: "implemented by" } # HOW → WHAT
+  delivers:   { from: work_item,              to: [spec, requirement],  inverse: "delivered by" }  # WHEN → HOW (or WHAT directly)
+  maps_to:    { from: spec,                   to: data_field,           inverse: "mapped by" }
+  verifies:   { from: requirement,            to: test,                 inverse: "verified by" }
+
+# ── traceability: the dashboard's health bars ──────────────────────────────
+# One bar per entry. \`measure: from\` = share of source docs CARRYING the
+# link; \`measure: to\` = share of target docs COVERED by it (computed from
+# backlinks). The population is the first kind on the measured side;
+# \`when\` hides the bar unless that entity exists. label/color optional.
+traceability:
+  - { link: drivers,    measure: from }
+  - { link: implements, measure: to }
+  - { link: delivers,   measure: to }
+  - { link: maps_to,    measure: from, label: "Specs → data fields", when: data_mapping }
 
 # ── ID schemes for new documents ───────────────────────────────────────────
 # Tokens: {seq} / {seq:N} (next number in the family, zero-padded), {rand:N}
@@ -124,7 +157,7 @@ ids:
 # (Replaces the former .specquill/schema.json, which is still honored while
 # this section is absent.)
 properties:
-  order: [id, type, status, priority, owner, source, due, drivers, implements, satisfies, delivers, maps_to, verifies, created, updated]
+  order: [id, type, status, priority, owner, source, due, drivers, implements, delivers, maps_to, verifies, created, updated]
   fields:
     id:         { label: "ID", type: code }
     type:       { label: "Type", type: tag }
@@ -135,7 +168,6 @@ properties:
     due:        { label: "Due", type: date }
     drivers:    { label: "Drivers", type: links }
     implements: { label: "Implements", type: links }
-    satisfies:  { label: "Satisfies", type: links }
     delivers:   { label: "Delivers", type: links }
     maps_to:    { label: "Maps to", type: links }
     verifies:   { label: "Verified by", type: links }

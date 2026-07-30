@@ -18,6 +18,7 @@ export function TopBar() {
   const sync = useSync(app.repoId, app.branch);
   const createBranch = useCreateBranch(app.repoId);
   const [open, setOpen] = useState(false);
+  const [userMenu, setUserMenu] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(false);
   const narrow = useNarrow();
   const pathname = useAppPath();
@@ -144,12 +145,31 @@ export function TopBar() {
       {mergeDialog && (app.mergeMode === 'forge'
         ? <ProposeDialog onClose={() => setMergeDialog(false)} />
         : <MergeDialog onClose={() => setMergeDialog(false)} />)}
-      <div
-        title={me.data ? `${me.data.name} <${me.data.email}> — click to sign out` : ''}
-        onClick={logout}
-        style={sx('width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--ai),var(--prod));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:11px;cursor:pointer')}
-      >
-        {me.data?.initials || '…'}
+      {/* signing out is destructive (forge mode drops the stored PAT) — it
+          sits behind the menu, never on the chip's single click */}
+      <div style={sx('position:relative;flex:none')}>
+        <div
+          title={me.data ? `${me.data.name} <${me.data.email}>` : ''}
+          aria-label="account menu"
+          onClick={() => setUserMenu((v) => !v)}
+          style={sx('width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--ai),var(--prod));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:11px;cursor:pointer')}
+        >
+          {me.data?.initials || '…'}
+        </div>
+        {userMenu && (
+          <div style={sx('position:absolute;right:0;top:34px;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);overflow:hidden;z-index:20')}>
+            <div style={sx('padding:9px 12px;border-bottom:1px solid var(--border)')}>
+              <div style={sx('font-size:12.5px;font-weight:600')}>{me.data?.name || '…'}</div>
+              <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{me.data?.email || ''}</div>
+            </div>
+            <div
+              onClick={() => { setUserMenu(false); void logout(); }}
+              style={sx('display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:12.5px;color:var(--reg);font-weight:600')}
+            >
+              Sign out
+            </div>
+          </div>
+        )}
       </div>
     </header>
   );

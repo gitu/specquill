@@ -22,9 +22,10 @@ const titleCase = (s: string) => s.split(/[_-]/).map((w) => w.charAt(0).toUpperC
 
 export function newDocTemplate(path: string, entities?: EntityDef[], opts?: { id?: string; title?: string; schema?: PropertySchema }): string {
   const family = path.includes('/') ? path.split('/')[0] : '';
-  // custom entity families type their documents after the entity kind
+  // the family's declared doc type wins — it is what classification matches;
+  // DOC_TYPES covers folders that have no entity (glossary, decisions, …)
   const ent = entities?.find((e) => e.folder === family + '/');
-  const type = DOC_TYPES[family] || (ent ? titleCase(ent.kind) : 'Document');
+  const type = ent?.docType || DOC_TYPES[family] || (ent ? titleCase(ent.kind) : 'Document');
   const name = opts?.title || path.split('/').pop()!.replace(/\.md$/, '');
   const idLine = opts?.id ? `id: ${opts.id}\n` : '';
   const today = todayStr();

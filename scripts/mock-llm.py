@@ -77,6 +77,20 @@ class Handler(BaseHTTPRequestHandler):
             tool_call = {'name': 'edit_file',
                          'arguments': json.dumps({'path': m.group(1), 'search': m.group(2), 'replace': m.group(3)})}
             reply = ''
+        elif body.get('tools') and (m := re.search(r'MOVE (\S+) TO (\S+)', user)):
+            tool_call = {'name': 'move_file',
+                         'arguments': json.dumps({'from': m.group(1), 'to': m.group(2)})}
+            reply = ''
+        elif body.get('tools') and (m := re.search(r'DELETE (\S+)', user)):
+            tool_call = {'name': 'delete_file', 'arguments': json.dumps({'path': m.group(1)})}
+            reply = ''
+        elif body.get('tools') and (m := re.search(r'DRAW (\S+)', user)):
+            scene = json.dumps({'elements': [
+                {'type': 'rectangle', 'x': 10, 'y': 10, 'width': 170, 'height': 60},
+                {'type': 'text', 'x': 40, 'y': 32, 'text': 'mock box'},
+            ]})
+            tool_call = {'name': 'draw_sketch', 'arguments': json.dumps({'path': m.group(1), 'scene': scene})}
+            reply = ''
         elif body.get('tools') and 'READFIRST' in user:
             tool_call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/txn-report.md'})}
             reply = ''

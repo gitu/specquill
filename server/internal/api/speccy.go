@@ -105,6 +105,7 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 
 	system := ai.GroundingPrompt(files, grounded, body.FocusPath, s.ai.GroundingBudget(), instructions)
 	system += ai.ToolRules // read_file/ask_user are always registered
+	system += modelRules(files)
 	if len(sources) > 0 {
 		names := make([]string, 0, len(sources))
 		for _, src := range sources {
@@ -155,6 +156,17 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		}
 	}()
 
+	// binary sketches never enter the text snapshot — surface them in the
+	// listing anyway so the model can discover and read_file their scenes
+	if entries, err := repo.Tree(branch); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Path, ".excalidraw.png") {
+				if _, ok := files[e.Path]; !ok {
+					files[e.Path] = ""
+				}
+			}
+		}
+	}
 	tb := &speccyToolbox{repo: repo, branch: branch, writable: writable, sources: sources, files: files,
 		publish: func() { s.publish("save", repo.Key(), branch) }}
 	onCall := func(tc ai.ToolCall, result string, execErr error) error {
@@ -164,9 +176,13 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		if tc.Function.Name == "ask_user" {
 			return nil // the ask event below carries the question
 		}
-		var a struct{ Path string }
+		var a struct{ Path, From, To string }
 		_ = json.Unmarshal([]byte(tc.Function.Arguments), &a)
-		ev := map[string]string{"name": tc.Function.Name, "path": a.Path, "status": "ok"}
+		path := a.Path
+		if path == "" && a.From != "" {
+			path = a.From + " → " + a.To // move_file carries from/to instead
+		}
+		ev := map[string]string{"name": tc.Function.Name, "path": path, "status": "ok"}
 		if execErr != nil {
 			ev["status"] = "error"
 			ev["detail"] = execErr.Error()

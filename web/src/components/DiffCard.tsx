@@ -6,7 +6,7 @@ export const FILE_META = (path: string) => {
   if (path.startsWith('regulations/')) return { icon: '◈', color: 'var(--reg)' };
   if (path.startsWith('requirements/')) return { icon: '▤', color: 'var(--prod)' };
   if (path.startsWith('data-mappings/')) return { icon: '⇄', color: 'var(--data)' };
-  if (path.startsWith('diagrams/') || path.endsWith('.excalidraw')) return { icon: '✎', color: 'var(--ai)' };
+  if (path.startsWith('diagrams/') || path.endsWith('.excalidraw') || path.endsWith('.excalidraw.png')) return { icon: '✎', color: 'var(--ai)' };
   return { icon: '◈', color: 'var(--reg)' };
 };
 

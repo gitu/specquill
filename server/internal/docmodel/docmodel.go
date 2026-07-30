@@ -17,10 +17,12 @@ import (
 )
 
 // LinkFields are the DEFAULT typed frontmatter link lists that build
-// traceability — the built-in WHY/WHAT/HOW/WHEN model. A workspace that
-// declares its own link_types in .specquill/config.yml replaces them
-// (linkFieldsFor), so the CLI follows a custom model without flags.
-var LinkFields = []string{"implements", "satisfies", "delivers", "maps_to", "verifies", "drives"}
+// traceability — the built-in WHY ← WHAT ← HOW ← WHEN model, where the lower
+// level holds the upward reference (drivers on WHAT, implements on HOW,
+// delivers on WHEN). A workspace that declares its own link_types in
+// .specquill/config.yml replaces them (linkFieldsFor), so the CLI follows a
+// custom model without flags.
+var LinkFields = []string{"drivers", "implements", "delivers", "maps_to", "verifies"}
 
 // linkFieldsFor returns the typed link fields for the workspace at root: the
 // keys of the config's link_types section when present, else LinkFields.
@@ -148,10 +150,13 @@ func parse(rel, content string, linkFields []string) Doc {
 			doc.Links[f] = vs
 		}
 	}
-	// drivers: block of {type, ref} maps — collect the refs
-	if m := regexp.MustCompile(`(?ms)^drivers:\s*\n(.*?)(?:^\S|\z)`).FindStringSubmatch(fm); m != nil {
-		for _, r := range driverRef.FindAllStringSubmatch(m[1], -1) {
-			doc.Links["drivers"] = append(doc.Links["drivers"], strings.Trim(strings.TrimSpace(r[1]), `"'`))
+	// legacy drivers: block of {type, ref} maps — collect the refs (the flat
+	// path list is the standard form and already parsed by list() above)
+	if len(doc.Links["drivers"]) == 0 {
+		if m := regexp.MustCompile(`(?ms)^drivers:\s*\n(.*?)(?:^\S|\z)`).FindStringSubmatch(fm); m != nil {
+			for _, r := range driverRef.FindAllStringSubmatch(m[1], -1) {
+				doc.Links["drivers"] = append(doc.Links["drivers"], strings.Trim(strings.TrimSpace(r[1]), `"'`))
+			}
 		}
 	}
 	// untyped body links, resolved bundle-relative (external URLs skipped)
@@ -226,9 +231,19 @@ func BrokenLinks(root string, docs []Doc) []string {
 		if strings.HasPrefix(t, "~") {
 			return // cross-repo reference — needs source access to verify
 		}
-		if !exists(t) {
-			out = append(out, from+": "+field+" -> "+t)
+		if exists(strings.TrimLeft(t, "/")) {
+			return
 		}
+		// tolerant resolution, mirroring the SPA: root-relative is canonical,
+		// but doc-relative frontmatter values resolve too
+		dir := ""
+		if i := strings.LastIndex(from, "/"); i >= 0 {
+			dir = from[:i]
+		}
+		if exists(resolve(dir, t)) {
+			return
+		}
+		out = append(out, from+": "+field+" -> "+t)
 	}
 	for _, d := range docs {
 		for field, targets := range d.Links {
