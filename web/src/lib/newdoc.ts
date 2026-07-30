@@ -1,8 +1,10 @@
 // Frontmatter template for files created in the app. Every document carries
 // an OKF `type` (the only frontmatter field the format requires), derived
-// from the folder family it lands in.
+// from the folder family it lands in; the family's `attributes` seed the
+// typed link lists so traceability starts at creation time.
 
 import type { EntityDef } from './entities';
+import { isLinkAttr } from './config';
 import { todayStr } from './frontmatter';
 
 export const DOC_TYPES: Record<string, string> = {
@@ -11,6 +13,7 @@ export const DOC_TYPES: Record<string, string> = {
   regulations: 'Regulation',
   'data-mappings': 'Data Mapping',
   changes: 'Change Record',
+  'work-items': 'Work Item',
   decisions: 'Decision',
   glossary: 'Glossary',
 };
@@ -25,5 +28,6 @@ export function newDocTemplate(path: string, entities?: EntityDef[], opts?: { id
   const name = opts?.title || path.split('/').pop()!.replace(/\.md$/, '');
   const idLine = opts?.id ? `id: ${opts.id}\n` : '';
   const today = todayStr();
-  return `---\n${idLine}type: ${type}\ntitle: ${name}\nstatus: draft\ncreated: ${today}\nupdated: ${today}\n---\n\n# ${name}\n`;
+  const links = (ent?.attributes || []).filter(isLinkAttr).map((k) => `${k}: []\n`).join('');
+  return `---\n${idLine}type: ${type}\ntitle: ${name}\nstatus: draft\n${links}created: ${today}\nupdated: ${today}\n---\n\n# ${name}\n`;
 }

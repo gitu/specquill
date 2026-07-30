@@ -337,8 +337,9 @@ func (tb *speccyToolbox) finishMarkdown(path, content string, isNew bool) (strin
 }
 
 // workspaceVocabulary summarizes the workspace's real value sets for the
-// write-tool descriptions: statuses and id patterns from .specquill/config.yml,
-// enum values from .specquill/schema.json, and the document family folders.
+// write-tool descriptions: statuses, id patterns and the property schema
+// from .specquill/config.yml (enum values fall back to the legacy
+// .specquill/schema.json, then defaults), and the document family folders.
 // The model is told the valid values instead of inventing them.
 func workspaceVocabulary(files map[string]string) string {
 	var b strings.Builder
@@ -351,25 +352,46 @@ func workspaceVocabulary(files map[string]string) string {
 		Entities map[string]struct {
 			Folder string `yaml:"folder"`
 		} `yaml:"entities"`
+		Properties struct {
+			Fields map[string]struct {
+				Values map[string]string `yaml:"values"`
+			} `yaml:"fields"`
+		} `yaml:"properties"`
 	}
 	_ = yaml.Unmarshal([]byte(files[".specquill/config.yml"]), &cfg)
-	if len(cfg.Statuses) > 0 {
-		b.WriteString(" Valid status values: " + strings.Join(cfg.Statuses, ", ") + ".")
+	if len(cfg.Statuses) == 0 {
+		// built-in default lifecycle (mirrors web/src/lib/config.ts)
+		cfg.Statuses = []string{"draft", "in_review", "approved", "deprecated"}
 	}
+	b.WriteString(" Valid status values: " + strings.Join(cfg.Statuses, ", ") + ".")
 
-	var schema struct {
-		Fields map[string]struct {
-			Values map[string]string `json:"values"`
-		} `json:"fields"`
+	// enum values: config properties: section, else legacy schema.json
+	enums := map[string]map[string]string{}
+	for name, f := range cfg.Properties.Fields {
+		if len(f.Values) > 0 {
+			enums[name] = f.Values
+		}
 	}
-	_ = json.Unmarshal([]byte(files[".specquill/schema.json"]), &schema)
-	fields := make([]string, 0, len(schema.Fields))
-	for name, f := range schema.Fields {
-		if name == "status" || len(f.Values) == 0 {
+	if len(enums) == 0 {
+		var schema struct {
+			Fields map[string]struct {
+				Values map[string]string `json:"values"`
+			} `json:"fields"`
+		}
+		_ = json.Unmarshal([]byte(files[".specquill/schema.json"]), &schema)
+		for name, f := range schema.Fields {
+			if len(f.Values) > 0 {
+				enums[name] = f.Values
+			}
+		}
+	}
+	fields := make([]string, 0, len(enums))
+	for name, values := range enums {
+		if name == "status" {
 			continue // statuses come from config.yml
 		}
-		vals := make([]string, 0, len(f.Values))
-		for v := range f.Values {
+		vals := make([]string, 0, len(values))
+		for v := range values {
 			vals = append(vals, v)
 		}
 		sort.Strings(vals)

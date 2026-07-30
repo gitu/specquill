@@ -26,8 +26,9 @@ type SpecType struct {
 	Skill   string // AI authoring skill for .specquill/skills/
 }
 
-// DefaultTypes is what `init` scaffolds without an explicit --types.
-var DefaultTypes = []string{"requirements", "specs", "changes"}
+// DefaultTypes is what `init` scaffolds without an explicit --types — the
+// WHY (changes) / WHAT (requirements) / HOW (specs) / WHEN (work-items) core.
+var DefaultTypes = []string{"requirements", "specs", "changes", "work-items"}
 
 // AllTypes lists every onboardable family (requirements is always included).
 func AllTypes() []string {
@@ -58,10 +59,11 @@ func Init(dir, project string, chosen []string) error {
 		picked[k] = t
 	}
 
+	pid := strings.ToLower(strings.ReplaceAll(project, " ", "-"))
 	files := map[string]string{
 		"README.md":                    workspaceReadme(project, picked),
 		"index.md":                     "---\nokf_version: \"" + okf.Version + "\"\n---\n\n# Index\n",
-		".specquill/schema.json":         schemaJSON,
+		".specquill/config.yml":          configStarter(pid),
 		".specquill/skills/authoring.md": authoringSkill,
 		".specquill/instructions.md":     instructionsStarter,
 	}
@@ -131,6 +133,8 @@ func starterName(t SpecType) string {
 		return "REQ-001.md"
 	case "decisions":
 		return "ADR-001.md"
+	case "work-items":
+		return "WI-001.md"
 	default:
 		return "example.md"
 	}
@@ -149,8 +153,8 @@ func workspaceReadme(project string, picked map[string]SpecType) string {
 		t := picked[k]
 		fmt.Fprintf(&b, "- `%s/` — %s\n", t.Dir, t.Title)
 	}
-	b.WriteString("- `.specquill/` — property schema and AI authoring skills (the speccy follows these)\n")
-	b.WriteString("\nDocuments carry typed frontmatter links (`drivers`, `implements`, `maps_to`, `verifies`) that build the traceability graph.\n")
+	b.WriteString("- `.specquill/` — workspace config (model + property schema) and AI authoring skills (the speccy follows these)\n")
+	b.WriteString("\nDocuments carry typed frontmatter links (`drivers`, `implements`, `satisfies`, `delivers`, `maps_to`, `verifies`) that build the traceability graph.\n")
 	return b.String()
 }
 
@@ -181,10 +185,11 @@ var families = map[string]string{
 	"regulation": "regulations",
 	"data-mapping": "data-mappings", "mapping": "data-mappings",
 	"change": "changes", "decision": "decisions", "adr": "decisions",
+	"work-item": "work-items", "wi": "work-items",
 	"glossary": "glossary",
 }
 
-var idPattern = regexp.MustCompile(`(REQ|ADR)-(\d+)`)
+var idPattern = regexp.MustCompile(`(REQ|ADR|WI)-(\d+)`)
 
 // Add creates one new document of the given family inside the workspace at
 // dir and returns its path. Numbered families (requirements → REQ-NNN,
@@ -212,10 +217,12 @@ func Add(dir, family, name string) (string, error) {
 
 	var rel, content string
 	switch fam {
-	case "requirements", "decisions":
+	case "requirements", "decisions", "work-items":
 		prefix := "REQ"
 		if fam == "decisions" {
 			prefix = "ADR"
+		} else if fam == "work-items" {
+			prefix = "WI"
 		}
 		next := 1
 		entries, _ := os.ReadDir(sub)
@@ -232,6 +239,7 @@ func Add(dir, family, name string) (string, error) {
 		if name != "" {
 			content = strings.ReplaceAll(content, "Example requirement", name)
 			content = strings.ReplaceAll(content, "Example decision", name)
+			content = strings.ReplaceAll(content, "Example work item", name)
 		}
 	default:
 		if name == "" {

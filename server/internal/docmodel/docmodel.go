@@ -11,11 +11,37 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"specquill/server/internal/okf"
 )
 
-// LinkFields are the typed frontmatter link lists that build traceability.
-var LinkFields = []string{"implements", "satisfies", "maps_to", "verifies", "drives"}
+// LinkFields are the DEFAULT typed frontmatter link lists that build
+// traceability — the built-in WHY/WHAT/HOW/WHEN model. A workspace that
+// declares its own link_types in .specquill/config.yml replaces them
+// (linkFieldsFor), so the CLI follows a custom model without flags.
+var LinkFields = []string{"implements", "satisfies", "delivers", "maps_to", "verifies", "drives"}
+
+// linkFieldsFor returns the typed link fields for the workspace at root: the
+// keys of the config's link_types section when present, else LinkFields.
+func linkFieldsFor(root string) []string {
+	b, err := os.ReadFile(filepath.Join(root, ".specquill", "config.yml"))
+	if err != nil {
+		return LinkFields
+	}
+	var cfg struct {
+		LinkTypes map[string]any `yaml:"link_types"`
+	}
+	if yaml.Unmarshal(b, &cfg) != nil || len(cfg.LinkTypes) == 0 {
+		return LinkFields
+	}
+	fields := make([]string, 0, len(cfg.LinkTypes))
+	for k := range cfg.LinkTypes {
+		fields = append(fields, k)
+	}
+	sort.Strings(fields)
+	return fields
+}
 
 type Doc struct {
 	Path        string              `json:"path"`
@@ -76,6 +102,7 @@ func list(fm, key string) []string {
 // Scan walks root and parses every concept file (reserved OKF files and
 // hidden directories are skipped).
 func Scan(root string) ([]Doc, error) {
+	linkFields := linkFieldsFor(root)
 	var docs []Doc
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -96,14 +123,14 @@ func Scan(root string) ([]Doc, error) {
 		if err != nil {
 			return err
 		}
-		docs = append(docs, parse(rel, string(b)))
+		docs = append(docs, parse(rel, string(b), linkFields))
 		return nil
 	})
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
 	return docs, err
 }
 
-func parse(rel, content string) Doc {
+func parse(rel, content string, linkFields []string) Doc {
 	doc := Doc{Path: rel, Title: strings.TrimSuffix(filepath.Base(rel), ".md"), Links: map[string][]string{}}
 	fm, body := "", content
 	if m := fmRe.FindStringSubmatch(content); m != nil {
@@ -116,7 +143,7 @@ func parse(rel, content string) Doc {
 	doc.ID = scalar(fm, "id")
 	doc.Status = scalar(fm, "status")
 	doc.Description = scalar(fm, "description")
-	for _, f := range LinkFields {
+	for _, f := range linkFields {
 		if vs := list(fm, f); len(vs) > 0 {
 			doc.Links[f] = vs
 		}
