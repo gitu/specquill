@@ -61,15 +61,22 @@ func (s *Server) isConfiguredAdmin(email string) bool {
 // dynamic projects (REQ-025 — per-user rows, per-user clones), else a source
 // name browsed as a read-only pseudo-project (config-split plan, D3 — the
 // URL segment is stable across both).
-func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
+func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (proj *project.Project, ok bool) {
 	id := r.PathValue("repo")
 	mgr := s.gitm(r)
 	if s.patMode() {
 		defer func() {
 			// last-use stamp for the reclamation janitor (REQ-025.6): any
-			// authenticated request that touches the repository counts
+			// authenticated request that touches the repository counts.
+			// Only on a RESOLVED repo, and keyed by the repo key — an
+			// unresolved id would let arbitrary URLs grow the table, and a
+			// project id is not the clone's directory name when the two
+			// differ (the janitor would then never see the stamp).
+			if !ok || proj == nil {
+				return
+			}
 			if u := auth.UserFrom(r.Context()); u != nil {
-				s.store.TouchClone(scopeName(u.ID), id)
+				s.store.TouchClone(u.ID, scopeName(u.ID), proj.Repo.Key())
 			}
 		}()
 	}

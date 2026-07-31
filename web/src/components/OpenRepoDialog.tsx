@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '../api/client';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useToasts } from './Toast';
@@ -64,9 +65,10 @@ export function OpenRepoDialog({ onClose }: { onClose: () => void }) {
       await qc.invalidateQueries({ queryKey: ['checkouts'] });
       await qc.invalidateQueries({ queryKey: ['repos'] });
     } catch (e) {
-      const msg = String((e as Error).message || e);
-      if (msg.includes('unsynced')) setConfirmDiscard(id);
-      else toasts.push({ text: msg, kind: 'error' });
+      // 409 IS the unsynced guard (REQ-025.5) — key the confirmation off the
+      // status, never off the wording of the message
+      if (e instanceof ApiError && e.status === 409) setConfirmDiscard(id);
+      else toasts.push({ text: String((e as Error).message || e), kind: 'error' });
     }
   };
 

@@ -482,6 +482,66 @@ func TestDynamicJanitorRetentionCap(t *testing.T) {
 	}
 }
 
+// Two users who open the SAME repository hold the same project id (it derives
+// from the forge repo), so a last-use stamp must be scoped per user — else one
+// user's activity keeps the other's idle clone alive indefinitely.
+func TestDynamicLastUseIsPerUser(t *testing.T) {
+	env := dynamicServer(t, dynManifest)
+	sessA, respA := patLogin(t, env.h, "tok-a")
+	sessB, respB := patLogin(t, env.h, "tok-b")
+	uidA, uidB := int64(respA["id"].(float64)), int64(respB["id"].(float64))
+	if uidA == uidB {
+		t.Fatal("fixture: the two tokens must be different users")
+	}
+	for _, s := range []*http.Cookie{sessA, sessB} {
+		if rec := patDo(env.h, "POST", "/api/dynamic/open", s, `{"spec":"acme/dyn#specs"}`); rec.Code != http.StatusOK {
+			t.Fatalf("open: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	// backdate BOTH users' rows, then let only A touch the project
+	old := time.Now().Add(-99 * time.Hour).Unix()
+	if _, err := env.st.DB().Exec("UPDATE user_projects SET last_used = ?", old); err != nil {
+		t.Fatal(err)
+	}
+	if rec := patDo(env.h, "GET", "/api/repos/dyn.777.specs/tree", sessA, ""); rec.Code != http.StatusOK {
+		t.Fatalf("A browse: %d %s", rec.Code, rec.Body.String())
+	}
+	upA, err := env.st.UserProject(uidA, "dyn.777.specs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upB, err := env.st.UserProject(uidB, "dyn.777.specs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upA.LastUsed == old {
+		t.Error("user A's own activity did not refresh their stamp")
+	}
+	if upB.LastUsed != old {
+		t.Errorf("user A's activity refreshed user B's stamp (%d != %d)", upB.LastUsed, old)
+	}
+}
+
+// An unresolved repo id must not create a clone_uses row: the id comes
+// straight from the URL, so arbitrary requests would otherwise grow the table
+// without bound.
+func TestDynamicUnknownRepoLeavesNoStamp(t *testing.T) {
+	env := dynamicServer(t, dynManifest)
+	session, _ := patLogin(t, env.h, "tok-a")
+	for _, id := range []string{"dyn.999.nope", "not-a-repo"} {
+		if rec := patDo(env.h, "GET", "/api/repos/"+id+"/tree", session, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: want 404, got %d %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	var n int
+	if err := env.st.DB().QueryRow("SELECT count(*) FROM clone_uses WHERE repo_id NOT IN ('w','dyn.777.specs')").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("unresolved ids left %d clone_uses row(s)", n)
+	}
+}
+
 func TestDynamicSearchTogglesAndBudget(t *testing.T) {
 	env := dynamicServer(t, dynManifest)
 	session, _ := patLogin(t, env.h, "tok-a")

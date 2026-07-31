@@ -79,12 +79,18 @@ func (s *Store) DeleteUserProject(userID int64, projectID string) error {
 
 // TouchClone stamps last-use for one clone in one user scope. Called on
 // request resolution; the janitor treats a missing stamp as "never used".
-func (s *Store) TouchClone(scope, repoID string) {
+//
+// userID scopes the user_projects refresh: project ids are only unique PER
+// USER (the id derives from the forge repository, so two users who open the
+// same repository hold the same id), and an unscoped update would bump
+// another user's clock — keeping their idle clone alive on your activity.
+func (s *Store) TouchClone(userID int64, scope, repoID string) {
 	now := time.Now().Unix()
 	_, _ = s.exec(`INSERT INTO clone_uses (scope, repo_id, last_used) VALUES (?, ?, ?)
 		ON CONFLICT(scope, repo_id) DO UPDATE SET last_used = excluded.last_used`,
 		scope, repoID, now)
-	_, _ = s.exec("UPDATE user_projects SET last_used = ? WHERE project_id = ?", now, repoID)
+	_, _ = s.exec("UPDATE user_projects SET last_used = ? WHERE user_id = ? AND project_id = ?",
+		now, userID, repoID)
 }
 
 // CloneUse returns the last-use stamp (unix seconds; 0 = no stamp).

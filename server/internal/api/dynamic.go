@@ -289,7 +289,7 @@ func (s *Server) dynamicOpen(w http.ResponseWriter, r *http.Request) {
 		jsonError2(w, http.StatusBadGateway, "clone failed: "+err.Error(), "clone_failed")
 		return
 	}
-	s.store.TouchClone(scopeName(u.ID), up.ProjectID)
+	s.store.TouchClone(u.ID, scopeName(u.ID), up.ProjectID)
 	s.publish("repos-changed", up.ProjectID, "")
 	jsonOK(w, map[string]any{
 		"id": up.ProjectID, "name": name, "spelling": spelling, "root": contentRoot,
@@ -460,7 +460,9 @@ func (s *Server) dynamicReclaim(w http.ResponseWriter, r *http.Request) {
 // cloneJanitor drives automatic reclamation (REQ-025.6): clones untouched
 // for the idle period go; unsynced ones only past the retention cap.
 func (s *Server) cloneJanitor() {
-	for range time.Tick(time.Hour) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for range t.C {
 		s.reclaimIdleClones()
 	}
 }
