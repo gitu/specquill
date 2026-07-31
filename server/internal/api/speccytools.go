@@ -117,10 +117,10 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 			Parameters:  obj(map[string]any{"path": str("workspace-relative path of the file to delete")}, "path"),
 		},
 		ai.ToolSpec{
-			Name: "draw_sketch",
-			Description: "Create or replace an excalidraw drawing (path must end .excalidraw — scene JSON, rendered inline and editable in the sketch editor). Scene: {\"elements\": [...]}. Element subset that renders everywhere: {type: rectangle|ellipse|diamond, x, y, width, height, strokeColor?, backgroundColor?}, {type: text, x, y, text, fontSize?}, {type: arrow, x, y, points: [[0,0],[dx,dy]]}. Coordinates in px; keep boxes around 170x60 with 40px gaps, label boxes with separate text elements placed inside them, connect with arrows between box edges. To read an existing *.excalidraw.png sketch use read_file (returns the embedded scene); to change one, draw a .excalidraw next to it and tell the user.",
+			Name:        "draw_sketch",
+			Description: "Create or replace an excalidraw sketch (path must end .excalidraw.png — the server renders the scene into a PNG with the scene embedded: natively viewable anywhere, editable in the sketch editor). Scene: {\"elements\": [...]}. Element subset that renders everywhere: {type: rectangle|ellipse|diamond, x, y, width, height, label?, strokeColor?, backgroundColor?}, {type: arrow, x, y, points: [[0,0],[dx,dy]], label?}, {type: text, x, y, text, fontSize?}. ALWAYS caption boxes and arrows via their own label property (the server centers, sizes and wraps it) — standalone text elements are only for free-floating notes. Coordinates in px; keep boxes around 170x60 with 40px gaps, connect with arrows between box edges. To change an existing sketch: read_file it (returns the embedded scene), modify the scene, and draw_sketch the SAME path.",
 			Parameters: obj(map[string]any{
-				"path":  str("workspace-relative path ending in .excalidraw, e.g. diagrams/flow.excalidraw"),
+				"path":  str("workspace-relative path ending in .excalidraw.png, e.g. diagrams/flow.excalidraw.png"),
 				"scene": str("scene JSON: an object with an elements array (appState/files optional), or a bare elements array"),
 			}, "path", "scene"),
 		},
@@ -326,7 +326,7 @@ func (tb *speccyToolbox) editFile(path, search, replace string) (string, error) 
 		return "", fmt.Errorf("reference sources are read-only")
 	}
 	if strings.HasSuffix(path, ".excalidraw.png") {
-		return "", fmt.Errorf("%s is a binary sketch — read its scene with read_file and draw a .excalidraw with draw_sketch instead", path)
+		return "", fmt.Errorf("%s is a binary sketch — read its scene with read_file, modify it, and draw_sketch the same path", path)
 	}
 	if search == "" || search == replace {
 		return "", fmt.Errorf("empty or no-op edit")
@@ -454,10 +454,12 @@ func (tb *speccyToolbox) deleteFile(path string) (string, error) {
 	return "deleted " + path + " (uncommitted draft)", nil
 }
 
-// drawSketch creates or replaces a legacy-format .excalidraw drawing from
-// scene JSON — text, so it diffs/renders/edits everywhere. Accepts a full
-// scene object or a bare elements array; the saved document always carries
-// the standard envelope.
+// drawSketch creates or replaces a sketch from scene JSON. The preferred
+// format is *.excalidraw.png — the server renders the scene to pixels and
+// embeds the scene chunk, so the file views natively anywhere and stays
+// editable in the sketch editor. Legacy *.excalidraw scene JSON is still
+// accepted. Either way the scene is normalized first (stable ids, measured
+// text boxes, `label` → centered bound text) so drawings open cleanly.
 func (tb *speccyToolbox) drawSketch(path, scene string) (string, error) {
 	if !tb.writable {
 		return "", fmt.Errorf("editing is disabled for this conversation")
@@ -465,52 +467,42 @@ func (tb *speccyToolbox) drawSketch(path, scene string) (string, error) {
 	if strings.HasPrefix(path, "~") {
 		return "", fmt.Errorf("reference sources are read-only")
 	}
-	if !strings.HasSuffix(path, ".excalidraw") {
-		return "", fmt.Errorf("draw_sketch writes .excalidraw scene files — got %s", path)
+	asPNG := strings.HasSuffix(path, ".excalidraw.png")
+	if !asPNG && !strings.HasSuffix(path, ".excalidraw") {
+		return "", fmt.Errorf("draw_sketch writes .excalidraw.png sketches (or legacy .excalidraw scene JSON) — got %s", path)
 	}
-	scene = strings.TrimSpace(scene)
-	var elements []any
-	appState := map[string]any{}
-	files := map[string]any{}
-	if strings.HasPrefix(scene, "[") {
-		if err := json.Unmarshal([]byte(scene), &elements); err != nil {
-			return "", fmt.Errorf("scene is not valid JSON: %v", err)
-		}
-	} else {
-		var doc struct {
-			Elements []any          `json:"elements"`
-			AppState map[string]any `json:"appState"`
-			Files    map[string]any `json:"files"`
-		}
-		if err := json.Unmarshal([]byte(scene), &doc); err != nil {
-			return "", fmt.Errorf("scene is not valid JSON: %v", err)
-		}
-		if doc.Elements == nil {
-			return "", fmt.Errorf("scene needs an elements array")
-		}
-		elements = doc.Elements
-		if doc.AppState != nil {
-			appState = doc.AppState
-		}
-		if doc.Files != nil {
-			files = doc.Files
-		}
-	}
-	out, err := json.MarshalIndent(map[string]any{
-		"type": "excalidraw", "version": 2, "source": "specquill",
-		"elements": elements, "appState": appState, "files": files,
-	}, "", "  ")
+	sc, err := sketch.ParseScene(scene)
 	if err != nil {
+		return "", err
+	}
+	if err := sc.Normalize(); err != nil {
 		return "", err
 	}
 	// create-or-replace: the current sha (if any) is the staleness guard
 	_, sha, _ := tb.repo.File(tb.branch, path)
-	if _, err := tb.repo.SaveFile(tb.branch, path, string(out)+"\n", sha); err != nil {
-		return "", err
+	if asPNG {
+		data, err := sc.ExportPNG()
+		if err != nil {
+			return "", err
+		}
+		if _, err := tb.repo.SaveFile(tb.branch, path, string(data), sha); err != nil {
+			return "", err
+		}
+		// discoverable in list_files, but binary stays out of the text snapshot
+		tb.files[path] = ""
+	} else {
+		doc, err := sc.DocJSON()
+		if err != nil {
+			return "", err
+		}
+		if _, err := tb.repo.SaveFile(tb.branch, path, doc+"\n", sha); err != nil {
+			return "", err
+		}
+		tb.files[path] = doc
 	}
-	tb.files[path] = string(out)
 	tb.publish()
-	return fmt.Sprintf("drew %s (%d element%s, uncommitted draft)", path, len(elements), plural(len(elements))), nil
+	n := len(sc.Elements)
+	return fmt.Sprintf("drew %s (%d element%s, uncommitted draft)", path, n, plural(n)), nil
 }
 
 func base(p string) string { return p[strings.LastIndex(p, "/")+1:] }

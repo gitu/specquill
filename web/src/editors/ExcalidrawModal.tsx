@@ -5,7 +5,7 @@ import '@excalidraw/excalidraw/index.css';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useDeleteFile, useFileQuery, useSaveFile } from '../api/hooks';
-import { putRaw, rawUrl } from '../api/client';
+import { ApiError, putRaw, rawUrl } from '../api/client';
 import { IconPen } from '../components/icons';
 
 // Excalidraw is heavy — load it only when a sketch is actually opened.
@@ -124,7 +124,21 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
           files: api.getFiles() as never,
           mimeType: 'image/png',
         });
-        const res = await putRaw(app.repoId!, app.branch, path, blob, pngScene?.sha || '');
+        let res: { sha: string };
+        try {
+          res = await putRaw(app.repoId!, app.branch, path, blob, pngScene?.sha || '');
+        } catch (e) {
+          // stale base: the background pixel upgrade (or a speccy redraw)
+          // saved under the open editor. The only writers on a workspace
+          // branch are this user's own flows, and the canvas in front of
+          // them is the intended result — rebase onto the current sha once
+          if (!(e instanceof ApiError) || e.status !== 409) throw e;
+          const cur = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-SpecQuill': '1' } });
+          if (!cur.ok) throw e;
+          const sha = (cur.headers.get('ETag') || '').replace(/"/g, '');
+          console.warn('sketch save rebased onto concurrent update:', path);
+          res = await putRaw(app.repoId!, app.branch, path, blob, sha);
+        }
         setPngScene((p) => (p ? { ...p, sha: res.sha } : p));
       } else {
         const scene = {

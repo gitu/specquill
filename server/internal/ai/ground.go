@@ -74,9 +74,11 @@ You can read and edit workspace files with your tools. When editing:
   documents automatically — use it instead of delete+create. delete_file does
   NOT touch inbound references: search for them first and confirm via
   ask_user when other documents still reference the file.
-- Diagrams: draw_sketch creates/replaces .excalidraw drawings from scene
-  JSON (rendered inline, editable in the sketch editor); read an existing
-  *.excalidraw.png sketch with read_file to get its embedded scene.
+- Diagrams: draw_sketch creates/replaces .excalidraw.png sketches from scene
+  JSON (the server renders the pixels and embeds the scene — natively viewable,
+  editable in the sketch editor). Caption boxes/arrows with their label
+  property instead of placing text elements. To change an existing sketch,
+  read_file it (returns the embedded scene) and draw_sketch the same path.
 - Requirement statements are atomic, testable blockquotes using RFC-2119
   keywords (MUST/SHALL/SHOULD/MAY); no vague language without a measurable bound.
 - New documents follow the family conventions given in the create_file tool

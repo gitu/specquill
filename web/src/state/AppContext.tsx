@@ -48,6 +48,10 @@ interface AppState {
   setDefaultView: (v: ViewName | null) => void; // null = follow workspace config
   speccyOpen: boolean;
   toggleSpeccy: () => void;
+  /** bumps when sketch PNG bytes change (editor save, speccy draw/upgrade) —
+   *  embedded <img> tags append it to bust the browser cache */
+  sketchGen: number;
+  bumpSketchGen: () => void;
   aiSuggestions: boolean;
   toggleAI: () => void;
   model?: WorkspaceModel;
@@ -144,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => localStorage.getItem('specquill-speccy') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
   );
   const [aiSuggestions, setAI] = useState(true);
+  const [sketchGen, setSketchGen] = useState(0);
   const [userDefaultView, setUserDefaultView] = useState<ViewName | null>(() => {
     const v = localStorage.getItem('specquill-default-view');
     return VIEWS.includes(v as ViewName) ? (v as ViewName) : null;
@@ -283,6 +288,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       speccyOpen,
       toggleSpeccy: () => setSpeccyOpen((v) => !v),
+      sketchGen,
+      bumpSketchGen: () => setSketchGen((g) => g + 1),
       aiSuggestions,
       toggleAI: () => setAI((v) => !v),
       model: files ? buildModel(files, wcfg) : undefined,
@@ -294,7 +301,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [writable?.id, repos.data, effBranch, theme, themeMode, speccyOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
+  }, [writable?.id, repos.data, effBranch, theme, themeMode, speccyOpen, sketchGen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

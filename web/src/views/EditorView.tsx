@@ -377,8 +377,9 @@ export function EditorView() {
   const [shareOpen, setShareOpen] = useState(false);
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null);
   const editorApi = useRef<MilkdownApi | null>(null);
-  // bumped when a sketch is saved so embedded previews re-render
-  const [sketchGen, setSketchGen] = useState(0);
+  // bumped when a sketch is saved (editor OR speccy) so embedded previews
+  // re-render — app-level, because the speccy panel saves sketches too
+  const { sketchGen, bumpSketchGen } = app;
 
   // durable draft: autosaves to the branch worktree; on protected branches the
   // buffer is carried until the workspace switch enables persistence
@@ -981,7 +982,7 @@ export function EditorView() {
         <ExcalidrawModal
           path={excalidrawPath}
           onClose={() => setExcalidrawPath(null)}
-          onSaved={() => setSketchGen((g) => g + 1)}
+          onSaved={bumpSketchGen}
         />
       )}
     </div>
