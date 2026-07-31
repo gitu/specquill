@@ -36,3 +36,17 @@ func (f *Fleet) ForUser(userID int64) *Manager {
 	}
 	return mgr
 }
+
+// Invalidate tells a live manager (if any) that a clone was removed on disk,
+// so its next access re-clones instead of trusting the cached ensure state.
+func (f *Fleet) Invalidate(scope, repoID string) {
+	f.mu.Lock()
+	mgr := f.m[scope]
+	f.mu.Unlock()
+	if mgr == nil {
+		return
+	}
+	if r, ok := mgr.Repo(repoID); ok {
+		r.Invalidate()
+	}
+}

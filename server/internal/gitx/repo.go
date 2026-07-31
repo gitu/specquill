@@ -222,6 +222,15 @@ func (r *Repo) EnsureCloned(token string) error {
 	return nil
 }
 
+// Invalidate forgets the cached "clone is present" state so the next access
+// re-verifies on disk — the reclamation janitor (REQ-025.6) removes clones
+// out from under live managers.
+func (r *Repo) Invalidate() {
+	r.ensureMu.Lock()
+	r.ensured = false
+	r.ensureMu.Unlock()
+}
+
 func (r *Repo) ensure(token string) error {
 	if _, err := os.Stat(filepath.Join(r.gitDir, "HEAD")); err == nil {
 		_, _ = run(r.gitDir, nil, "worktree", "prune")
@@ -242,7 +251,22 @@ func (r *Repo) ensure(token string) error {
 		return err
 	}
 	args, env := r.credentialArgs(token)
-	if _, err := run("", env, append(args, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir)...); err != nil {
+	clone := func(shallow bool) error {
+		cloneArgs := append(append([]string{}, args...), "clone", "--bare")
+		if shallow {
+			cloneArgs = append(cloneArgs, "--depth", "1")
+		}
+		_, err := run("", env, append(cloneArgs, "--", r.Cfg.Remote, r.gitDir)...)
+		return err
+	}
+	err := clone(r.Cfg.Shallow)
+	if err != nil && r.Cfg.Shallow {
+		// some transports (git's dumb HTTP) refuse shallow — a full clone
+		// beats no clone; REQ-025.8's depth saving is best-effort per remote
+		_ = os.RemoveAll(r.gitDir)
+		err = clone(false)
+	}
+	if err != nil {
 		return err
 	}
 	// Writable repos keep local heads authoritative; remote state is tracked

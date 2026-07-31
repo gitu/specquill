@@ -130,7 +130,20 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *projec
 		return
 	}
 	s.publish("commit", repo.Key(), branch)
-	jsonOK(w, map[string]string{"commitSha": sha})
+	out := map[string]any{"commitSha": sha}
+	// forge-PAT mode: push the workspace branch as the commit happens
+	// (REQ-025.10) — committed work never exists only in a server-side
+	// clone. Best-effort: a failed push never undoes the commit, propose
+	// retries it anyway.
+	if s.patMode() {
+		if err := repo.Push(branch, s.tok(r)); err != nil {
+			out["pushed"] = false
+			out["pushError"] = err.Error()
+		} else {
+			out["pushed"] = true
+		}
+	}
+	jsonOK(w, out)
 }
 
 // postDiscard rejects pending (uncommitted) worktree changes — the undo

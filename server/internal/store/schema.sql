@@ -104,6 +104,34 @@ CREATE TABLE IF NOT EXISTS share_links (
   created_at BIGINT NOT NULL
 );
 
+-- token-scoped dynamic projects (REQ-025): PER-USER rows — one user's opened
+-- repositories are their own state, never another's. project_id is the
+-- derived stable id (dyn.<forge repo id>[.<name>]); role is the user's forge
+-- permission on the repository, refreshed at every open (REQ-025.3).
+CREATE TABLE IF NOT EXISTS user_projects (
+  user_id        BIGINT NOT NULL REFERENCES users(id),
+  project_id     TEXT NOT NULL,
+  forge_repo_id  TEXT NOT NULL,
+  name           TEXT NOT NULL DEFAULT '',      -- manifest subproject name ('' = repo root)
+  spelling       TEXT NOT NULL,                 -- human form owner/repo[#name]
+  remote         TEXT NOT NULL,
+  content_root   TEXT NOT NULL DEFAULT '',
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  role           TEXT NOT NULL DEFAULT 'viewer',
+  created_at     BIGINT NOT NULL,
+  last_used      BIGINT NOT NULL,
+  PRIMARY KEY (user_id, project_id)
+);
+
+-- last-use stamps per user clone (scope = 'u<id>'), fed by request
+-- resolution and read by the reclamation janitor (REQ-025.6).
+CREATE TABLE IF NOT EXISTS clone_uses (
+  scope     TEXT NOT NULL,
+  repo_id   TEXT NOT NULL,
+  last_used BIGINT NOT NULL,
+  PRIMARY KEY (scope, repo_id)
+);
+
 -- per-repo user grants (REQ-020): explicit access layered on the deployment
 -- role; effective role = max(deployment role, granted).
 CREATE TABLE IF NOT EXISTS repo_grants (

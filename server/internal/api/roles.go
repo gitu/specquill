@@ -9,6 +9,7 @@ package api
 
 import (
 	"context"
+	"strings"
 
 	"specquill/server/internal/authz"
 	"specquill/server/internal/store"
@@ -34,6 +35,16 @@ func repoRoleFrom(ctx context.Context) authz.Role {
 // authz.None means no access. Grant-only users are not enrolled, so their
 // deployment role is None and the grant alone decides.
 func (s *Server) effectiveRepoRole(u *store.User, repoID string) authz.Role {
+	// dynamic projects (REQ-025.3): the user's forge permission on THAT
+	// repository governs, and it alone — the anchor-derived deployment role
+	// gates login but neither grants nor caps capability here
+	if s.dynamicEnabled() && strings.HasPrefix(repoID, dynPrefix) {
+		up, err := s.store.UserProject(u.ID, repoID)
+		if err != nil {
+			return authz.None
+		}
+		return authz.Parse(up.Role)
+	}
 	deploy, err := s.deployRole(u)
 	if err != nil {
 		deploy = authz.None
