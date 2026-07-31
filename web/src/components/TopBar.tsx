@@ -5,7 +5,9 @@ import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useBranches, useCreateBranch, useMe, useStatus, useSync } from '../api/hooks';
 import { api, clearStoredPat } from '../api/client';
+import { useDynamicInfo } from '../api/dynamic';
 import { MergeDialog } from './MergeDialog';
+import { OpenRepoDialog } from './OpenRepoDialog';
 import { ProposeDialog } from './ProposeDialog';
 import { IconBranch, IconChevD, IconLock, IconMenu, IconMerge, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
@@ -20,6 +22,8 @@ export function TopBar() {
   const [open, setOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(false);
+  const [openRepo, setOpenRepo] = useState(false);
+  const dynamic = useDynamicInfo();
   const narrow = useNarrow();
   const pathname = useAppPath();
   const onTreeRoute = pathname.startsWith('/editor') || pathname.startsWith('/diff');
@@ -53,19 +57,25 @@ export function TopBar() {
         {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
       </div>
 
-      {/* project switcher (hidden with a single project) */}
-      {app.projects.length > 1 && (
+      {/* project switcher (hidden with a single project — unless dynamic
+          projects can add more, REQ-025) */}
+      {(app.projects.length > 1 || dynamic.data?.enabled) && (
         <select
           value={app.repoId || ''}
-          onChange={(e) => app.switchProject(e.target.value)}
+          onChange={(e) => {
+            if (e.target.value === '__open__') setOpenRepo(true);
+            else app.switchProject(e.target.value);
+          }}
           title="Project"
           style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;cursor:pointer;max-width:170px")}
         >
           {app.projects.map((p) => (
             <option key={p.id} value={p.id}>{p.id}</option>
           ))}
+          {dynamic.data?.enabled && <option value="__open__">＋ Open repository…</option>}
         </select>
       )}
+      {openRepo && <OpenRepoDialog onClose={() => setOpenRepo(false)} />}
 
       {/* branch switcher */}
       <div style={sx('position:relative;flex:none')}>

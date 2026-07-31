@@ -20,6 +20,22 @@ from the code.
   (`internal/api/devproxy.go`, override via `SPECQUILL_VITE_ADDR`), so browse
   **:8643** — HMR works there, tailnet included; it falls back to the embedded
   build when vite is down. E2E still needs the embedded build (`make build`).
+- **Secondary forge-mode dev server: `make dev-forge`** — :8644,
+  `specquill.dev-forge.yml`: real `auth.forge` GitHub PAT login (`repo` scope)
+  against gitu/specquill, own store/clones under `data/runtime-forge/`. One
+  configured anchor project (`trading-specs` = `repo/`, REQ-024 login/role
+  gate) + **dynamic projects enabled** (`dynamic:` block, REQ-025): "＋ Open
+  repository…" in the project switcher opens any repo your PAT reaches whose
+  root `.specquill/config.yml` declares workspaces — e.g.
+  `gitu/specquill#specquill-docs` via the committed root manifest. Same
+  dialog = checkout overview + reclaim/close. The specquill repo itself is
+  the read-only reference `specquill-src` (workspace configs' `sources:`;
+  in-repo defs + manifest only go live once pushed to GitHub). Deliberately
+  runs WITHOUT `-dev` (auto-auth would bypass the PAT login it exists to
+  exercise) ⇒ no vite proxy, embedded SPA only — `make build` + restart to
+  see SPA changes. Propose pushes real `ws/<user>` branches and opens real
+  PRs on gitu/specquill; in forge mode every commit now auto-pushes its
+  branch (REQ-025.10).
 - **The SPA is embedded in the Go binary.** After `cd web && npm run build`
   you MUST `cd server && go build -o specquill ./cmd/specquill` and restart, or
   the browser silently serves the stale build.

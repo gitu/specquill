@@ -37,6 +37,10 @@ type RepoConfig struct {
 	// an importer (kind url|openapi|confluence), not cloned/fetched from a
 	// remote. ensure() inits it empty; the importer.Runner commits snapshots.
 	Mirror bool `yaml:"-"`
+	// Shallow clones with --depth 1 — read-only reference repos in forge-PAT
+	// mode (REQ-025.8): the default-branch tip is all browsing and grounding
+	// need, full history stays on the forge.
+	Shallow bool `yaml:"-"`
 	// Forge optionally reads merge-request review threads from the git host
 	// (read-only; see internal/forge). Copied from the owning project.
 	Forge forge.Config `yaml:"-"`
@@ -185,6 +189,7 @@ type Config struct {
 	Auth     AuthConfig      `yaml:"auth"`
 	Session  SessionConfig   `yaml:"session"`
 	AI       AIConfig        `yaml:"ai"`
+	Dynamic  DynamicConfig   `yaml:"dynamic"`
 }
 
 func Load(path string) (*Config, error) {
@@ -324,6 +329,7 @@ func (c *Config) Normalize() {
 			ID: src.Name, Mode: ReadOnly, DefaultBranch: src.DefaultBranch, Mirror: true,
 		})
 	}
+	c.Dynamic.normalize()
 }
 
 // forgeAPIBase derives the REST API base from a forge's web base URL.
@@ -465,6 +471,9 @@ func (c *Config) validate() error {
 	case "", "viewer", "editor", "maintainer", "admin", "none":
 	default:
 		return fmt.Errorf("auth.default_role must be viewer, editor, maintainer, admin or none (got %q)", c.Auth.DefaultRole)
+	}
+	if c.Dynamic.Enabled && !c.Auth.Forge.Enabled() {
+		return fmt.Errorf("dynamic.enabled requires forge-PAT auth (auth.forge) — dynamic projects are opened with each user's own token")
 	}
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")

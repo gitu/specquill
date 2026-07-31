@@ -25,12 +25,25 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		SyncedAt          string   `json:"syncedAt,omitempty"`
 		Role              string   `json:"role"`      // caller's effective role (viewer|editor|maintainer|admin)
 		MergeMode         string   `json:"mergeMode"` // local (in-app merge) | forge (push + MR/PR)
+		Spelling          string   `json:"spelling,omitempty"` // dynamic projects: owner/repo[#name]
 	}
 	u := auth.UserFrom(r.Context())
 	mgr := s.gitm(r)
 	// forge-PAT mode: sources come from the in-repo config — register them so
 	// they show up alongside the projects
 	s.registerUserSources(mgr, s.tok(r))
+	// …and the caller's dynamically opened projects (REQ-025), theirs alone
+	s.registerUserDynamic(mgr, u.ID)
+	dynRows := map[string]string{}
+	dynRoots := map[string]string{}
+	if s.dynamicEnabled() {
+		if ups, err := s.store.UserProjects(u.ID); err == nil {
+			for _, up := range ups {
+				dynRows[up.ProjectID] = up.Spelling
+				dynRoots[up.ProjectID] = up.ContentRoot
+			}
+		}
+	}
 	rootOf := map[string]string{}
 	if projects, err := s.store.Projects(); err == nil {
 		for _, p := range projects {
@@ -72,6 +85,10 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 			ContentRoot:       rootOf[repo.Cfg.ID],
 			DefaultBranch:     repo.Cfg.DefaultBranch,
 			ProtectedBranches: repo.Cfg.ProtectedBranches,
+		}
+		if spelling, ok := dynRows[repo.Cfg.ID]; ok {
+			info.Spelling = spelling
+			info.ContentRoot = dynRoots[repo.Cfg.ID]
 		}
 		if kind == "source" {
 			info.OKF = s.sourceIsOKF(mgr, repo.Cfg.ID)

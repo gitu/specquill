@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
@@ -56,12 +57,44 @@ func (s *Server) isConfiguredAdmin(email string) bool {
 	return false
 }
 
-// resolveProject resolves {repo}: a project id first, else a source name
-// browsed as a read-only pseudo-project (config-split plan, D3 — the URL
-// segment is stable across both).
-func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (*project.Project, bool) {
+// resolveProject resolves {repo}: a project id first, then the caller's own
+// dynamic projects (REQ-025 — per-user rows, per-user clones), else a source
+// name browsed as a read-only pseudo-project (config-split plan, D3 — the
+// URL segment is stable across both).
+func (s *Server) resolveProject(w http.ResponseWriter, r *http.Request) (proj *project.Project, ok bool) {
 	id := r.PathValue("repo")
 	mgr := s.gitm(r)
+	if s.patMode() {
+		defer func() {
+			// last-use stamp for the reclamation janitor (REQ-025.6): any
+			// authenticated request that touches the repository counts.
+			// Only on a RESOLVED repo, and keyed by the repo key — an
+			// unresolved id would let arbitrary URLs grow the table, and a
+			// project id is not the clone's directory name when the two
+			// differ (the janitor would then never see the stamp).
+			if !ok || proj == nil {
+				return
+			}
+			if u := auth.UserFrom(r.Context()); u != nil {
+				s.store.TouchClone(u.ID, scopeName(u.ID), proj.Repo.Key())
+			}
+		}()
+	}
+	if s.dynamicEnabled() && strings.HasPrefix(id, dynPrefix) {
+		u := auth.UserFrom(r.Context())
+		up, err := s.store.UserProject(u.ID, id)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "unknown repo")
+			return nil, false
+		}
+		repo := s.registerDynRepo(mgr, *up)
+		if !s.cloneReady(w, repo, s.tok(r)) {
+			return nil, false
+		}
+		// the user's forge permission on THIS repository governs, and it
+		// alone (REQ-025.3): viewer surfaces as a read-only project
+		return project.New(repo, id, up.ContentRoot, up.Role == "viewer"), true
+	}
 	if tp, err := s.store.Project(id); err == nil {
 		repo, ok := mgr.Repo(tp.RepoID)
 		if !ok && s.patMode() {

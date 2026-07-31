@@ -31,6 +31,9 @@ func (s *Server) authProviders(w http.ResponseWriter, r *http.Request) {
 			"tokenCreateUrl": s.cfg.TokenCreateLink(),
 			"scopes":         s.cfg.ForgeScopes(),
 		}
+		if s.dynamicEnabled() {
+			out["dynamic"] = map[string]any{"enabled": true, "search": s.cfg.Dynamic.Search}
+		}
 	}
 	jsonOK(w, out)
 }

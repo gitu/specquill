@@ -128,8 +128,11 @@ func (s *Server) registerSourceDef(mgr *gitx.Manager, sd project.SourceDef) {
 	if branch == "" {
 		branch = "main"
 	}
+	// Shallow: the default-branch tip is all browsing and grounding need
+	// (REQ-025.8); full history stays on the forge
 	mgr.RegisterRepo(config.RepoConfig{
 		ID: sd.Name, Mode: config.ReadOnly, Remote: sd.Remote, DefaultBranch: branch,
+		Shallow: true,
 	})
 }
 

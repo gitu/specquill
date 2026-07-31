@@ -40,8 +40,18 @@ properties:
     target_model: { label: "Target model", type: code }
     updated: { label: "Updated", type: date }
 
+# forge-PAT deployments have no server-side catalog — sources are DEFINED
+# here instead and cloned with each user's own token. Local/catalog
+# deployments ignore this block (their catalog is stage 1).
+sources:
+  - name: specquill-src
+    remote: https://github.com/gitu/specquill.git
+
 # references select granted sources by name (stage 3 of the authorization
-# chain); `grounding: true` adds them to the speccy context
+# chain); `grounding: true` adds them to the speccy context. `regulations`
+# resolves in catalog mode, `specquill-src` in forge-PAT mode — the other
+# one degrades to an Overview warning.
 references:
   - source: regulations
     grounding: true
+  - source: specquill-src

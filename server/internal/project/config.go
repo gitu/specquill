@@ -37,12 +37,26 @@ type SpeccyConfig struct {
 	Instructions string `yaml:"instructions"`
 }
 
+// ManifestEntry declares one workspace in a repository's ROOT
+// .specquill/config.yml — the REQ-025 manifest. Name is the stable identity
+// component (the `owner/repo#name` spelling); Root the workspace subfolder,
+// which need not exist yet (the declaration is the consent, the first
+// proposed change creates the folder).
+type ManifestEntry struct {
+	Name string `yaml:"name"`
+	Root string `yaml:"root"`
+}
+
 type Config struct {
 	Version    int          `yaml:"version"`
 	Project    string       `yaml:"project"`
 	References []Reference  `yaml:"references"`
 	Sources    []SourceDef  `yaml:"sources"` // forge-PAT mode source definitions
 	Speccy     SpeccyConfig `yaml:"speccy"`
+	// Projects, when present, makes this file a workspace MANIFEST: each
+	// entry is an openable subproject (REQ-025.1). Without it the repository
+	// root is the single workspace and this file is its workspace config.
+	Projects []ManifestEntry `yaml:"projects"`
 }
 
 // ParseConfig parses the in-repo config. Unknown keys (the v1 taxonomy/ui

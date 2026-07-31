@@ -64,6 +64,9 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 		s.fleet = gitx.NewFleet(cfg)
 		s.fleet.Notify = func(kind, repo, branch string) { s.publish(kind, repo, branch) }
 		go s.vaultJanitor()
+		if cfg.Dynamic.Enabled {
+			go s.cloneJanitor()
+		}
 	}
 	if opts.Dev && cfg.Auth.DevUser != nil {
 		u, err := opts.Store.UpsertUser("local", "dev", cfg.Auth.DevUser.Name, cfg.Auth.DevUser.Email)
@@ -121,6 +124,13 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))
 	apiMux.HandleFunc("GET /api/speccy/info", s.speccyInfo)
+	// token-scoped dynamic projects (REQ-025); /api/dynamic itself is served
+	// even when off so the SPA can probe the feature
+	apiMux.HandleFunc("GET /api/dynamic", s.dynamicInfo)
+	apiMux.HandleFunc("POST /api/dynamic/open", s.dynH(s.dynamicOpen))
+	apiMux.HandleFunc("GET /api/dynamic/search", s.dynH(s.dynamicSearch))
+	apiMux.HandleFunc("GET /api/dynamic/checkouts", s.dynH(s.dynamicCheckouts))
+	apiMux.HandleFunc("POST /api/dynamic/reclaim", s.dynH(s.dynamicReclaim))
 	// legacy aliases: resolve the deployment's sole project
 	apiMux.HandleFunc("POST /api/speccy/chat", s.speccyChatAlias)
 	apiMux.HandleFunc("POST /api/speccy/draft", s.speccyDraftAlias)
