@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, collectBacklinks, filterRefPaths, focusGraph } from './derive';
+import { backlinkLabel, buildChanges, buildDashboard, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
+import { workspaceConfig } from './config';
 
 describe('buildTree', () => {
   const files = {
@@ -17,6 +18,46 @@ describe('buildTree', () => {
     expect(by['requirements/REQ-001.md']).toBe(false);
     expect(by['requirements/index.md']).toBe(true);
     expect(by['requirements/log.md']).toBe(true);
+  });
+
+  it('nests subdirectories to any depth, files at their own level', () => {
+    const nested = {
+      'specs/a.md': '---\ntype: Specification\n---\n',
+      'specs/venues/v1.md': '---\ntype: Specification\n---\n',
+      'specs/venues/deep/v2.md': '---\ntype: Specification\n---\n',
+    };
+    const [specs] = buildTree(nested, undefined, {}, BUILTIN_ENTITIES);
+    expect(specs.path).toBe('specs');
+    expect(specs.files.map((f) => f.name)).toEqual(['a.md']);
+    expect(specs.dirs.map((d) => d.path)).toEqual(['specs/venues']);
+    expect(specs.dirs[0].files.map((f) => f.path)).toEqual(['specs/venues/v1.md']);
+    expect(specs.dirs[0].dirs[0].path).toBe('specs/venues/deep');
+    expect(specs.dirs[0].dirs[0].files[0].name).toBe('v2.md');
+  });
+
+  it('all-files mode reveals root files, dot-folders and binaries from the full listing', () => {
+    const snap = { 'specs/a.md': '---\ntype: Specification\n---\n' };
+    const extra = ['README.md', '.specquill/config.yml', 'diagrams/flow.excalidraw.png', 'specs/a.md'];
+    const docsOnly = buildTree(snap, undefined, {}, BUILTIN_ENTITIES);
+    expect(docsOnly.map((d) => d.name)).toEqual(['specs']);
+    const all = buildTree(snap, undefined, {}, BUILTIN_ENTITIES, undefined, { all: true, extraPaths: extra });
+    const names = all.map((d) => d.name);
+    expect(names).toContain('.specquill');
+    expect(names).toContain('diagrams');
+    expect(names).toContain('/');
+    expect(all.find((d) => d.name === '/')!.files.map((f) => f.path)).toEqual(['README.md']);
+    expect(all.find((d) => d.name === 'diagrams')!.files[0].path).toBe('diagrams/flow.excalidraw.png');
+  });
+
+  it('carries classified-family meta: icon/color/type/title per file, not per folder', () => {
+    const parked = { 'notes/req.md': '---\ntype: Requirement\nid: R1\ntitle: Parked req\n---\n' };
+    const model = buildModel(parked);
+    const [notes] = buildTree(parked, undefined, {}, BUILTIN_ENTITIES, model);
+    const f = notes.files[0];
+    expect(f.docType).toBe('Requirement');
+    expect(f.title).toBe('Parked req');
+    expect(f.icon).toBe('▤'); // the requirement family's icon, though it sits in notes/
+    expect(f.color).toBe('var(--prod)');
   });
 });
 
@@ -150,25 +191,263 @@ describe('docAnchorOptions', () => {
 describe('focusGraph', () => {
   const files = {
     'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
-    'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md#x\nimplements:\n  - specs/s1.md\n---\n',
-    'specs/s1.md': '---\nid: S1\ntitle: Spec One\n---\n',
-    'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\ndrivers:\n  - type: product\n    ref: products/p.md\n---\n',
+    'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - regulations/a.md#x\n---\n',
+    'specs/s1.md': '---\nid: S1\ntitle: Spec One\nimplements:\n  - requirements/R1.md\n---\n',
+    'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\ndrivers:\n  - products/p.md\n---\n',
   };
   const g = buildGraph(buildModel(files));
 
   it('keeps only the chain connected to the doc, up and down', () => {
     const f = focusGraph(g, 'requirements/R1.md');
     const ids = f.nodes.map((n) => n.id);
-    expect(ids).toContain('req:requirements/R1.md');
-    expect(ids).toContain('spec:specs/s1.md');
-    expect(ids).toContain('src:regulatory|regulations/a.md#x');
-    expect(ids).not.toContain('req:requirements/R2.md');
-    expect(f.stats).toEqual({ s: 1, r: 1, sp: 1, f: 0 });
+    expect(ids).toContain('doc:requirements/R1.md');
+    expect(ids).toContain('doc:specs/s1.md');
+    expect(ids).toContain('doc:regulations/a.md');
+    expect(ids).not.toContain('doc:requirements/R2.md');
+    const counts = Object.fromEntries(f.stats.map((s) => [s.key, s.count]));
+    expect(counts).toEqual({ why: 1, what: 1, how: 1 });
     expect(f.edges).toHaveLength(2);
+  });
+
+  it('columns follow the group axis in order', () => {
+    expect(g.cols).toEqual(['why', 'what', 'how']);
+    const col = (id: string) => g.nodes.find((n) => n.id === id)!.col;
+    expect(col('doc:regulations/a.md')).toBe(0);
+    expect(col('doc:requirements/R1.md')).toBe(1);
+    expect(col('doc:specs/s1.md')).toBe(2);
+  });
+
+  it('derives driver edge color from the referenced doc, upward links drawn left to right', () => {
+    // the drivers edge starts at the WHY doc (left) and ends at the WHAT doc
+    const e = g.edges.find((x) => x.a === 'doc:regulations/a.md' && x.b === 'doc:requirements/R1.md');
+    expect(e).toBeTruthy();
+    expect(e!.stroke).toBe('var(--reg)'); // regulation family → regulatory
+    // the implements edge held by the SPEC also draws what → how
+    expect(g.edges.some((x) => x.a === 'doc:requirements/R1.md' && x.b === 'doc:specs/s1.md')).toBe(true);
   });
 
   it('falls back to the full graph for docs no node points at', () => {
     expect(focusGraph(g, 'changes/nope.md')).toBe(g);
+  });
+});
+
+describe('buildDashboard', () => {
+  const files = {
+    'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - regulations/a.md\n---\n',
+    'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\n---\n',
+    'specs/s1.md': '---\nid: S1\ntitle: Spec One\nimplements:\n  - requirements/R1.md\n---\n',
+    'work-items/W1.md': '---\nid: WI-1\ntitle: Ship it\nstatus: backlog\ndelivers:\n  - specs/s1.md\n---\n',
+    'changes/c1.md': '---\nid: CHG-1\ntitle: A change\nsource: product\nstatus: triage\npublished: 2026-07-01\n---\n',
+  };
+  const d = buildDashboard(buildModel(files));
+
+  it('computes chain health with inbound coverage for the upper levels', () => {
+    const bars = Object.fromEntries(d.health.map((h) => [h.label, h.pct]));
+    expect(bars['Requirements → drivers']).toBe(50);   // R1 of R1+R2
+    expect(bars['Requirements ← specs']).toBe(50);     // R1 covered by s1's implements
+    expect(bars['Specs ← work items']).toBe(100);      // s1 covered by W1's delivers
+  });
+
+  it('derives KPI tiles and the driver breakdown from the config', () => {
+    const changes = d.tiles.find((t) => t.key === 'changes')!;
+    expect(changes.label).toBe('Open changes');
+    expect(changes.sub).toBe('0 regulatory · 1 product · 0 technical');
+    const what = d.tiles.find((t) => t.key === 'what')!;
+    expect(what.value).toBe('2');
+    expect(what.sub).toBe('1 of 2 implemented');
+    expect(d.newDoc).toEqual({ kind: 'requirement', label: 'requirement' });
+  });
+
+  it('drops tiles, bars and the feed for entities the workspace hides', () => {
+    const yml = [
+      'entities:',
+      '  requirement: { label: "User stories" }',
+      '  change: { hidden: true }',
+      '  data_mapping: { hidden: true }',
+      '  work_item: { hidden: true }',
+    ].join('\n');
+    const cfg = workspaceConfig(yml);
+    const d2 = buildDashboard(buildModel(files, cfg));
+    expect(d2.changeEntity).toBeNull();
+    expect(d2.feed).toEqual([]);
+    expect(d2.tiles.map((t) => t.key)).toEqual(['what']);
+    expect(d2.tiles[0].label).toBe('User stories');
+    expect(d2.newDoc).toEqual({ kind: 'requirement', label: 'user story' });
+    // no work_item entity → no WHEN bar; no data_mapping → no data-fields bar
+    expect(d2.health.map((h) => h.label)).toEqual(['User stories → drivers', 'User stories ← specs']);
+  });
+
+  it('a custom inbox entity replaces the change family end to end', () => {
+    const yml = [
+      'entities:',
+      '  change: { hidden: true }',
+      '  ticket:',
+      '    group: why',
+      '    folder: "tickets/"',
+      '    label: "Tickets"',
+      '    inbox: true',
+      '    attention_statuses: [needs_triage]',
+      '    closed_statuses: [shipped]',
+      'drivers:',
+      '  customer: { label: "Customer", icon: "☺", color: "#aa3377" }',
+      '  internal: { label: "Internal", icon: "⚒", color: "#337799" }',
+    ].join('\n');
+    const cfg = workspaceConfig(yml);
+    const tf = {
+      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\n---\n',
+      'tickets/t1.md': '---\nid: T-1\ntitle: Hot\nsource: customer\nstatus: needs_triage\npublished: 2026-07-01\n---\n',
+      'tickets/t2.md': '---\nid: T-2\ntitle: Done\nsource: internal\nstatus: shipped\npublished: 2026-06-01\n---\n',
+      'tickets/t3.md': '---\nid: T-3\ntitle: Rolling\nsource: internal\nstatus: in_progress\npublished: 2026-06-15\n---\n',
+    };
+    const m = buildModel(tf, cfg);
+    expect(m.inbox).toEqual({ kind: 'ticket', label: 'Tickets', closed: ['shipped'], attention: ['needs_triage'] });
+    expect(m.changes.map((c) => c.path).sort()).toEqual(['tickets/t1.md', 'tickets/t2.md', 'tickets/t3.md']);
+    // dashboard: tile + feed keyed on the inbox, open excludes closed statuses
+    const d = buildDashboard(m);
+    expect(d.changeEntity).toEqual({ label: 'Tickets', lower: 'tickets' });
+    expect(d.openCount).toBe(2); // shipped is closed
+    expect(d.tiles.find((t) => t.key === 'changes')!.sub).toBe('1 customer · 1 internal');
+    // inbox ordering: attention first, closed last; counts per custom driver
+    const ch = buildChanges(m, 'all');
+    expect(ch.items.map((c) => c.id)).toEqual(['T-1', 'T-3', 'T-2']);
+    expect(ch.counts).toEqual({ all: 3, customer: 1, internal: 2 });
+  });
+
+  it('driverMeta takes custom taxonomy entries from the config', () => {
+    const cfg = workspaceConfig('drivers:\n  customer: { label: "Customer", icon: "☺", color: "#aa3377" }\n');
+    const m = buildModel({}, cfg);
+    expect(driverMeta(m, 'customer')).toEqual({ icon: '☺', label: 'Customer', fg: '#aa3377', bg: 'var(--surface-2)' });
+    // the built-in trio keeps its themed pair even when not configured
+    expect(driverMeta(buildModel({}), 'regulatory').fg).toBe('var(--reg)');
+  });
+
+  it('a custom traceability section replaces the bars wholesale', () => {
+    const yml = [
+      'link_types:',
+      '  satisfies: { from: spec, to: requirement, inverse: "satisfied by" }',
+      'traceability:',
+      '  - { link: satisfies, measure: to, label: "Reqs satisfied", color: "#123456" }',
+    ].join('\n');
+    const cfg = workspaceConfig(yml);
+    const tf = {
+      'requirements/R1.md': '---\nid: R1\ntitle: One\n---\n',
+      'requirements/R2.md': '---\nid: R2\ntitle: Two\n---\n',
+      'specs/s1.md': '---\nid: S1\ntitle: S\nsatisfies:\n  - requirements/R1.md\n---\n',
+    };
+    const d = buildDashboard(buildModel(tf, cfg));
+    expect(d.health).toEqual([{ label: 'Reqs satisfied', pct: 50, color: '#123456' }]);
+  });
+
+  it('legacy driver maps still count toward the drivers bar', () => {
+    const legacy = {
+      'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\ndrivers:\n  - type: regulatory\n    ref: regulations/a.md\n---\n',
+    };
+    const dl = buildDashboard(buildModel(legacy));
+    const bar = dl.health.find((h) => h.label === 'Requirements → drivers')!;
+    expect(bar.pct).toBe(100);
+  });
+});
+
+describe('docLinkReport', () => {
+  const files = {
+    'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    'requirements/R1.md': [
+      '---',
+      'id: R1',
+      'title: One',
+      'status: draft',
+      'drivers:',
+      '  - regulations/a.md#x',
+      '  - "Ops prose driver"',
+      'satisfies:',        // NOT a declared link field under the defaults
+      '  - specs/s1.md',
+      'verifies:',
+      '  - tests/missing_spec.py',
+      '---',
+      '',
+      'See [the spec](../specs/s1.md) and [ext](~backend/api.md).',
+      '',
+    ].join('\n'),
+    'specs/s1.md': '---\nid: S1\ntitle: Spec One\nimplements:\n  - requirements/R1.md\n---\n',
+  };
+  const model = buildModel(files);
+  const r = docLinkReport(files, model, 'requirements/R1.md');
+
+  it('classifies the document and resolves every parsed link', () => {
+    expect(r.classified).toBe(true);
+    expect(r.kind).toBe('requirement');
+    const by = (field: string, ref: string) => r.outbound.find((l) => l.field === field && l.ref === ref)!;
+    expect(by('drivers', 'regulations/a.md#x')).toMatchObject({ status: 'ok', kind: 'regulation', type: 'regulatory' });
+    expect(by('drivers', 'Ops prose driver').status).toBe('prose');
+    expect(by('verifies', 'tests/missing_spec.py').status).toBe('missing');
+    expect(by('body', 'specs/s1.md').status).toBe('ok');
+    expect(by('body', '~backend/api.md').status).toBe('external');
+  });
+
+  it('flags path-carrying fields that are not declared link types', () => {
+    const sat = r.outbound.find((l) => l.field === 'satisfies')!;
+    expect(sat.status).toBe('undeclared');
+    // …and once the workspace declares satisfies, it parses as typed
+    const cfg = workspaceConfig('link_types:\n  satisfies: { from: spec, to: requirement }\n');
+    const r2 = docLinkReport(files, buildModel(files, cfg), 'requirements/R1.md');
+    expect(r2.outbound.find((l) => l.field === 'satisfies')!.status).toBe('ok');
+  });
+
+  it('carries the inbound side', () => {
+    expect(r.inbound.some((b) => b.kind === 'implements' && b.from === 'specs/s1.md')).toBe(true);
+  });
+
+  it('resolves doc-relative and leading-slash refs across folders', () => {
+    const rel = {
+      'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+      'requirements/R1.md': '---\nid: R1\ntitle: One\ndrivers:\n  - ../regulations/a.md#x\n---\n',
+      'specs/s1.md': '---\nid: S1\ntitle: Spec One\nimplements:\n  - /requirements/R1.md\n---\n',
+      'specs/s2.md': '---\nid: S2\ntitle: Spec Two\nimplements:\n  - s1.md\n---\n', // sibling
+    };
+    const m = buildModel(rel);
+    // the model normalizes every spelling to the canonical root-relative path
+    expect(m.docs.find((d) => d.path === 'requirements/R1.md')!.links.drivers).toEqual(['regulations/a.md#x']);
+    expect(m.docs.find((d) => d.path === 'specs/s1.md')!.links.implements).toEqual(['requirements/R1.md']);
+    expect(m.docs.find((d) => d.path === 'specs/s2.md')!.links.implements).toEqual(['specs/s1.md']);
+    // …so backlinks and graph edges link up regardless of spelling
+    const b = collectBacklinks(m);
+    expect(b['requirements/R1.md']!.some((x) => x.kind === 'implements' && x.from === 'specs/s1.md')).toBe(true);
+    expect(b['regulations/a.md']!.some((x) => x.kind === 'driver' && x.type === 'regulatory')).toBe(true);
+    const g = buildGraph(m);
+    expect(g.edges.some((e) => e.a === 'doc:requirements/R1.md' && e.b === 'doc:specs/s1.md')).toBe(true);
+    // the report keeps the written form and shows the resolved target
+    const rr = docLinkReport(rel, m, 'requirements/R1.md');
+    const dr = rr.outbound.find((l) => l.field === 'drivers')!;
+    expect(dr).toMatchObject({ ref: '../regulations/a.md#x', target: 'regulations/a.md', status: 'ok', type: 'regulatory' });
+  });
+
+  it('reports unclassified documents instead of pretending', () => {
+    const loose = { 'notes/x.md': '---\ntitle: X\nimplements:\n  - specs/s1.md\n---\n', ...files };
+    const rl = docLinkReport(loose, buildModel(loose), 'notes/x.md');
+    expect(rl.classified).toBe(false);
+    expect(rl.outbound.every((l) => l.field === 'body' || l.status === 'undeclared')).toBe(true);
+  });
+});
+
+describe('backlinkLabel', () => {
+  const files = { 'requirements/R1.md': '---\nid: R1\ntitle: One\n---\n' };
+
+  it('reads relations from the target side via the inverse labels', () => {
+    const m = buildModel(files);
+    expect(backlinkLabel(m, 'driver')).toBe('drives');
+    expect(backlinkLabel(m, 'implements')).toBe('implemented by');
+    expect(backlinkLabel(m, 'delivers')).toBe('delivered by');
+    expect(backlinkLabel(m, 'maps to')).toBe('mapped by');
+    expect(backlinkLabel(m, 'in text')).toBe('mentioned in');
+  });
+
+  it('honors workspace-configured inverse names, falling back to the kind', () => {
+    const cfg = workspaceConfig('link_types:\n  satisfies: { from: spec, to: requirement, inverse: "satisfied by" }\n  custom: { from: a, to: b }\n');
+    const m = buildModel(files, cfg);
+    expect(backlinkLabel(m, 'satisfies')).toBe('satisfied by');
+    expect(backlinkLabel(m, 'custom')).toBe('custom');
   });
 });
 

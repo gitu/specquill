@@ -79,11 +79,29 @@ func TestMoveAndHistory(t *testing.T) {
 		t.Fatalf("history: %d %v", code, hist)
 	}
 
-	// move: staged git rename in the worktree
+	// a doc referencing the file about to move: frontmatter (root-relative)
+	// plus a body link (relative, with anchor) — both must be rewritten
+	code, _ = doJSON(t, h, cookie, "PUT", "/api/repos/r/files/notes/refs.md?branch=main",
+		map[string]string{"content": "---\ntype: Note\nimplements: [requirements/REQ-001.md]\n---\n\nSee [one](../requirements/REQ-001.md#top).\n", "baseSha": ""})
+	if code != http.StatusOK {
+		t.Fatalf("seed referencing doc: %d", code)
+	}
+
+	// move: staged git rename in the worktree, inbound references rewritten
 	code, out := doJSON(t, h, cookie, "POST", "/api/repos/r/move?branch=main",
 		map[string]string{"from": "requirements/REQ-001.md", "to": "requirements/REQ-100.md"})
 	if code != http.StatusOK {
 		t.Fatalf("move: %d %v", code, out)
+	}
+	if rw, ok := out["rewritten"].([]any); !ok || len(rw) != 1 || rw[0] != "notes/refs.md" {
+		t.Fatalf("move response should list the rewritten doc: %v", out)
+	}
+	code, refs := doJSON(t, h, cookie, "GET", "/api/repos/r/files/notes/refs.md?ref=main", nil)
+	content, _ := refs["content"].(string)
+	if code != http.StatusOK ||
+		!strings.Contains(content, "implements: [requirements/REQ-100.md]") ||
+		!strings.Contains(content, "[one](../requirements/REQ-100.md#top)") {
+		t.Fatalf("referencing doc was not rewritten: %d %q", code, content)
 	}
 	code, treeBody := doJSONList(t, h, cookie, "GET", "/api/repos/r/tree?ref=main")
 	joined := strings.Join(treeBody, " ")

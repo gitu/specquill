@@ -40,30 +40,93 @@ export function GraphView() {
   const drag = useRef<{ id: string; offX: number; offY: number; moved: boolean } | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  // the graph is a pan/zoom VIEWPORT, never a scrolling page: plain wheel
+  // pans, ctrl/cmd+wheel (and trackpad pinch) zooms at the cursor, dragging
+  // the background pans, and the layout auto-fits into view
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  zoomRef.current = zoom;
+  panRef.current = pan;
+  const visibleRef = useRef(new Set<string>());
+  const fitOnce = useRef('');
   const zoomBy = (f: number) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * f)));
+  const zoomAt = (clientX: number, clientY: number, f: number) => {
+    const el = scroller.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const z0 = zoomRef.current;
+    const z1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z0 * f));
+    if (z1 === z0) return;
+    const px = clientX - r.left, py = clientY - r.top;
+    // keep the world point under the cursor fixed while the scale changes
+    setPan({ x: px - ((px - panRef.current.x) / z0) * z1, y: py - ((py - panRef.current.y) / z0) * z1 });
+    setZoom(z1);
+  };
 
-  // ctrl/cmd + wheel (and trackpad pinch) zooms — native non-passive
-  // listener because React's root wheel handler cannot preventDefault
+  // native non-passive listener because React's root wheel handler cannot
+  // preventDefault — and every wheel event must stay inside the viewport
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      if (e.ctrlKey || e.metaKey) {
+        zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      } else {
+        setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+      }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
     // keyed on g: the first render shows <Loading/> with no scroller element
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g]);
+
+  // fit the visible graph into the viewport (auto on load/focus, and via the
+  // zoom-percent button)
+  const fit = () => {
+    const el = scroller.current;
+    if (!el) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    bodies.current.forEach((b) => {
+      if (!visibleRef.current.has(b.id)) return;
+      minX = Math.min(minX, b.x - b.w / 2); maxX = Math.max(maxX, b.x + b.w / 2);
+      minY = Math.min(minY, b.y - b.h / 2); maxY = Math.max(maxY, b.y + b.h / 2);
+    });
+    if (minX > maxX) return;
+    const pad = 48;
+    const vw = el.clientWidth, vh = el.clientHeight;
+    const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(vw / (maxX - minX + pad * 2), vh / (maxY - minY + pad * 2), 1.15)));
+    setZoom(z);
+    setPan({ x: (vw - (maxX - minX) * z) / 2 - minX * z, y: (vh - (maxY - minY) * z) / 2 - minY * z });
+  };
+
+  // selectable layers + node text filter — hidden nodes leave the simulation
+  // entirely (their edges too), so the remaining graph re-settles around them
+  const [layersOff, setLayersOff] = useState<Set<string>>(new Set());
+  const [nodeFilter, setNodeFilter] = useState('');
+  const visible = useMemo(() => {
+    if (!g) return new Set<string>();
+    const q = nodeFilter.trim().toLowerCase();
+    return new Set(g.nodes.filter((n) =>
+      !layersOff.has(n.kind === 'field' ? 'field' : g.cols[n.col] || '') &&
+      (!q || n.label.toLowerCase().includes(q) || n.sub.toLowerCase().includes(q) || (n.go || '').toLowerCase().includes(q)),
+    ).map((n) => n.id));
+  }, [g, layersOff, nodeFilter]);
+  visibleRef.current = visible;
 
   // the hovered node's lineage: itself plus every node it shares an edge with
   const linked = useMemo(() => {
     if (!hover || !g) return null;
     const s = new Set([hover]);
-    g.edges.forEach((e) => { if (e.a === hover) s.add(e.b); if (e.b === hover) s.add(e.a); });
+    g.edges.forEach((e) => {
+      if (!visible.has(e.a) || !visible.has(e.b)) return;
+      if (e.a === hover) s.add(e.b);
+      if (e.b === hover) s.add(e.a);
+    });
     return s;
-  }, [hover, g]);
+  }, [hover, g, visible]);
 
   // seed bodies from the deterministic layout — keyed on the NODE SET, not
   // the model object: background query refreshes rebuild `g` with identical
@@ -83,59 +146,68 @@ export function GraphView() {
     });
     [...m.keys()].forEach((id) => { if (!keep.has(id)) m.delete(id); });
     alpha.current = 1; // settle overlaps of the (new) seed layout
+    if (fitOnce.current !== nodeSig) {
+      fitOnce.current = nodeSig;
+      fit(); // bring the (new) layout into view — no scrolling to find it
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeSig]);
 
-  // force simulation: weak home springs keep the lineage columns readable,
-  // edges pull linked nodes toward the same height, and boxes push each
-  // other apart (rectangle-aware). Dragging re-heats it; it cools to rest.
+  // force-directed simulation: EVERY visible pair repels (inverse-square),
+  // connected nodes attract along their edges, and it runs until the layout
+  // settles (alpha cooling). A faint x-only column gravity keeps the
+  // WHY → WHEN axis reading left-to-right; dragging re-heats the system.
   const wake = () => {
     alpha.current = Math.max(alpha.current, drag.current ? 0.55 : 0.35);
     if (!raf.current) setFrame((f) => f + 1); // the effect below restarts the loop
   };
+  useEffect(() => { wake(); }, [visible.size]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!g) return;
     if (raf.current || (alpha.current <= 0.02 && !drag.current)) return;
     const H = g.H;
     const tick = () => {
       const a = alpha.current;
-      const bs = [...bodies.current.values()];
-      // pairwise repulsion — boxes intruding on each other's padding push off
+      const bs = [...bodies.current.values()].filter((b) => visible.has(b.id));
+      // repulsion — unconnected nodes push away from each other; the
+      // rectangle-aware shove on top keeps overlapping boxes separating
       for (let i = 0; i < bs.length; i++) {
         for (let j = i + 1; j < bs.length; j++) {
           const p = bs[i], q = bs[j];
           const dx = q.x - p.x, dy = q.y - p.y;
+          const d = Math.max(40, Math.hypot(dx, dy));
+          const f = (26000 / (d * d)) * a;
+          const ux = d > 0 ? dx / d : (j % 2 ? 1 : -1), uy = d > 0 ? dy / d : (i % 2 ? 1 : -1);
+          p.vx -= ux * f; p.vy -= uy * f; q.vx += ux * f; q.vy += uy * f;
           const minX = (p.w + q.w) / 2 + 24, minY = (p.h + q.h) / 2 + 14;
           if (Math.abs(dx) >= minX || Math.abs(dy) >= minY) continue;
           const sy = dy !== 0 ? Math.sign(dy) : (i % 2 ? 1 : -1);
           const py = (minY - Math.abs(dy)) * 0.5;
           p.vy -= sy * py * 0.16 * a; q.vy += sy * py * 0.16 * a;
-          const sxn = dx !== 0 ? Math.sign(dx) : (j % 2 ? 1 : -1);
-          const px = (minX - Math.abs(dx)) * 0.5;
-          p.vx -= sxn * px * 0.02 * a; q.vx += sxn * px * 0.02 * a;
         }
       }
-      // edge springs — connections PULL: each link relaxes toward a rest
-      // length along its actual vector, so dragging a node tows its lineage
+      // attraction — connected nodes pull toward a rest distance along the
+      // edge vector, so chains contract while the repulsion spreads the rest
       g.edges.forEach((e) => {
+        if (!visible.has(e.a) || !visible.has(e.b)) return;
         const p = bodies.current.get(e.a), q = bodies.current.get(e.b);
         if (!p || !q) return;
         const dx = q.x - p.x, dy = q.y - p.y;
         const dist = Math.max(1, Math.hypot(dx, dy));
-        // only stretch pulls — slack links stay lazy instead of shoving
-        // their endpoints apart (keeps dense clusters from gridlocking)
-        const f = Math.max(0, dist - 190) * 0.02 * a;
+        const f = Math.max(0, dist - 180) * 0.03 * a;
         const fx = (dx / dist) * f, fy = (dy / dist) * f;
         p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
       });
-      // faint home gravity keeps the left-to-right lineage readable without
-      // overpowering the pulls; user-placed (pinned) nodes anchor hard so
-      // pulling an end unravels the rest instead of snapping back
+      // faint x-only gravity toward the column keeps the axis readable;
+      // user-placed (pinned) nodes anchor hard in both axes so pulling an
+      // end unravels the rest instead of snapping back
       bs.forEach((b) => {
         if (drag.current?.id === b.id) { b.vx = 0; b.vy = 0; return; }
-        const kx = b.pinned ? 0.3 : 0.02, ky = b.pinned ? 0.3 : 0.005;
+        const kx = b.pinned ? 0.3 : 0.008, ky = b.pinned ? 0.3 : 0;
         b.vx += (b.hx - b.x) * kx * a;
         b.vy += (b.hy - b.y) * ky * a;
+        // weak vertical centering stops the whole graph drifting off-canvas
+        b.vy += (H / 2 - b.y) * 0.002 * a;
         b.vx *= 0.72; b.vy *= 0.72;
         // generous bounds — the canvas grows to fit the arrangement
         b.x = Math.min(2300, Math.max(-40, b.x + b.vx));
@@ -182,49 +254,79 @@ export function GraphView() {
     return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom };
   };
 
-  // the canvas grows with the arrangement in both axes — dragging past the
-  // original bounds must not clip or snap back
-  let canvasH = g.H, canvasW = 900;
-  bodies.current.forEach((b) => {
-    canvasH = Math.max(canvasH, b.y + 70);
-    canvasW = Math.max(canvasW, b.x + b.w / 2 + 60);
-  });
+  // background drag pans the viewport; node drags are handled by the nodes
+  // themselves (marked data-node), so they never start a pan
+  const startPan = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('[data-node]')) return;
+    e.preventDefault();
+    const sx0 = e.clientX, sy0 = e.clientY;
+    const p0 = panRef.current;
+    const move = (ev: PointerEvent) => setPan({ x: p0.x + (ev.clientX - sx0), y: p0.y + (ev.clientY - sy0) });
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
       {docTabsStrip('graph', focusName || 'Editor', nav, undefined, focusPath || undefined)}
-      <div ref={scroller} style={sx('flex:1;min-height:0;position:relative;overflow:auto;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px')}>
-        <div style={sx('position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:4;display:flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);padding:3px')}>
-          <span style={sx('padding:5px 15px;border-radius:6px;font-size:12px;font-weight:600;background:var(--text);color:var(--surface)')}>Graph</span>
-          {focusPath && (
-            <span
-              onClick={() => nav('/graph/' + focusPath + (full ? '' : '?full=1'))}
-              title={full ? 'focus on ' + focusName + "'s chain" : 'show the full graph'}
-              style={sx('display:flex;align-items:center;gap:6px;padding:5px 12px;margin-left:3px;border-left:1px solid var(--border);font-size:12px;font-weight:600;cursor:pointer;user-select:none;' + (full ? 'color:var(--text-3)' : 'color:var(--prod)'))}
-            >
-              ◎ {focusName}
+      <div ref={scroller} onPointerDown={startPan} style={sx('flex:1;min-height:0;position:relative;overflow:hidden;background:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:22px 22px;cursor:grab')}>
+        <div style={sx('position:absolute;left:16px;top:14px;z-index:3;display:flex;flex-direction:column;gap:6px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-width:calc(100% - 32px)')}>
+          <div style={sx('display:flex;align-items:center;gap:6px;flex-wrap:wrap')}>
+            <span style={sx('font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;padding:0 6px')}>Layers</span>
+            {g.stats.map((s) => {
+              const off = layersOff.has(s.key);
+              return (
+                <span
+                  key={s.key}
+                  onClick={() => setLayersOff((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
+                    return next;
+                  })}
+                  title={(off ? 'show ' : 'hide ') + s.label}
+                  style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;user-select:none;' +
+                    (off ? 'background:var(--surface-2);color:var(--text-3);opacity:.55' : `background:${s.bg};color:${s.fg}`))}
+                >
+                  {off ? '○' : '◉'} {s.label}
+                </span>
+              );
+            })}
+            <span style={sx('width:1px;height:18px;background:var(--border);margin:0 2px')} />
+            <span onClick={app.toggleAI} style={sx('display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:6px;background:var(--ai-bg);color:var(--ai);font-size:11.5px;font-weight:600;cursor:pointer')}>
+              <span style={sx(`width:22px;height:13px;border-radius:8px;background:${app.aiSuggestions ? 'var(--ai)' : 'var(--border-2)'};position:relative;display:inline-block`)}>
+                <span style={sx(`position:absolute;${app.aiSuggestions ? 'right' : 'left'}:1px;top:1px;width:11px;height:11px;border-radius:50%;background:#fff`)} />
+              </span>
+              AI suggestions
             </span>
-          )}
-        </div>
-        <div style={sx('position:absolute;left:16px;top:14px;z-index:3;display:flex;align-items:center;gap:6px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);flex-wrap:wrap;max-width:calc(100% - 32px)')}>
-          <span style={sx('font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;padding:0 6px')}>Layers</span>
-          <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:var(--reg-bg);color:var(--reg);font-size:11.5px;font-weight:600')}>◉ Sources</span>
-          <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:var(--prod-bg);color:var(--prod);font-size:11.5px;font-weight:600')}>◉ Requirements</span>
-          <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:var(--surface-2);color:var(--text-2);font-size:11.5px;font-weight:600')}>◉ Specs</span>
-          <span style={sx('display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:var(--data-bg);color:var(--data);font-size:11.5px;font-weight:600')}>◉ Data fields</span>
-          <span style={sx('width:1px;height:18px;background:var(--border);margin:0 2px')} />
-          <span onClick={app.toggleAI} style={sx('display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:6px;background:var(--ai-bg);color:var(--ai);font-size:11.5px;font-weight:600;cursor:pointer')}>
-            <span style={sx(`width:22px;height:13px;border-radius:8px;background:${app.aiSuggestions ? 'var(--ai)' : 'var(--border-2)'};position:relative;display:inline-block`)}>
-              <span style={sx(`position:absolute;${app.aiSuggestions ? 'right' : 'left'}:1px;top:1px;width:11px;height:11px;border-radius:50%;background:#fff`)} />
-            </span>
-            AI suggestions
-          </span>
+          </div>
+          <div style={sx('display:flex;align-items:center;gap:6px')}>
+            <input
+              value={nodeFilter}
+              onChange={(e) => setNodeFilter(e.target.value)}
+              placeholder="filter nodes…"
+              aria-label="filter graph nodes"
+              onKeyDown={(e) => { if (e.key === 'Escape') setNodeFilter(''); }}
+              style={sx('flex:1;min-width:140px;height:26px;padding:0 9px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11.5px;outline:none')}
+            />
+            {focusPath && (
+              <span
+                onClick={() => nav('/graph/' + focusPath + (full ? '' : '?full=1'))}
+                title={full ? 'focus on ' + focusName + "'s chain" : 'show the full graph'}
+                style={sx('flex:none;display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--border);border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;user-select:none;' + (full ? 'color:var(--text-3)' : 'color:var(--prod);background:var(--prod-bg)'))}
+              >
+                ◎ {focusName}
+              </span>
+            )}
+          </div>
         </div>
 
-        <div style={{ width: canvasW * zoom, height: canvasH * zoom + 110, margin: '0 auto' }}>
-          <div ref={canvas} style={{ ...sx('position:relative;transform-origin:0 0'), width: canvasW, minWidth: canvasW, height: canvasH, marginTop: 70, transform: `scale(${zoom})` }}>
-            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
-              {g.edges.map((e, i) => {
+        <div ref={canvas} style={{ ...sx('position:absolute;left:0;top:0;transform-origin:0 0'), width: 0, height: 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+            <svg style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
+              {g.edges.filter((e) => visible.has(e.a) && visible.has(e.b)).map((e, i) => {
                 const p = bodies.current.get(e.a), q = bodies.current.get(e.b);
                 if (!p || !q) return null;
                 // anchor on the facing box edges, whichever way round they sit
@@ -240,13 +342,14 @@ export function GraphView() {
                 );
               })}
             </svg>
-            {g.nodes.map((n) => {
+            {g.nodes.filter((n) => visible.has(n.id)).map((n) => {
               const b = bodies.current.get(n.id);
               if (!b) return null;
               const active = hover === n.id || drag.current?.id === n.id;
               return (
                 <div
                   key={n.id}
+                  data-node=""
                   title={n.go ? 'open ' + n.go : undefined}
                   onMouseEnter={() => setHover(n.id)}
                   onMouseLeave={() => setHover(null)}
@@ -294,15 +397,14 @@ export function GraphView() {
                 </div>
               );
             })}
-          </div>
         </div>
 
         <div style={sx('position:absolute;right:16px;top:14px;z-index:3;width:210px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow-lg);overflow:hidden')}>
           <div style={sx("padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Lineage · from links</div>
           <div style={sx('padding:11px 14px;display:flex;flex-direction:column;gap:9px;font-size:12.5px')}>
-            {[['Sources', g.stats.s], ['Requirements', g.stats.r], ['Specs', g.stats.sp], ['Data fields', g.stats.f]].map(([label, n]) => (
-              <div key={label} style={sx('display:flex;justify-content:space-between;align-items:center')}>
-                <span style={sx('color:var(--text-2)')}>{label}</span><b>{n}</b>
+            {g.stats.map((s) => (
+              <div key={s.key} style={sx('display:flex;justify-content:space-between;align-items:center')}>
+                <span style={sx('color:var(--text-2)')}>{s.label}</span><b>{s.count}</b>
               </div>
             ))}
           </div>
@@ -316,7 +418,7 @@ export function GraphView() {
         <div style={sx('position:absolute;right:16px;bottom:14px;z-index:3;display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);overflow:hidden')}>
           <span onClick={() => zoomBy(1 / 1.25)}
             style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-right:1px solid var(--border);user-select:none')}>−</span>
-          <span onClick={() => setZoom(1)} title="reset zoom (ctrl+scroll to zoom)"
+          <span onClick={fit} title="fit the graph into view (ctrl+scroll zooms, scroll/drag pans)"
             style={sx("padding:0 10px;font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;user-select:none")}>{Math.round(zoom * 100)}%</span>
           <span onClick={() => zoomBy(1.25)}
             style={sx('width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);border-left:1px solid var(--border);user-select:none')}>+</span>

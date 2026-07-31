@@ -65,9 +65,18 @@ const EditingRules = `
 You can read and edit workspace files with your tools. When editing:
 - Make minimal, surgical edits: edit_file replaces ONE unique occurrence of a
   search string copied verbatim from the file. Never rewrite a document unasked.
-- Preserve frontmatter keys and formatting. Keep typed links (drivers,
-  implements, satisfies, maps_to, verifies) consistent on both sides of a
-  relation when you add or change one.
+- Preserve frontmatter keys and formatting. Typed links live on the LOWER
+  level pointing up (drivers on requirements, implements on specs, delivers
+  on work items) — a new document must carry its upward link; write drivers
+  as a plain path list, never {type, ref} maps; when the right upper-level
+  document is unclear, ask_user.
+- move_file renames/moves a file and rewrites inbound references in other
+  documents automatically — use it instead of delete+create. delete_file does
+  NOT touch inbound references: search for them first and confirm via
+  ask_user when other documents still reference the file.
+- Diagrams: draw_sketch creates/replaces .excalidraw drawings from scene
+  JSON (rendered inline, editable in the sketch editor); read an existing
+  *.excalidraw.png sketch with read_file to get its embedded scene.
 - Requirement statements are atomic, testable blockquotes using RFC-2119
   keywords (MUST/SHALL/SHOULD/MAY); no vague language without a measurable bound.
 - New documents follow the family conventions given in the create_file tool

@@ -7,13 +7,15 @@ import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useFileAtHead, useFileQuery, useSaveFile } from '../api/hooks';
 import { api, rawUrl, uploadAsset } from '../api/client';
-import { esc, isReservedMd, resolveDocHref, resolvePath, scalar, stripFrontmatter } from '../lib/model';
+import { esc, isReservedMd, resolveDocHref, resolveFmRef, resolvePath, scalar, stripFrontmatter } from '../lib/model';
+import type { WorkspaceModel } from '../lib/model';
 import { assemble, fmToJS, touchUpdated } from '../lib/frontmatter';
 import { HistoryDrawer } from '../components/HistoryDrawer';
+import { DeleteDialog } from '../components/DeleteDialog';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
-import { buildProps, collectBacklinks, defaultDoc, srcMeta } from '../lib/derive';
-import type { DocBacklink } from '../lib/derive';
+import { backlinkLabel, buildProps, collectBacklinks, defaultDoc, docLinkReport, driverMeta, srcMeta } from '../lib/derive';
+import type { DocBacklink, LinkReportEntry } from '../lib/derive';
 import type { EntityDef } from '../lib/entities';
 import { scaffoldFor } from '../lib/scaffold';
 import { newDocTemplate } from '../lib/newdoc';
@@ -65,26 +67,40 @@ function RefChipView({ text, path, docTitle, entities, nav }: {
 }
 
 // Read-mode driver chip, styled like the backlinks chips: type icon in its
-// color, colored left edge, doc name in mono, anchor muted. parseProps folds
-// each drivers entry to "type · ref"; prose refs render unlinked.
-function DriverChipView({ raw, titles, nav }: { raw: string; titles: Record<string, string>; nav: (p: string) => void }) {
-  const [type, ...rest] = raw.split(' · ');
-  const ref = rest.join(' · ');
-  const m = srcMeta(type);
-  const pm = ref.match(/([\w-]+\/[\w.\/-]+\.md)/);
+// color, colored left edge, doc name in mono, anchor muted. Handles BOTH
+// driver shapes: the flat path list (canonical — the type derives from the
+// referenced document via `info`) and the legacy "type · ref" fold that
+// parseProps produces for `{type, ref}` maps. Prose refs render unlinked.
+function DriverChipView({ raw, titles, model, info, nav }: {
+  raw: string;
+  titles: Record<string, string>;
+  model?: WorkspaceModel;
+  info: (ref: string) => { path: string; type: string };
+  nav: (p: string) => void;
+}) {
+  let type = '', ref = raw;
+  if (raw.includes(' · ')) {
+    const [t, ...rest] = raw.split(' · ');
+    type = t;
+    ref = rest.join(' · ');
+  }
+  const inf = info(ref);
+  if (!type) type = inf.type;
+  const m = model ? driverMeta(model, type) : srcMeta(type);
+  const target = inf.path; // '' = prose or unresolvable
   const anchor = ref.includes('#') ? ref.split('#')[1] : '';
-  const docTitle = pm ? titles[pm[1]] : undefined;
+  const docTitle = target ? titles[target] : undefined;
   return (
     <span
-      onClick={pm ? () => nav('/editor/' + pm[1]) : undefined}
-      title={pm ? 'open ' + pm[1] : undefined}
-      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + m.fg + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;' + (pm ? 'cursor:pointer' : ''))}
+      onClick={target ? () => nav('/editor/' + target) : undefined}
+      title={target ? 'open ' + target : undefined}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + m.fg + ';border-radius:7px;background:var(--surface-2);font-size:11.5px;' + (target ? 'cursor:pointer' : ''))}
     >
       <span style={{ color: m.fg }}>{m.icon}</span>
-      {pm
-        ? <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{pm[1].split('/').pop()!.replace(/\.md$/, '')}</span>
+      {target
+        ? <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{target.split('/').pop()!.replace(/\.md$/, '')}</span>
         : <span style={sx('color:var(--text-2)')}>{ref}</span>}
-      {pm && anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
+      {target && anchor && <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>#{anchor}</span>}
       {docTitle && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{docTitle}</span>}
     </span>
   );
@@ -94,18 +110,60 @@ function DriverChipView({ raw, titles, nav }: { raw: string; titles: Record<stri
 // citations, the other typed frontmatter relations, and body-text mentions.
 // Deliberately its OWN box, not a row in the Properties panel — these are
 // derived from the citing documents and are never stored in this one
-// (they replaced the manual `drives:` key).
-function BacklinksPanel({ links, nav }: { links: DocBacklink[]; nav: (p: string) => void }) {
+// (they replaced the manual `drives:` key). The header carries the
+// document's FAMILY marker (its classified type + model-axis group), and the
+// link-debug list folds out at the bottom — one panel for the whole linking
+// story, rendered even with zero backlinks so the state is never ambiguous.
+function BacklinksPanel({ links, report, model, entities, nav, outline, onJump }: {
+  links: DocBacklink[];
+  report: NonNullable<ReturnType<typeof docLinkReport>>;
+  model: WorkspaceModel;
+  entities: EntityDef[];
+  nav: (p: string) => void;
+  outline?: { level: number; text: string }[];
+  onJump?: (i: number) => void;
+}) {
+  const mono = "font-family:'JetBrains Mono',monospace;";
+  const ent = report.classified ? entities.find((e) => e.kind === report.kind) : undefined;
+  const groupColor: Record<string, { fg: string; bg: string }> = {
+    why: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
+    what: { fg: 'var(--prod)', bg: 'var(--prod-bg)' },
+    how: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
+    when: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
+  };
+  const gc = groupColor[report.group] || { fg: 'var(--text-2)', bg: 'var(--surface-2)' };
   return (
     <div style={sx('margin:0 0 30px;border:1px dashed var(--border-2);border-radius:10px')}>
       <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px dashed var(--border)')}>
         <span style={sx('color:var(--text-3);font-size:12px')}>↳</span>
-        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>Backlinks</span>
-        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>· computed from links to this document — not stored in it</span>
+        <span style={sx(mono + 'font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px')}>Context</span>
+        <span style={sx(mono + 'font-size:10.5px;color:var(--text-3)')}>· computed from links to this document — not stored in it</span>
+        <div style={sx('flex:1')} />
+        {/* the family marker: what this document IS to the model */}
+        {ent ? (
+          <span title={`classified by its type: as ${ent.docType || ent.kind}${report.group ? ` — ${report.group.toUpperCase()} on the model axis` : ''}`}
+            style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + (ent.color || 'var(--text-2)') + ';border-radius:7px;background:var(--surface-2);font-size:11px')}>
+            <span style={{ color: ent.color }}>{ent.icon}</span>
+            <span style={sx('font-weight:600')}>{ent.docType || ent.kind}</span>
+            {report.group && (
+              <span style={sx(`${mono}font-size:8.5px;font-weight:700;letter-spacing:.4px;padding:1px 5px;border-radius:4px;background:${gc.bg};color:${gc.fg}`)}>
+                {report.group.toUpperCase()}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span title="no entity family matches this document's type: or folder — typed links do not parse here"
+            style={sx('display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border:1px solid var(--reg-line);border-radius:7px;background:var(--reg-bg);color:var(--reg);font-size:11px;font-weight:600')}>
+            ⚠ unclassified
+          </span>
+        )}
       </div>
       <div style={sx('display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px')}>
+        {links.length === 0 && (
+          <span style={sx('font-size:11.5px;color:var(--text-3)')}>no documents link here yet</span>
+        )}
         {links.map((l) => {
-          const m = l.kind === 'driver' ? srcMeta(l.type || '') : null;
+          const m = l.kind === 'driver' ? driverMeta(model, l.type || '') : null;
           return (
             <span
               key={l.from + '|' + l.kind}
@@ -113,15 +171,135 @@ function BacklinksPanel({ links, nav }: { links: DocBacklink[]; nav: (p: string)
               title={'open ' + l.from}
               style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:6px;font-size:11.5px;cursor:pointer;background:var(--surface-2)')}
             >
-              {m
-                ? <span style={{ color: m.fg }}>{m.icon}</span>
-                : <span style={sx("font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text-3)")}>{l.kind}</span>}
-              <span style={sx("font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--prod)")}>{l.id || l.from.split('/').pop()}</span>
+              {m && <span style={{ color: m.fg }}>{m.icon}</span>}
+              <span style={sx(mono + 'font-size:9.5px;color:var(--text-3)')}>{backlinkLabel(model, l.kind)}</span>
+              <span style={sx(mono + 'font-weight:600;color:var(--prod)')}>{l.id || l.from.split('/').pop()}</span>
               {l.title && <span style={sx('color:var(--text-2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{l.title}</span>}
             </span>
           );
         })}
       </div>
+      {outline && outline.length > 1 && onJump && <OutlineSection outline={outline} onJump={onJump} />}
+      <LinkDebugSection report={report} nav={nav} />
+    </div>
+  );
+}
+
+// Collapsed outline inside the Context panel: the document's h1–h3 headings,
+// each row jumping to its section — same list the floating Outline button
+// shows, available where the reader already looks for orientation.
+function OutlineSection({ outline, onJump }: {
+  outline: { level: number; text: string }[];
+  onJump: (i: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const mono = "font-family:'JetBrains Mono',monospace;";
+  return (
+    <div style={sx('border-top:1px dashed var(--border)')}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        title={open ? 'hide the outline' : 'show the document outline'}
+        style={sx('display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;user-select:none')}
+      >
+        <span style={sx('color:var(--text-3);font-size:10px')}>{open ? '▾' : '▸'}</span>
+        <span style={sx(mono + 'font-size:10.5px;color:var(--text-3)')}>§ {outline.length} section{outline.length === 1 ? '' : 's'}</span>
+      </div>
+      {open && (
+        <div style={sx('display:flex;flex-direction:column;padding:6px 14px 10px;border-top:1px dashed var(--border)')}>
+          {outline.map((h, i) => (
+            <div key={i} onClick={() => onJump(i)}
+              style={{ ...sx('padding:3px 8px;border-radius:6px;font-size:11.5px;color:var(--text-2);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), paddingLeft: 8 + (h.level - 1) * 11 }}>
+              {h.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Collapsed-by-default link list inside the backlinks panel: the summary row
+// shows the out/in counts and expands on click into every link the model
+// parses in this document (with resolution), what it deliberately skips
+// (undeclared fields, prose refs), and the inbound side — the answer to
+// "why doesn't this backlink / graph edge show up".
+function LinkDebugSection({ report, nav }: {
+  report: NonNullable<ReturnType<typeof docLinkReport>>;
+  nav: (p: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const glyph: Record<LinkReportEntry['status'], { g: string; color: string; note: string }> = {
+    ok: { g: '✓', color: 'var(--data)', note: '' },
+    missing: { g: '✗', color: 'var(--reg)', note: 'target not on this branch' },
+    external: { g: '⇲', color: 'var(--text-2)', note: 'reference source' },
+    prose: { g: '¶', color: 'var(--text-3)', note: 'free text — no target' },
+    undeclared: { g: '⚠', color: 'var(--reg)', note: 'not a declared link field — no backlinks, no graph edge' },
+  };
+  const mono = "font-family:'JetBrains Mono',monospace;";
+  // problems bubble into the collapsed row so they are visible without opening
+  const problems = report.outbound.filter((l) => l.status === 'missing' || l.status === 'undeclared').length;
+  return (
+    <div style={sx('border-top:1px dashed var(--border)')}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        title={open ? 'hide the full link list' : 'show every link parsed in this document'}
+        style={sx('display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;user-select:none')}
+      >
+        <span style={sx('color:var(--text-3);font-size:10px')}>{open ? '▾' : '▸'}</span>
+        <span style={sx(mono + 'font-size:10.5px;color:var(--text-3)')}>
+          → {report.outbound.length} out · ↳ {report.inbound.length} in
+        </span>
+        {problems > 0 && (
+          <span style={sx(mono + 'font-size:10.5px;font-weight:600;color:var(--reg)')}>⚠ {problems}</span>
+        )}
+        {!report.classified && (
+          <span style={sx(mono + 'font-size:10.5px;color:var(--reg)')}>· typed links do not parse here</span>
+        )}
+      </div>
+      {open && (
+      <div style={sx('display:flex;flex-direction:column;gap:4px;padding:10px 14px;border-top:1px dashed var(--border)')}>
+        {report.outbound.length === 0 && (
+          <span style={sx(mono + 'font-size:11px;color:var(--text-3)')}>no outbound links parsed</span>
+        )}
+        {report.outbound.map((l, i) => {
+          const s = glyph[l.status];
+          const openable = l.status === 'ok';
+          return (
+            <div key={i} style={sx('display:flex;align-items:baseline;gap:8px;font-size:11.5px')}>
+              <span title={l.status} style={sx(mono + 'flex:none;color:' + s.color)}>{s.g}</span>
+              <span style={sx(mono + 'flex:none;font-size:9.5px;color:var(--text-3);width:82px;overflow:hidden;text-overflow:ellipsis')}>{l.field}</span>
+              <span
+                onClick={openable ? () => nav('/editor/' + l.target) : undefined}
+                title={openable ? 'open ' + l.target : undefined}
+                style={sx(mono + 'font-size:11px;overflow-wrap:anywhere;color:' + (openable ? 'var(--prod);cursor:pointer;text-decoration:underline;text-decoration-color:var(--prod-line)' : 'var(--text-2)'))}
+              >
+                {l.ref}
+              </span>
+              {l.type && <span style={sx(mono + 'flex:none;font-size:9.5px;color:var(--text-3)')}>type: {l.type}</span>}
+              {l.status === 'ok' && l.target !== l.ref.split('#')[0].replace(/^\/+/, '') && (
+                <span title="written relative — resolved against this document's folder" style={sx(mono + 'font-size:9.5px;color:var(--prod)')}>→ {l.target}</span>
+              )}
+              {l.status === 'ok' && <span style={sx(mono + 'flex:none;font-size:9.5px;color:var(--text-3)')}>→ {l.kind || 'unclassified'}</span>}
+              {s.note && <span style={sx('flex:none;font-size:10px;color:' + s.color)}>{s.note}</span>}
+            </div>
+          );
+        })}
+        {report.inbound.length > 0 && (
+          <div style={sx(mono + 'margin-top:6px;font-size:9.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px')}>inbound</div>
+        )}
+        {report.inbound.map((l) => (
+          <div key={l.from + '|' + l.kind} style={sx('display:flex;align-items:baseline;gap:8px;font-size:11.5px')}>
+            <span style={sx(mono + 'flex:none;color:var(--data)')}>↳</span>
+            <span style={sx(mono + 'flex:none;font-size:9.5px;color:var(--text-3);width:82px')}>{l.kind}</span>
+            <span onClick={() => nav('/editor/' + l.from)} title={'open ' + l.from}
+              style={sx(mono + 'font-size:11px;color:var(--prod);cursor:pointer;text-decoration:underline;text-decoration-color:var(--prod-line)')}>
+              {l.from}
+            </span>
+            {l.type && <span style={sx(mono + 'flex:none;font-size:9.5px;color:var(--text-3)')}>type: {l.type}</span>}
+          </div>
+        ))}
+      </div>
+      )}
     </div>
   );
 }
@@ -195,6 +373,7 @@ export function EditorView() {
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null);
   const editorApi = useRef<MilkdownApi | null>(null);
@@ -239,8 +418,12 @@ export function EditorView() {
   // links, which resolve against the document's folder) — resolving them via
   // openPath would prepend the current dir ("regulations/requirements/…")
   const openFmPath = useCallback((p: string) => {
-    nav('/editor/' + (p.startsWith('~') ? p : p.replace(/^\/+/, '')));
-  }, [nav]);
+    if (p.startsWith('~')) { nav('/editor/' + p); return; }
+    // frontmatter refs are canonically root-relative, but resolve tolerantly
+    // (doc-relative, leading /) so cross-folder links always open
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    nav('/editor/' + resolveFmRef(dir, p, app.files || {}).split('#')[0]);
+  }, [nav, path, app.files]);
 
   const onBodyChange = useCallback((md: string) => {
     const curFm = stripFrontmatter(rawRef.current).fm;
@@ -374,6 +557,23 @@ export function EditorView() {
     [kind, app.model, path],
   );
 
+  // driver chips (read mode): resolve a written driver ref tolerantly and
+  // derive its type from the referenced document — same rules as the model
+  const driverInfo = useCallback((refRaw: string) => {
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const resolved = app.files ? resolveFmRef(dir, refRaw, app.files) : refRaw;
+    const p = resolved.split('#')[0];
+    const t = app.model?.docs.find((d) => d.path === p);
+    const type = t ? t.source || app.model?.entities.find((e) => e.kind === t.kind)?.driver || '' : '';
+    return { path: /\.md$/.test(p) && app.files?.[p] !== undefined ? p : '', type };
+  }, [app.model, app.files, path]);
+
+  // the debug view: everything the model parses (and skips) as links here
+  const linkReport = useMemo(
+    () => (kind === 'md' && app.model && app.files ? docLinkReport(app.files, app.model, path) : null),
+    [kind, app.model, app.files, path],
+  );
+
   // path → frontmatter title, for the link chips' secondary text
   const docTitles = useMemo(() => {
     const m: Record<string, string> = {};
@@ -434,7 +634,7 @@ export function EditorView() {
   }, [effMode, targets, draft.raw, path, ready]);
 
   return (
-    <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column')}>
+    <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column;position:relative')}>
       {!narrow && docTabsStrip('editor', name, nav, draft.dirty, raw0)}
       <div style={sx('height:40px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 ' + (narrow ? '10px' : '16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'overflow-x:auto;overflow-y:hidden' : ''))}>
         <div style={sx("display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
@@ -500,10 +700,16 @@ export function EditorView() {
         </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
         {!readOnly && !generated && (
-          <button onClick={() => setMoveOpen(true)} title="Move or rename this file — referencing documents can be rewritten"
-            style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-            Move
-          </button>
+          <>
+            <button onClick={() => setMoveOpen(true)} title="Move or rename this file — referencing documents can be rewritten"
+              style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
+              Move
+            </button>
+            <button onClick={() => setDeleteOpen(true)} title="Delete this file (uncommitted — Discard restores it)"
+              style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
+              Delete
+            </button>
+          </>
         )}
         <button onClick={() => setShareOpen(true)} title="Share this workspace as an OKF bundle (unauthenticated zip link)"
           style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
@@ -512,6 +718,7 @@ export function EditorView() {
       </div>
       {historyOpen && <HistoryDrawer path={path} onClose={() => setHistoryOpen(false)} />}
       {moveOpen && <MoveDialog path={path} onClose={() => setMoveOpen(false)} />}
+      {deleteOpen && <DeleteDialog path={path} openPath={path} onClose={() => setDeleteOpen(false)} />}
       {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
 
       {conflict && (
@@ -526,28 +733,25 @@ export function EditorView() {
         </div>
       )}
 
+      {outline.length > 1 && !narrow && effMode !== 'source' && (
+        <div style={sx('position:absolute;right:18px;bottom:16px;z-index:6;display:flex;flex-direction:column;align-items:flex-end;gap:6px')}>
+          {outlineOpen && (
+            <div data-outline-list style={sx('width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
+              {outline.map((h, i) => (
+                <div key={i} onClick={() => jumpToHeading(i)}
+                  style={{ ...sx('padding:3px 8px;border-radius:6px;font-size:11.5px;color:var(--text-2);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), paddingLeft: 8 + (h.level - 1) * 11 }}>
+                  {h.text}
+                </div>
+              ))}
+            </div>
+          )}
+          <button data-outline onClick={() => setOutlineOpen((v) => !v)} title="Outline"
+            style={sx('display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb, var(--surface) 92%, transparent);backdrop-filter:blur(4px);color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;' + (outlineOpen ? 'color:var(--text)' : ''))}>
+            <IconMenu /> Outline
+          </button>
+        </div>
+      )}
       <div data-doc-scroll style={sx('flex:1;overflow-y:auto;padding:' + (narrow ? '16px 14px 60px' : '34px 40px 80px'))}>
-        {outline.length > 1 && !narrow && effMode !== 'source' && (
-          <div style={sx('position:sticky;top:45vh;float:right;height:0;z-index:6;display:flex;flex-direction:column;align-items:flex-end')}>
-            <button data-outline onClick={() => setOutlineOpen((v) => !v)} title="Outline"
-              style={sx('display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb, var(--surface) 92%, transparent);backdrop-filter:blur(4px);color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;' + (outlineOpen ? 'color:var(--text)' : ''))}>
-              <IconMenu /> Outline
-            </button>
-            {/* the list's flex:none is load-bearing: the height:0 sticky wrapper
-                is a flex column, and an overflow-y:auto child has no automatic
-                minimum size — without it the list gets crushed to a sliver */}
-            {outlineOpen && (
-              <div data-outline-list style={sx('flex:none;margin-top:6px;width:210px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:62vh;overflow-y:auto')}>
-                {outline.map((h, i) => (
-                  <div key={i} onClick={() => jumpToHeading(i)}
-                    style={{ ...sx('padding:3px 8px;border-radius:6px;font-size:11.5px;color:var(--text-2);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), paddingLeft: 8 + (h.level - 1) * 11 }}>
-                    {h.text}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         {file.isLoading && (
           <div style={sx('max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:13px')}>
             <div style={sx('height:30px;width:52%;border-radius:7px;background:var(--surface-2)')} />
@@ -635,7 +839,7 @@ export function EditorView() {
                     <span style={sx("width:132px;flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;padding-top:2px")}>{p.key}</span>
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
                       {p.rawKey === 'drivers'
-                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} titles={docTitles} nav={nav} />)
+                        ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} titles={docTitles} model={app.model} info={driverInfo} nav={nav} />)
                         : p.items.map((it, i) => (
                           it.openPath
                             ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
@@ -646,7 +850,7 @@ export function EditorView() {
                 ))}
               </div>
             )}
-            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
+            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} entities={app.entities} nav={nav} outline={outline} onJump={jumpToHeading} />}
             {kind === 'image' ? (
               fileRepo && (
                 <div
@@ -721,7 +925,7 @@ export function EditorView() {
                 />
               )}
             </div>
-            {backlinks.length > 0 && <BacklinksPanel links={backlinks} nav={nav} />}
+            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} entities={app.entities} nav={nav} outline={outline} onJump={jumpToHeading} />}
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
               body={body}

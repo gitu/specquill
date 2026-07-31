@@ -190,6 +190,41 @@ func TestDiffWorktreeIncludesUntracked(t *testing.T) {
 	}
 }
 
+// a MODIFIED binary emits no ---/+++ lines — the path must come from the
+// diff header, else the changes drawer shows a nameless card with a broken
+// preview (added binaries were fine via the untracked listing)
+func TestDiffWorktreeBinaryModificationKeepsPath(t *testing.T) {
+	m, _ := fixture(t)
+	repo, _ := m.Repo("w")
+	png := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 1, 2, 3})
+	if _, err := repo.SaveFile("main", "diagrams/sketch.excalidraw.png", png, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit("main", "add sketch", "T", "t@t", nil); err != nil {
+		t.Fatal(err)
+	}
+	sha := mustSha(t, repo, "main", "diagrams/sketch.excalidraw.png")
+	if _, err := repo.SaveFile("main", "diagrams/sketch.excalidraw.png", png+"\x00changed", sha); err != nil {
+		t.Fatal(err)
+	}
+	files, err := repo.DiffWorktree("main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hit *DiffFile
+	for i := range files {
+		if files[i].Path == "diagrams/sketch.excalidraw.png" {
+			hit = &files[i]
+		}
+	}
+	if hit == nil {
+		t.Fatalf("modified binary lost its path: %+v", files)
+	}
+	if hit.Status != "M" || !hit.BinaryLike || len(hit.Hunks) != 0 {
+		t.Fatalf("binary modification: %+v", hit)
+	}
+}
+
 func TestStatusBehindDefault(t *testing.T) {
 	m, _ := fixture(t)
 	repo, _ := m.Repo("w")

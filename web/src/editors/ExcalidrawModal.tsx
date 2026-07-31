@@ -57,7 +57,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
         const res = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-SpecQuill': '1' } });
         if (res.status === 404) {
           // fresh sketch: file is created on first save
-          if (!gone) setPngScene({ scene: { elements: [], appState: {}, files: {} }, sha: '' });
+          if (!gone) setPngScene({ scene: { elements: [], appState: { currentItemRoundness: 'sharp' }, files: {} }, sha: '' });
           return;
         }
         if (!res.ok) throw new Error(`load failed (${res.status})`);
@@ -69,7 +69,8 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
           setPngScene({
             scene: {
               elements: (restored.elements as unknown[]) || [],
-              appState: { viewBackgroundColor: 'transparent' },
+              // square edges by default — existing elements keep their own shape
+              appState: { viewBackgroundColor: 'transparent', currentItemRoundness: 'sharp' },
               files: (restored.files as Record<string, unknown>) || {},
             },
             sha,
@@ -98,9 +99,9 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
     if (png) return pngScene!.scene;
     try {
       const parsed = JSON.parse(file.data!.content);
-      return { elements: parsed.elements || [], appState: { viewBackgroundColor: 'transparent' }, files: parsed.files || {} };
+      return { elements: parsed.elements || [], appState: { viewBackgroundColor: 'transparent', currentItemRoundness: 'sharp' }, files: parsed.files || {} };
     } catch {
-      return { elements: [], appState: {} };
+      return { elements: [], appState: { currentItemRoundness: 'sharp' } };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.data, png, pngScene]);
@@ -112,11 +113,14 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
     setSaving(true);
     try {
       if (png) {
-        // PNG with the scene embedded: natively viewable, still editable
+        // PNG with the scene embedded: natively viewable, still editable.
+        // ALWAYS exported light — the canonical pixels render right on any
+        // forge, and dark mode in-app comes from the CSS invert filter
+        // (a dark-baked export would double-invert there).
         const { exportToBlob } = await import('@excalidraw/excalidraw');
         const blob = await exportToBlob({
           elements: api.getSceneElements() as never,
-          appState: { exportEmbedScene: true, exportBackground: false } as never,
+          appState: { exportEmbedScene: true, exportBackground: false, exportWithDarkMode: false, theme: 'light' } as never,
           files: api.getFiles() as never,
           mimeType: 'image/png',
         });

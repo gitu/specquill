@@ -35,11 +35,20 @@ export function rewriteRefs(docPath: string, content: string, oldPath: string, n
     n++;
     return pre + relLink(dir, newPath) + anchor + post;
   });
-  const fmRe = new RegExp('(^|[\\s\\[,"\'])' + escapeRe(oldPath) + '(?=[\\s\\],"\'#]|$)', 'gm');
-  const newFm = fm.replace(fmRe, (_all, pre: string) => {
-    n++;
-    return pre + newPath;
-  });
+  // frontmatter values are canonically root-relative, but doc-relative and
+  // leading-"/" spellings resolve too (resolveFmRef) — every spelling
+  // normalizes to the canonical root-relative new path on rewrite
+  const spellings = [oldPath, '/' + oldPath];
+  const rel = relLink(dir, oldPath);
+  if (rel !== oldPath) spellings.push(rel);
+  let newFm = fm;
+  for (const pat of spellings) {
+    const fmRe = new RegExp('(^|[\\s\\[,"\'])' + escapeRe(pat) + '(?=[\\s\\],"\'#]|$)', 'gm');
+    newFm = newFm.replace(fmRe, (_all, pre: string) => {
+      n++;
+      return pre + newPath;
+    });
+  }
   if (n === 0) return null;
   return fm ? assemble(newFm, newBody) : newBody;
 }

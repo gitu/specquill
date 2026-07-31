@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { scaffoldConfigYml, scaffoldFor } from './scaffold';
 import { idPattern } from './ids';
 import { BUILTIN_ENTITIES } from './entities';
-import { DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES, DEFAULT_STATUSES, workspaceConfig } from './config';
+import { DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES, DEFAULT_STATUSES, DEFAULT_TRACEABILITY, workspaceConfig } from './config';
 import { defaultDoc } from './derive';
 
 describe('scaffold', () => {
@@ -20,6 +20,7 @@ describe('scaffold', () => {
     expect(cfg.drivers).toEqual(DEFAULT_DRIVERS);
     expect(cfg.statuses).toEqual(DEFAULT_STATUSES);
     expect(cfg.linkTypes).toEqual(DEFAULT_LINK_TYPES);
+    expect(cfg.traceability).toEqual(DEFAULT_TRACEABILITY);
     expect(cfg.properties).toEqual(DEFAULT_PROPERTIES);
   });
 

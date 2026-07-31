@@ -29,7 +29,17 @@ type DiffFile struct {
 // binaryLike marks files whose text diff is useless in review — the PR UI
 // renders before/after previews instead.
 func binaryLike(path string) bool {
-	return strings.HasSuffix(path, ".excalidraw")
+	p := strings.ToLower(path)
+	if strings.HasSuffix(p, ".excalidraw") || strings.HasSuffix(p, ".excalidraw.png") {
+		return true
+	}
+	// raster images: git emits no useful text hunks either way
+	for _, ext := range []string{".png", ".jpg", ".jpeg", ".gif", ".webp"} {
+		if strings.HasSuffix(p, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // DiffRange produces the structured three-dot (merge-base) diff target...source,
@@ -147,6 +157,14 @@ func parseUnifiedDiff(raw string) []DiffFile {
 				files = append(files, *cur)
 			}
 			cur = &DiffFile{Status: "M"}
+			// binary diffs emit no ---/+++ lines to take the path from —
+			// recover it from the header ("a/<p> b/<p>", same path for
+			// modifications; renames overwrite via their own lines)
+			if rest, ok := strings.CutPrefix(line, "diff --git a/"); ok {
+				if i := strings.LastIndex(rest, " b/"); i >= 0 {
+					cur.Path = rest[i+3:]
+				}
+			}
 		case cur == nil:
 			continue
 		case strings.HasPrefix(line, "new file mode"):

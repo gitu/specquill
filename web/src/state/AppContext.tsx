@@ -285,7 +285,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleSpeccy: () => setSpeccyOpen((v) => !v),
       aiSuggestions,
       toggleAI: () => setAI((v) => !v),
-      model: files ? buildModel(files) : undefined,
+      model: files ? buildModel(files, wcfg) : undefined,
       entities: wcfg.entities,
       files,
       schema,

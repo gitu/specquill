@@ -41,6 +41,17 @@ describe('rewriteRefs', () => {
     expect(out).toContain('- specs/venues/venue-ids.md');
   });
 
+  it('rewrites doc-relative and leading-slash frontmatter spellings to the canonical path', () => {
+    const doc = '---\nimplements:\n  - ../specs/venue.md\nmaps_to: [/specs/venue.md#f]\n---\n\nbody\n';
+    const out = rewriteRefs('requirements/REQ-001.md', doc, OLD, NEW)!;
+    expect(out).toContain('- specs/venues/venue-ids.md');
+    expect(out).toContain('[specs/venues/venue-ids.md#f]');
+    // sibling spelling only matches from the moved file's own folder
+    const sib = rewriteRefs('specs/txn.md', '---\nimplements: [venue.md]\n---\n', OLD, NEW)!;
+    expect(sib).toContain('implements: [specs/venues/venue-ids.md]');
+    expect(rewriteRefs('requirements/REQ-001.md', '---\nimplements: [venue.md]\n---\n', OLD, NEW)).toBeNull();
+  });
+
   it('does not touch longer paths sharing the prefix, returns null when unreferenced', () => {
     const doc = '---\nimplements: [specs/venue-extra.md]\n---\n\n[x](specs/venue-extra.md)\n';
     expect(rewriteRefs('requirements/REQ-001.md', doc, OLD, NEW)).toBeNull();

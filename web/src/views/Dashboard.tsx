@@ -3,7 +3,7 @@ import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
-import { buildDashboard, srcMeta } from '../lib/derive';
+import { buildDashboard, driverMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
 import { ForgeReview } from '../components/ForgeReview';
 import { NewDocDialog } from '../components/NewDocDialog';
@@ -24,7 +24,8 @@ export function Dashboard() {
   const covColor = d.cov > 80 ? 'var(--data)' : d.cov > 60 ? 'var(--prod)' : 'var(--reg)';
 
   // needs-your-attention: committed work not yet on the default branch,
-  // mapping docs with drifted fields, and change records still in triage
+  // mapping docs with drifted fields (only when the workspace HAS mappings),
+  // and change records still in triage (ditto)
   const review: ReviewItem[] = [];
   const pending = merge.data?.files?.length ?? 0;
   if (pending > 0) {
@@ -34,18 +35,27 @@ export function Dashboard() {
       sub: `committed on ${app.branch}, not yet on ${defaultBranch} — use Merge in the header`,
     });
   }
-  const driftByMap: Record<string, number> = {};
-  app.model.fields.forEach((f) => { if (f.drift) driftByMap[f.map] = (driftByMap[f.map] || 0) + 1; });
-  Object.entries(driftByMap).forEach(([map, n]) => review.push({
-    key: 'drift' + map, icon: '⇄', fg: 'var(--data)', bg: 'var(--data-bg)',
-    title: (map.split('/').pop() || map) + ' mapping',
-    sub: `${n} drift${n === 1 ? '' : 's'} to confirm`,
-    go: '/editor/' + map,
-  }));
-  app.model.changes.filter((c) => c.status === 'triage').forEach((c) => review.push({
-    key: 'chg' + c.path, icon: '⚑', fg: 'var(--reg)', bg: 'var(--reg-bg)',
-    title: c.name, sub: 'change in triage', go: '/changes?sel=' + encodeURIComponent(c.path),
-  }));
+  if (d.mapEntity) {
+    const driftByMap: Record<string, number> = {};
+    app.model.fields.forEach((f) => { if (f.drift) driftByMap[f.map] = (driftByMap[f.map] || 0) + 1; });
+    Object.entries(driftByMap).forEach(([map, n]) => review.push({
+      key: 'drift' + map, icon: '⇄', fg: 'var(--data)', bg: 'var(--data-bg)',
+      title: (map.split('/').pop() || map) + ' mapping',
+      sub: `${n} drift${n === 1 ? '' : 's'} to confirm`,
+      go: '/editor/' + map,
+    }));
+  }
+  if (d.changeEntity) {
+    // the ATTENTION statuses come from the inbox entity's config, not a
+    // hardcoded 'triage'
+    const attention = new Set(app.model.inbox?.attention || []);
+    app.model.changes.filter((c) => attention.has(c.status)).forEach((c) => review.push({
+      key: 'chg' + c.path, icon: '⚑', fg: 'var(--reg)', bg: 'var(--reg-bg)',
+      title: c.name, sub: `${d.changeEntity!.lower.replace(/s$/, '')} in ${c.status.replace(/_/g, ' ')}`,
+      go: '/changes?sel=' + encodeURIComponent(c.path),
+    }));
+  }
+  const kpiCols = d.tiles.length + (d.showCov ? 1 : 0);
 
   return (
     <div style={sx('flex:1;min-height:0;overflow-y:auto;background:var(--bg)')}>
@@ -56,38 +66,45 @@ export function Dashboard() {
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Overview</h1>
           </div>
           <div style={sx('display:flex;gap:8px')}>
-            <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New requirement</button>
-            <button onClick={() => nav('/changes')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
-              Review changes · {d.openCount}
-            </button>
+            {d.newDoc && (
+              <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New {d.newDoc.label}</button>
+            )}
+            {d.changeEntity && (
+              <button onClick={() => nav('/changes')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
+                Review {d.changeEntity.lower} · {d.openCount}
+              </button>
+            )}
           </div>
         </div>
 
-        <div style={sx('display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px')}>
-          <Kpi label="Open changes" value={String(d.openCount)} sub={`${d.bySource.regulatory} regulatory · ${d.bySource.product} product · ${d.bySource.technical} tech`} />
-          <Kpi label="Requirements" value={String(d.reqCount)} sub={`${d.specCount} specs linked`} />
-          <Kpi label="Mapping drifts" value={String(d.drifts)} sub="need re-validation" valueStyle="color:var(--reg)" />
-          <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)')}>
-            <div style={sx('font-size:11.5px;color:var(--text-2)')}>Trace coverage</div>
-            <div style={sx('display:flex;align-items:baseline;gap:8px;margin-top:8px')}>
-              <span style={sx('font-size:27px;font-weight:700;letter-spacing:-.5px')}>{d.cov}<span style={sx('font-size:15px')}>%</span></span>
+        <div style={sx(`display:grid;grid-template-columns:repeat(${Math.max(kpiCols, 1)},1fr);gap:14px;margin-top:22px`)}>
+          {d.tiles.map((t) => (
+            <Kpi key={t.key} label={t.label} value={t.value} sub={t.sub} valueStyle={t.valueStyle} />
+          ))}
+          {d.showCov && (
+            <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)')}>
+              <div style={sx('font-size:11.5px;color:var(--text-2)')}>Trace coverage</div>
+              <div style={sx('display:flex;align-items:baseline;gap:8px;margin-top:8px')}>
+                <span style={sx('font-size:27px;font-weight:700;letter-spacing:-.5px')}>{d.cov}<span style={sx('font-size:15px')}>%</span></span>
+              </div>
+              <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
+                <div style={sx(`width:${d.cov}%;height:100%;background:${covColor}`)} />
+              </div>
             </div>
-            <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
-              <div style={sx(`width:${d.cov}%;height:100%;background:${covColor}`)} />
-            </div>
-          </div>
+          )}
         </div>
 
-        <div style={sx('display:grid;grid-template-columns:1.65fr 1fr;gap:18px;margin-top:20px;align-items:start')}>
+        <div style={sx(`display:grid;grid-template-columns:${d.changeEntity ? '1.65fr 1fr' : '1fr'};gap:18px;margin-top:20px;align-items:start`)}>
+          {d.changeEntity && (
           <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
             <div style={sx('display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--border)')}>
-              <span style={sx('font-weight:700;font-size:13.5px')}>Requirement changes</span>
+              <span style={sx('font-weight:700;font-size:13.5px')}>{d.changeEntity.label}</span>
               <span style={sx('font-size:11px;color:var(--text-3)')}>— all sources</span>
               <div style={sx('flex:1')} />
               <span onClick={() => nav('/changes')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Open inbox →</span>
             </div>
             {d.feed.map((c) => {
-              const m = srcMeta(c.source);
+              const m = driverMeta(app.model!, c.source);
               return (
                 <div key={c.path} onClick={() => nav('/changes?sel=' + encodeURIComponent(c.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
                   <span style={sx(`flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:${m.bg};color:${m.fg}`)}>
@@ -107,6 +124,7 @@ export function Dashboard() {
               );
             })}
           </div>
+          )}
 
           <div style={sx('display:flex;flex-direction:column;gap:18px')}>
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
@@ -129,6 +147,7 @@ export function Dashboard() {
                 </div>
               )}
             </div>
+            {d.health.length > 0 && (
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);padding:14px 16px')}>
               <div style={sx('font-weight:700;font-size:13.5px;margin-bottom:12px')}>Traceability health</div>
               <div style={sx('display:flex;flex-direction:column;gap:11px')}>
@@ -145,12 +164,13 @@ export function Dashboard() {
                 ))}
               </div>
             </div>
+            )}
             <LinkCheckCard />
             <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>
       </div>
-      {newDoc && <NewDocDialog initialKind="requirement" onClose={() => setNewDoc(false)} />}
+      {newDoc && d.newDoc && <NewDocDialog initialKind={d.newDoc.kind} onClose={() => setNewDoc(false)} />}
     </div>
   );
 }

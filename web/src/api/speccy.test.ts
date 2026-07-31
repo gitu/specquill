@@ -61,4 +61,16 @@ describe('streamChat stream termination', () => {
     const r = await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {});
     expect(r.text).toBe('ok');
   });
+
+  it('every write tool sets the edited flag; failed and read tools do not', async () => {
+    for (const name of ['edit_file', 'create_file', 'move_file', 'delete_file']) {
+      stub(frame({ tool: { name, path: 'specs/a.md', status: 'ok' } }), frame({ done: true }));
+      const r = await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {});
+      expect(r.edited, name).toBe(true);
+    }
+    stub(frame({ tool: { name: 'delete_file', path: 'x.md', status: 'error', detail: 'not found' } }), frame({ done: true }));
+    expect((await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {})).edited).toBe(false);
+    stub(frame({ tool: { name: 'read_file', path: 'x.md', status: 'ok' } }), frame({ done: true }));
+    expect((await streamChat('w', { messages: [{ role: 'user', content: 'x' }] }, () => {})).edited).toBe(false);
+  });
 });

@@ -34,7 +34,13 @@ func (s *Server) getRaw(w http.ResponseWriter, r *http.Request, repo *project.Pr
 	if !ok {
 		ct = "application/octet-stream"
 	}
-	content, sha, err := repo.File(r.URL.Query().Get("ref"), p)
+	// at=head serves the last COMMITTED blob instead of the worktree state —
+	// the before side of binary diffs in the changes drawer
+	read := repo.File
+	if r.URL.Query().Get("at") == "head" {
+		read = repo.FileAt
+	}
+	content, sha, err := read(r.URL.Query().Get("ref"), p)
 	if err != nil {
 		gitFail(w, err)
 		return

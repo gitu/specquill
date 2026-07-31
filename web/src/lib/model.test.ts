@@ -3,21 +3,25 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildModel, excalidrawToSvg, extractReferences, isReservedMd, parseProps, stripFrontmatter } from './model';
+import { workspaceConfig } from './config';
+import { buildDashboard } from './derive';
 
 const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '../../../repo');
 
 function loadRepo(): Record<string, string> {
   const files: Record<string, string> = {};
-  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes']) {
+  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes', 'products']) {
     for (const name of readdirSync(join(REPO, folder))) {
       files[`${folder}/${name}`] = readFileSync(join(REPO, folder, name), 'utf8');
     }
   }
+  files['.specquill/config.yml'] = readFileSync(join(REPO, '.specquill/config.yml'), 'utf8');
   return files;
 }
 
 describe('buildModel over the demo repo', () => {
-  const model = buildModel(loadRepo());
+  const files = loadRepo();
+  const model = buildModel(files, workspaceConfig(files['.specquill/config.yml']));
 
   it('finds all entities', () => {
     expect(model.regs).toHaveLength(3);
@@ -34,11 +38,64 @@ describe('buildModel over the demo repo', () => {
     expect(drifts[0].name).toBe('trade.executionTimestamp');
   });
 
-  it('parses requirement links and drivers', () => {
+  it('parses requirement links and derives driver types from the targets', () => {
     const req = model.requirements.find((r) => r.id === 'REQ-042')!;
+    // flat path list; regulations/* derives regulatory (entity driver), the
+    // products/* target derives product (custom entity's driver key)
+    expect(req.drivers.map((d) => d.ref)).toEqual(['regulations/mifid-ii.md#rts-22-art-26', 'products/ops-t1-settlement-sla.md']);
     expect(req.drivers.map((d) => d.type)).toEqual(['regulatory', 'product']);
-    expect(req.implements).toContain('specs/txn-report.md');
     expect(req.coverage).toBeCloseTo(0.82);
+    // the upward chain: the SPEC carries implements -> requirement
+    const spec = model.specs.find((s) => s.path === 'specs/txn-report.md')!;
+    expect(spec.implements).toContain('requirements/REQ-042.md');
+    expect(model.requirements.every((r) => r.implements.length === 0)).toBe(true);
+  });
+
+  it('the demo workspace reads healthy along the chain', () => {
+    // guards the fixture migration: with upward links, no chain bar sits at
+    // 0% for want of direction (the old bug this rework fixes)
+    const d = buildDashboard(model);
+    const bars = Object.fromEntries(d.health.map((h) => [h.label, h.pct]));
+    expect(bars['Requirements → drivers']).toBe(100);
+    expect(bars['Requirements ← specs']).toBeGreaterThan(50); // 4 of 6 implemented
+    expect(bars['Specs → data fields']).toBe(100);
+  });
+
+  it('classifies by frontmatter type first, folder only as fallback', () => {
+    const files = {
+      // type wins over location: a requirement parked outside its folder
+      'inbox/parked.md': '---\ntype: Requirement\nid: R-9\ntitle: Parked\ndrivers:\n  - regulations/a.md\n---\n',
+      // normalized forms all land: kind, spaced, cased
+      'notes/a.md': '---\ntype: spec\ntitle: A\n---\n',
+      'notes/b.md': '---\ntype: work_item\ntitle: B\n---\n',
+      'notes/c.md': '---\ntype: Change Record\ntitle: C\nsource: product\nstatus: triage\n---\n',
+      // no recognizable type → the folder decides
+      'specs/typeless.md': '---\ntitle: T\n---\n',
+      // neither type nor folder → unclassified
+      'misc/loose.md': '---\ntype: Guide\ntitle: L\n---\n',
+      'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
+    };
+    const m = buildModel(files);
+    const kindOf = (p: string) => m.docs.find((d) => d.path === p)?.kind;
+    expect(kindOf('inbox/parked.md')).toBe('requirement');
+    expect(kindOf('notes/a.md')).toBe('spec');
+    expect(kindOf('notes/b.md')).toBe('work_item');
+    expect(kindOf('notes/c.md')).toBe('change');
+    expect(kindOf('specs/typeless.md')).toBe('spec');
+    expect(kindOf('misc/loose.md')).toBeUndefined();
+    // the parked requirement fully participates: backlinks reach its driver
+    expect(buildDashboard(m).health.find((h) => h.label === 'Requirements → drivers')!.pct).toBe(100);
+    // …and the change bucket picked up the mistyped-folder change record
+    expect(m.changes.map((c) => c.path)).toEqual(['notes/c.md']);
+  });
+
+  it('classifies docs by the configured entities, custom families included', () => {
+    const prod = model.docs.find((d) => d.path === 'products/ops-t1-settlement-sla.md')!;
+    expect(prod.kind).toBe('product_driver');
+    expect(prod.group).toBe('why');
+    // a change doc's driver type comes from its own source: frontmatter
+    const chg = model.docs.find((d) => d.kind === 'change' && d.source === 'technical');
+    expect(chg).toBeTruthy();
   });
 
   it('extracts change impact and diff', () => {

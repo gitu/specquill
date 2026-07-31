@@ -2,7 +2,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { buildChanges, reqByName, srcMeta, statusMeta } from '../lib/derive';
+import { buildChanges, driverMeta, reqByName, statusMeta } from '../lib/derive';
 import { Loading } from './Dashboard';
 import { IconSpark } from '../components/icons';
 
@@ -18,7 +18,7 @@ export function ChangesView() {
   const setFilter = (f: string) => setParams({ filter: f });
   const select = (path: string) => setParams({ filter, sel: path });
 
-  const selMeta = sel ? srcMeta(sel.source) : null;
+  const selMeta = sel ? driverMeta(app.model, sel.source) : null;
   const impacts = sel ? [
     ...sel.impReqs.map((r) => ({
       key: 'r' + r, badge: r, label: reqByName(app.model!, r)?.title || r, tag: 'needs update', tagColor: 'var(--reg)',
@@ -45,19 +45,21 @@ export function ChangesView() {
       <div style={sx('width:328px;flex:none;border-right:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column')}>
         <div style={sx('padding:12px 14px 10px;border-bottom:1px solid var(--border)')}>
           <div style={sx('display:flex;align-items:center;gap:8px')}>
-            <span style={sx('font-weight:700;font-size:14px')}>Changes</span>
+            <span style={sx('font-weight:700;font-size:14px')}>{app.model.inbox?.label || 'Changes'}</span>
             <span style={sx('font-size:11px;color:var(--text-3)')}>{items.length} open</span>
           </div>
           <div style={sx('display:flex;gap:4px;margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:3px')}>
             <span onClick={() => setFilter('all')} style={sx(fSeg(filter === 'all'))}>All</span>
-            <span onClick={() => setFilter('regulatory')} style={sx(fSeg(filter === 'regulatory'))}>Reg</span>
-            <span onClick={() => setFilter('product')} style={sx(fSeg(filter === 'product'))}>Product</span>
-            <span onClick={() => setFilter('technical')} style={sx(fSeg(filter === 'technical'))}>Tech</span>
+            {app.model.driverDefs.map((dd) => (
+              <span key={dd.key} onClick={() => setFilter(dd.key)} title={dd.label} style={sx(fSeg(filter === dd.key))}>
+                {dd.label.length > 7 ? dd.label.slice(0, 3) : dd.label}
+              </span>
+            ))}
           </div>
         </div>
         <div style={sx('flex:1;overflow-y:auto')}>
           {items.map((c) => {
-            const m = srcMeta(c.source), st = statusMeta(c.status);
+            const m = driverMeta(app.model!, c.source), st = statusMeta(c.status);
             const active = sel && sel.path === c.path;
             return (
               <div key={c.path} onClick={() => select(c.path)}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"specquill/server/internal/project"
+	"strings"
 
 	"specquill/server/internal/auth"
 	"specquill/server/internal/authz"
@@ -63,15 +64,20 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *project.P
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
 	if err := repo.DeleteFile(r.URL.Query().Get("branch"), r.PathValue("path")); err != nil {
 		gitFail(w, err)
 		return
 	}
+	s.publish("save", repo.Key(), branch)
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// postMove renames a file in the branch worktree via git mv; the reference
-// rewrite that usually follows is a series of ordinary PUTs from the client.
+// postMove renames a file — or, with a trailing slash on from, a whole
+// folder — in the branch worktree via git mv, and rewrites every document
+// referencing the moved path(s) to the new location (server-side, sha-guarded
+// worktree saves). The response lists the rewritten paths; folder moves also
+// report how many files moved.
 func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var body struct{ From, To string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From == "" || body.To == "" {
@@ -79,12 +85,23 @@ func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if err := repo.MoveFile(r.URL.Query().Get("branch"), body.From, body.To); err != nil {
+	if strings.HasSuffix(body.From, "/") || strings.HasSuffix(body.To, "/") {
+		moved, rewritten, err := repo.MoveFolderRewriting(r.URL.Query().Get("branch"), body.From, body.To)
+		if err != nil {
+			gitFail(w, err)
+			return
+		}
+		s.publish("save", repo.Key(), branch)
+		jsonOK(w, map[string]any{"from": body.From, "to": body.To, "moved": moved, "rewritten": rewritten})
+		return
+	}
+	rewritten, err := repo.MoveFileRewriting(r.URL.Query().Get("branch"), body.From, body.To)
+	if err != nil {
 		gitFail(w, err)
 		return
 	}
 	s.publish("save", repo.Key(), branch)
-	jsonOK(w, map[string]string{"from": body.From, "to": body.To})
+	jsonOK(w, map[string]any{"from": body.From, "to": body.To, "rewritten": rewritten})
 }
 
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request, repo *project.Project) {

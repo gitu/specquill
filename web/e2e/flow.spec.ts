@@ -11,7 +11,9 @@ test('dashboard shows live KPIs', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByText('Trace coverage')).toBeVisible();
-  await expect(page.getByText('Requirement changes')).toBeVisible();
+  // the feed card takes the change entity's label from the workspace config
+  await expect(page.getByText('Changes', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Traceability health')).toBeVisible();
 });
 
 test('graph renders from the model', async ({ page }) => {

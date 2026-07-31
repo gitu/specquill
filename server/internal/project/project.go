@@ -10,10 +10,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/okf"
+	"specquill/server/internal/refactor"
 )
 
 type Project struct {
@@ -228,6 +230,144 @@ func (p *Project) MoveFile(branch, from, to string) error {
 		return err
 	}
 	return p.Repo.MoveFile(branch, fullFrom, fullTo)
+}
+
+// MoveFileRewriting moves a file and rewrites every document referencing it
+// to the new location — the server-side consolidation of what used to be a
+// client-driven PUT loop. Rewrites are ordinary worktree saves guarded by
+// each document's current blob sha, so a concurrent edit surfaces as
+// gitx.ErrStale instead of being clobbered. Paths in and out are
+// project-relative (refactor operates on the project's own path space).
+func (p *Project) MoveFileRewriting(branch, from, to string) (rewritten []string, err error) {
+	from, err = safeRel(from)
+	if err != nil {
+		return nil, err
+	}
+	to, err = safeRel(to)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.MoveFile(branch, from, to); err != nil {
+		return nil, err
+	}
+	files, err := p.Snapshot(branch)
+	if err != nil {
+		return nil, err
+	}
+	exists := func(rel string) bool { _, ok := files[rel]; return ok }
+	// the moved document's OWN relative links (embedded diagrams and images
+	// in particular) must keep resolving from its new directory
+	if strings.HasSuffix(to, ".md") {
+		if content, sha, ferr := p.File(branch, to); ferr == nil {
+			if next, changed := refactor.RebaseLinks(content, from, to, exists); changed {
+				if _, serr := p.SaveFile(branch, to, next, sha); serr != nil {
+					return nil, serr
+				}
+			}
+		}
+	}
+	rewritten = []string{}
+	for _, rel := range refactor.ReferencingDocs(files, from) {
+		// fresh read: the rewrite must apply to the branch's current content,
+		// and the returned sha is the staleness precondition for the save
+		content, sha, err := p.File(branch, rel)
+		if err != nil {
+			return rewritten, err
+		}
+		next, changed := refactor.RewriteRefs(content, rel, from, to)
+		if !changed {
+			continue
+		}
+		if _, err := p.SaveFile(branch, rel, next, sha); err != nil {
+			return rewritten, err
+		}
+		rewritten = append(rewritten, rel)
+	}
+	return rewritten, nil
+}
+
+// MoveFolderRewriting moves a whole folder (one git mv on the directory) and
+// rewrites every reference to any file it contained — including references
+// between the moved files themselves, which keep working at their new
+// root-relative paths. Returns the number of files moved and the
+// project-relative paths of the rewritten documents.
+func (p *Project) MoveFolderRewriting(branch, from, to string) (moved int, rewritten []string, err error) {
+	from = strings.Trim(from, "/")
+	to = strings.Trim(to, "/")
+	if from, err = safeRel(from); err != nil {
+		return 0, nil, err
+	}
+	if to, err = safeRel(to); err != nil {
+		return 0, nil, err
+	}
+	if to == from || strings.HasPrefix(to+"/", from+"/") {
+		return 0, nil, fmt.Errorf("cannot move %s into itself", from)
+	}
+	// enumerate the old→new pairs BEFORE the move — they drive the rewrite
+	before, err := p.Snapshot(branch)
+	if err != nil {
+		return 0, nil, err
+	}
+	prefix := from + "/"
+	var pairs [][2]string
+	for rel := range before {
+		if strings.HasPrefix(rel, prefix) {
+			pairs = append(pairs, [2]string{rel, to + "/" + rel[len(prefix):]})
+		}
+	}
+	if len(pairs) == 0 {
+		return 0, nil, fmt.Errorf("not found: %s/", from)
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i][0] < pairs[j][0] })
+	if err := p.MoveFile(branch, from, to); err != nil {
+		return 0, nil, err
+	}
+	files, err := p.Snapshot(branch)
+	if err != nil {
+		return len(pairs), nil, err
+	}
+	rels := make([]string, 0, len(files))
+	for rel := range files {
+		if strings.HasSuffix(rel, ".md") {
+			rels = append(rels, rel)
+		}
+	}
+	sort.Strings(rels)
+	exists := func(rel string) bool { _, ok := files[rel]; return ok }
+	oldOf := map[string]string{}
+	for _, pr := range pairs {
+		oldOf[pr[1]] = pr[0]
+	}
+	rewritten = []string{}
+	for _, rel := range rels {
+		// fresh read: the rewrite must apply to the branch's current content,
+		// and the returned sha is the staleness precondition for the save
+		content, sha, err := p.File(branch, rel)
+		if err != nil {
+			return len(pairs), rewritten, err
+		}
+		next, changedAny := content, false
+		// moved documents first rebase their OWN relative links (embedded
+		// diagrams, images, doc links) against the new directory
+		if old, moved := oldOf[rel]; moved {
+			if out, changed := refactor.RebaseLinks(next, old, rel, exists); changed {
+				next, changedAny = out, true
+			}
+		}
+		for _, pr := range pairs {
+			if out, changed := refactor.RewriteRefs(next, rel, pr[0], pr[1]); changed {
+				next, changedAny = out, true
+			}
+		}
+		if !changedAny {
+			continue
+		}
+		if _, err := p.SaveFile(branch, rel, next, sha); err != nil {
+			return len(pairs), rewritten, err
+		}
+		rewritten = append(rewritten, rel)
+	}
+	return len(pairs), rewritten, nil
 }
 
 func (p *Project) FileHistory(ref, rel string, limit int) ([]gitx.HistoryEntry, error) {

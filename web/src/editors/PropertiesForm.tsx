@@ -344,11 +344,17 @@ function Field({ fieldKey, type, enumValues, options, value, refTargets, anchorO
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
-  // drivers ([{type, ref}]) get a dedicated editor
+  // drivers: legacy `[{type, ref}]` maps edit as the flat path list the model
+  // standardized on — removing/re-adding entries writes the flat form; the
+  // explicit legacy types stay for display until then
   if (fieldKey === 'drivers' && Array.isArray(value) && value.every((v) => v !== null && typeof v === 'object')) {
+    const legacy = value as { type?: string; ref?: string }[];
+    const explicit: Record<string, string> = {};
+    legacy.forEach((d) => { if (d.ref && d.type) explicit[String(d.ref)] = String(d.type); });
     return (
-      <DriversField
-        items={value as { type?: string; ref?: string }[]}
+      <DriversListField
+        items={legacy.map((d) => String(d.ref || '')).filter(Boolean)}
+        explicit={explicit}
         refTargets={refTargets}
         onSet={onSet}
         onOpenPath={onOpenPath}
@@ -371,6 +377,9 @@ function Field({ fieldKey, type, enumValues, options, value, refTargets, anchorO
   }
 
   if (Array.isArray(value)) {
+    if (fieldKey === 'drivers') {
+      return <DriversListField items={value.map(String)} refTargets={refTargets} onSet={onSet} onOpenPath={onOpenPath} />;
+    }
     const listOptions = (fieldKey === 'anchors' || type === 'anchors') ? anchorOpts : type === 'links' ? refTargets : [];
     return <ListField fieldKey={fieldKey} items={value.map(String)} options={listOptions} facets={type === 'links'} onSet={onSet} onOpenPath={onOpenPath} />;
   }
@@ -553,90 +562,46 @@ function AddPropertyRow({ schema, presentKeys, corpusKeys, optionsFor, refTarget
   );
 }
 
-// DriversField edits `drivers: [{type, ref}]` in place: the type comes from
-// the workspace driver taxonomy, the ref is a searchable path#anchor target
-// or free text.
-function DriversField({ items, refTargets, onSet, onOpenPath }: {
-  items: { type?: string; ref?: string }[];
+// DriversListField edits `drivers:` as the flat path list the model
+// standardized on. The driver TYPE is derived from the referenced document
+// (its `source:`, else its family's `driver` key) and rendered as a colored
+// chip — never authored. `explicit` carries legacy `{type, ref}` types, which
+// win for display until the entry is rewritten. The picker is biased toward
+// the WHY-group folders the workspace's link_types point `drivers` at.
+function DriversListField({ items, explicit, refTargets, onSet, onOpenPath }: {
+  items: string[];
+  explicit?: Record<string, string>;
   refTargets: RefTarget[];
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
   const app = useApp();
-  const types = parseTaxonomy(app.configYml || '').drivers;
-  const effTypes = types.length ? types : [
-    { key: 'regulatory', label: 'Regulatory', icon: '⚖', color: 'var(--reg)' },
-    { key: 'product', label: 'Product', icon: '◆', color: 'var(--prod)' },
-    { key: 'technical', label: 'Technical', icon: '⚙', color: 'var(--text-2)' },
-  ];
-  const isLink = (t: string) => /([\w-]+\/[\w.\/-]+\.md)/.test(t);
-  const update = (i: number, patch: { type?: string; ref?: string }) =>
-    onSet(items.map((d, j) => (j === i ? { ...d, ...patch } : d)));
-  return (
-    <>
-      {items.map((d, i) => {
-        const meta = effTypes.find((t) => t.key === d.type);
-        const ref = String(d.ref ?? '');
-        return (
-          <span key={i + ':' + (d.type || '') + ':' + ref}
-            style={sx('display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border:1px solid var(--border);border-left:3px solid ' + (meta?.color || 'var(--border-2)') + ';border-radius:7px;background:var(--surface-2)')}>
-            <select
-              value={d.type || ''}
-              onChange={(e) => update(i, { type: e.target.value })}
-              style={{ ...sx(INPUT), height: 22, padding: '0 4px', fontWeight: 600, color: meta?.color || 'var(--text-2)', border: 'none', background: 'transparent' }}
-            >
-              {!effTypes.some((t) => t.key === d.type) && <option value={d.type || ''}>{d.type || '?'}</option>}
-              {effTypes.map((t) => <option key={t.key} value={t.key}>{t.icon} {t.label}</option>)}
-            </select>
-            <DriverRef current={ref} options={refTargets} onCommit={(v) => update(i, { ref: v })} />
-            {isLink(ref) && (
-              <span title={'open ' + ref.split('#')[0]} onClick={() => onOpenPath(ref.split('#')[0])}
-                style={sx('cursor:pointer;color:var(--prod);font-size:11px')}>↗</span>
-            )}
-            <span title="remove driver" onClick={() => onSet(items.filter((_, j) => j !== i))}
-              style={sx('cursor:pointer;color:var(--text-3);font-size:12px;line-height:1')}>×</span>
-          </span>
-        );
-      })}
-      <button
-        onClick={() => onSet([...items, { type: effTypes[0].key, ref: '' }])}
-        style={{ ...sx(INPUT), borderStyle: 'dashed', cursor: 'pointer' }}
-      >
-        + add driver
-      </button>
-    </>
-  );
+  const model = app.model;
+  const taxonomy = parseTaxonomy(app.configYml || '').drivers;
+  const typeOf = (ref: string): string => {
+    if (explicit?.[ref]) return explicit[ref];
+    const t = model?.docs.find((d) => d.path === ref.split('#')[0]);
+    if (!t) return '';
+    return t.source || model?.entities.find((e) => e.kind === t.kind)?.driver || '';
+  };
+  const chipFor = (ref: string) => {
+    const ty = typeOf(ref);
+    if (!ty) return null;
+    const meta = taxonomy.find((t) => t.key === ty);
+    return { label: (meta?.icon || '•') + ' ' + (meta?.label || ty), color: meta?.color || 'var(--text-2)' };
+  };
+  const folders = (model?.entities || []).filter((e) => e.group === 'why').map((e) => e.folder);
+  const hit = (t: RefTarget) => folders.some((f) => t.value.startsWith(f));
+  const biased = [...refTargets.filter(hit), ...refTargets.filter((t) => !hit(t))];
+  return <ListField fieldKey="drivers" items={items} options={biased} facets chipFor={chipFor} onSet={onSet} onOpenPath={onOpenPath} />;
 }
 
-// DriverRef: the searchable half of a driver chip — workspace docs and their
-// anchors as options, free text (prose drivers) still allowed.
-function DriverRef({ current, options, onCommit }: {
-  current: string;
-  options: RefTarget[];
-  onCommit: (v: string) => void;
-}) {
-  const [text, setText] = useState(current);
-  const isLink = (t: string) => /([\w-]+\/[\w.\/-]+\.md)/.test(t);
-  return (
-    <Combobox
-      text={text}
-      onText={setText}
-      options={options}
-      placeholder="doc path or free text"
-      ariaLabel="driver ref"
-      refFacets
-      style={{ ...sx(INPUT), height: 22, width: Math.max(180, text.length * 6.6), border: 'none', background: 'transparent', color: isLink(text) ? 'var(--prod)' : 'var(--text)' }}
-      onCommit={(v) => { if (v !== current) onCommit(v); }}
-      onEscape={() => setText(current)}
-    />
-  );
-}
-
-function ListField({ fieldKey, items, options, facets, onSet, onOpenPath }: {
+function ListField({ fieldKey, items, options, facets, chipFor, onSet, onOpenPath }: {
   fieldKey: string;
   items: string[];
   options: RefTarget[];
   facets?: boolean;
+  chipFor?: (item: string) => { label: string; color: string } | null;
   onSet: (v: unknown) => void;
   onOpenPath: (path: string) => void;
 }) {
@@ -645,10 +610,16 @@ function ListField({ fieldKey, items, options, facets, onSet, onOpenPath }: {
   const addable = options.filter((o) => !items.includes(o.value));
   return (
     <>
-      {items.map((it, i) => (
+      {items.map((it, i) => {
+        const chip = chipFor?.(it);
+        return (
         <span key={i} style={sx("display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:6px;font-size:11.5px;font-family:'JetBrains Mono',monospace;background:var(--surface-2);color:" + (isLink(it) ? 'var(--prod)' : 'var(--text-2)'))}>
+          {chip && (
+            <span style={sx(`font-size:10px;font-weight:600;color:${chip.color};font-family:inherit`)}>{chip.label}</span>
+          )}
           <span
             onClick={isLink(it) ? () => onOpenPath(it.split('#')[0]) : undefined}
+            title={isLink(it) ? 'open ' + it.split('#')[0] : undefined}
             style={isLink(it) ? { cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'var(--prod-line)' } : undefined}
           >
             {it}
@@ -661,7 +632,8 @@ function ListField({ fieldKey, items, options, facets, onSet, onOpenPath }: {
             ×
           </span>
         </span>
-      ))}
+        );
+      })}
       {addable.length ? (
         // append via search-picker; blur keeps the draft so clicking away
         // never accidentally writes a half-typed entry
