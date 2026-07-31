@@ -287,6 +287,33 @@ func TestSpeccyDrawAndReadSketch(t *testing.T) {
 	if _, _, err := tb.exec("draw_sketch", `{"path":"diagrams/flow.excalidraw","scene":"{\"elements\":[]}"}`); err != nil {
 		t.Fatalf("redraw failed: %v", err)
 	}
+
+	// preferred format: .excalidraw.png — rendered pixels + embedded scene,
+	// with the box caption given as a label (expanded to bound text)
+	out, halt, err = tb.exec("draw_sketch", `{"path":"diagrams/arch.excalidraw.png","scene":"[{\"type\":\"rectangle\",\"x\":10,\"y\":10,\"width\":170,\"height\":60,\"label\":\"Gateway\"}]"}`)
+	if err != nil || halt {
+		t.Fatalf("png draw failed: %v halt=%v", err, halt)
+	}
+	if !strings.Contains(out, "drew diagrams/arch.excalidraw.png (2 elements") {
+		t.Fatalf("result %q", out)
+	}
+	raw, _, _ := proj.File(tb.branch, "diagrams/arch.excalidraw.png")
+	if !strings.HasPrefix(raw, "\x89PNG") {
+		t.Fatal("saved sketch is not a PNG")
+	}
+	embedded, err := sketch.ExtractScene([]byte(raw))
+	if err != nil || !strings.Contains(embedded, "Gateway") || !strings.Contains(embedded, `"containerId"`) {
+		t.Fatalf("embedded scene wrong (%v):\n%s", err, embedded)
+	}
+	// discoverable but not searchable (binary stays out of the text snapshot)
+	if content, ok := tb.files["diagrams/arch.excalidraw.png"]; !ok || content != "" {
+		t.Fatalf("snapshot entry = %q ok=%v", content, ok)
+	}
+	// the sketch reads back as its scene, ready for a modify-and-redraw
+	out, _, err = tb.exec("read_file", `{"path":"diagrams/arch.excalidraw.png"}`)
+	if err != nil || !strings.Contains(out, "Gateway") {
+		t.Fatalf("read-back failed (%v): %q", err, out)
+	}
 	// guards: extension, JSON validity, read-only, text tools refuse sketches
 	if _, _, err := tb.exec("draw_sketch", `{"path":"diagrams/x.md","scene":"[]"}`); err == nil {
 		t.Fatal("non-sketch path accepted")

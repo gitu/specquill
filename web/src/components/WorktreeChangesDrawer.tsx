@@ -22,8 +22,9 @@ function WorktreeArtifact({ path, oldPath, status }: { path: string; oldPath?: s
   const legacyJson = /\.excalidraw$/i.test(path);
   const before = useFileAtHead(legacyJson ? app.repoId : undefined, app.branch, beforePath, true);
   const after = useFileQuery(legacyJson ? app.repoId : undefined, app.branch, path);
-  // bust the raw endpoint's short cache once per drawer mount
-  const v = useMemo(() => Date.now().toString(36), []);
+  // bust the raw endpoint's short cache per drawer mount AND whenever sketch
+  // bytes change while the drawer is open (speccy draw + pixel upgrade)
+  const v = useMemo(() => Date.now().toString(36) + '-' + app.sketchGen, [app.sketchGen]);
   const renderJson = (raw?: string) => {
     if (!raw) return EMPTY;
     try { return excalidrawToSvg(JSON.parse(raw), EXCALIDRAW_CMAP); } catch { return '<div style="padding:20px;color:var(--reg)">malformed</div>'; }

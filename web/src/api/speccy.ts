@@ -92,7 +92,7 @@ export async function streamChat(
         onDelta(result.text);
       }
       if (payload.tool) {
-        const writeTools = ['edit_file', 'create_file', 'move_file', 'delete_file'];
+        const writeTools = ['edit_file', 'create_file', 'move_file', 'delete_file', 'draw_sketch'];
         if (payload.tool.status === 'ok' && writeTools.includes(payload.tool.name)) {
           result.edited = true;
         }

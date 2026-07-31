@@ -8,6 +8,7 @@ import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, nameChat, 
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
 import { appendEntry, autoTitle, dismissChat, nameChatOnce, newChat, setActiveChat, updateChat, useChats } from '../state/chats';
+import { upgradeSketchPixels } from '../editors/sketchUpgrade';
 
 const SUGGESTIONS = ['Which teams should we notify about the RTS 22 change?', 'Compare our retention rules to the GDPR spec'];
 
@@ -102,6 +103,9 @@ export function Speccy() {
       // vanished path — follow the move, or step off the deleted file
       let openMovedTo: string | null = null;
       let openDeleted = false;
+      // sketch PNGs drawn this turn: re-exported through the real excalidraw
+      // after the reply (the server pixels are a clean-line approximation)
+      const drawnSketches = new Set<string>();
       const result = await streamChat(
         app.repoId,
         { messages, focusPath, branch: app.branch, allowEdits },
@@ -112,6 +116,7 @@ export function Speccy() {
             if (t.name === 'move_file' && t.path?.startsWith(focusPath + ' → ')) openMovedTo = t.path.split(' → ')[1] || null;
             if (t.name === 'delete_file' && t.path === focusPath) openDeleted = true;
           }
+          if (t.status === 'ok' && t.name === 'draw_sketch' && t.path?.endsWith('.excalidraw.png')) drawnSketches.add(t.path);
           appendEntry(repoKey, chatId, { kind: 'tool', tool: t });
         },
       );
@@ -133,6 +138,20 @@ export function Speccy() {
         qc.invalidateQueries({ queryKey: ['status', app.repoId, app.branch] });
         qc.invalidateQueries({ queryKey: ['snapshot', app.repoId, app.branch] });
         qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
+      }
+      if (drawnSketches.size) {
+        app.bumpSketchGen(); // show the server-rendered pixels right away
+        // then quietly re-export each sketch through the real excalidraw
+        void (async () => {
+          let upgraded = false;
+          for (const p of drawnSketches) {
+            if (await upgradeSketchPixels(app.repoId!, app.branch, p)) upgraded = true;
+          }
+          if (upgraded) {
+            app.bumpSketchGen();
+            void qc.invalidateQueries({ queryKey: ['worktreediff', app.repoId, app.branch] });
+          }
+        })();
       }
       if (openMovedTo) nav('/editor/' + openMovedTo);
       else if (openDeleted) nav('/editor');
