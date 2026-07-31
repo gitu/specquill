@@ -228,6 +228,56 @@ func TestDynamicManifestGates(t *testing.T) {
 	}
 }
 
+// The repository path is interpolated into forge API URLs and reaches git
+// argv, so it is screened by a positive allowlist rather than a list of
+// refusals. Pinned here because the failure mode is silent: a spec carrying
+// URL syntax would otherwise alter the API request it lands in.
+func TestParseDynSpecAllowlist(t *testing.T) {
+	gh := &Server{cfg: &config.Config{Auth: config.AuthConfig{
+		Forge: config.ForgeAuthConfig{Kind: forge.KindGitHub},
+	}}}
+	gl := &Server{cfg: &config.Config{Auth: config.AuthConfig{
+		Forge: config.ForgeAuthConfig{Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.com"},
+	}}}
+	ok := []struct {
+		srv        *Server
+		spec       string
+		path, name string
+	}{
+		{gh, "acme/specs", "acme/specs", ""},
+		{gh, "acme/specs.git", "acme/specs", ""},
+		{gh, "acme/specs#docs", "acme/specs", "docs"},
+		{gh, "https://github.com/acme/specs.git#docs", "acme/specs", "docs"},
+		{gl, "group/sub/specs", "group/sub/specs", ""}, // gitlab nests
+	}
+	for _, c := range ok {
+		p, n, err := c.srv.parseDynSpec(c.spec)
+		if err != nil || p != c.path || n != c.name {
+			t.Errorf("%q: got (%q, %q, %v), want (%q, %q, nil)", c.spec, p, n, err, c.path, c.name)
+		}
+	}
+	bad := []struct {
+		srv  *Server
+		spec string
+	}{
+		{gh, ""}, {gh, "acme"}, {gh, "acme/"}, {gh, "/specs"},
+		{gh, "acme/../../etc"}, {gh, "acme/.git"}, {gh, "-acme/specs"},
+		{gh, "acme/specs?per_page=1"},   // query injection into the API URL
+		{gh, "acme/specs%2f..%2fother"}, // encoded traversal
+		{gh, "acme/specs\nX-Evil: 1"},   // header/control characters
+		{gh, "user@host/specs"},
+		{gh, "group/sub/specs"},                         // github takes exactly owner/repo
+		{gh, "https://evil.example.com/acme/specs.git"}, // foreign host
+		{gl, "https://gitlab.example.com.evil.io/a/b"},  // lookalike host
+		{gl, "ssh://git@gitlab.example.com/a/b.git"},    // non-http scheme
+	}
+	for _, c := range bad {
+		if p, _, err := c.srv.parseDynSpec(c.spec); err == nil {
+			t.Errorf("%q should be refused, got path %q", c.spec, p)
+		}
+	}
+}
+
 // The manifest is repo content — a hostile one must never reach a clone
 // path. The derived project id is a single screened path segment, so a
 // traversing or separator-bearing name is refused outright.

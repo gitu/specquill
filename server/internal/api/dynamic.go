@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -73,6 +74,16 @@ func (s *Server) forgeHostName() string {
 	return "gitlab.com"
 }
 
+// forgePathRe is the POSITIVE allowlist for a forge repository path: two or
+// more `/`-separated segments, each starting alphanumeric and continuing in
+// [A-Za-z0-9._-]. Written as an allowlist rather than a list of refusals
+// because this value is interpolated into forge API URLs and reaches git
+// argv: it excludes traversal (a segment cannot start with "."), empty
+// segments, option-shaped leading "-", URL syntax ("?", "#", "@", ":") and
+// every control character in one rule. GitLab's nested groups are why more
+// than two segments are allowed; GitHub is pinned to exactly two below.
+var forgePathRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+$`)
+
 // parseDynSpec splits `owner/repo[.git][#name]` — or the same as a full URL
 // on the deployment's forge host — into the forge path and subproject name.
 func (s *Server) parseDynSpec(spec string) (path, name string, err error) {
@@ -94,8 +105,13 @@ func (s *Server) parseDynSpec(spec string) (path, name string, err error) {
 		spec = strings.Trim(u.Path, "/")
 	}
 	spec = strings.TrimSuffix(strings.Trim(spec, "/"), ".git")
-	if spec == "" || strings.Contains(spec, "..") || strings.Count(spec, "/") < 1 {
+	// the allowlist is the final gate: everything downstream (forge API URLs,
+	// git argv) may assume a well-formed path from here on
+	if !forgePathRe.MatchString(spec) {
 		return "", "", fmt.Errorf("repository must be named owner/repo")
+	}
+	if s.cfg.Auth.Forge.Kind == forge.KindGitHub && strings.Count(spec, "/") != 1 {
+		return "", "", fmt.Errorf("github repositories are named owner/repo")
 	}
 	return spec, name, nil
 }
