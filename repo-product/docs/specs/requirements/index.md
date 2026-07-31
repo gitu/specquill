@@ -24,3 +24,4 @@
 - [Tenant-scoped URLs and a first-class config tenant](REQ-022.md)
 - [Encrypted tenant credentials for repo connection](REQ-023.md)
 - [Bring-your-own-token forge authentication](REQ-024.md)
+- [Token-scoped dynamic projects with clone quota and idle cleanup](REQ-025.md)
