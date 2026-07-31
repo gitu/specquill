@@ -228,6 +228,24 @@ func TestDynamicManifestGates(t *testing.T) {
 	}
 }
 
+// The manifest is repo content — a hostile one must never reach a clone
+// path. The derived project id is a single screened path segment, so a
+// traversing or separator-bearing name is refused outright.
+func TestDynamicHostileManifestNameRejected(t *testing.T) {
+	for _, name := range []string{"../../etc", "a/b", "-x", "UPPER"} {
+		env := dynamicServer(t, "version: 2\nprojects:\n  - name: \""+name+"\"\n    root: docs/specs\n")
+		session, _ := patLogin(t, env.h, "tok-a")
+		rec := patDo(env.h, "POST", "/api/dynamic/open", session, `{"spec":"acme/dyn"}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "bad_manifest") {
+			t.Fatalf("manifest name %q: want 409 bad_manifest, got %d %s", name, rec.Code, rec.Body.String())
+		}
+		// nothing was materialized for it
+		if dirs, _ := filepath.Glob(filepath.Join(env.dataDir, "repos", "u*", "dyn.777*")); len(dirs) != 0 {
+			t.Fatalf("manifest name %q left clones behind: %v", name, dirs)
+		}
+	}
+}
+
 func TestDynamicChooseAmongDeclared(t *testing.T) {
 	env := dynamicServer(t, "version: 2\nprojects:\n  - name: specs\n    root: docs/specs\n  - name: product\n    root: product\n")
 	session, _ := patLogin(t, env.h, "tok-a")

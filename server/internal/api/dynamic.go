@@ -33,11 +33,30 @@ func (s *Server) dynamicEnabled() bool { return s.patMode() && s.cfg.Dynamic.Ena
 // dynProjectID derives the stable project id from the forge's stable
 // repository id and the declared subproject name (REQ-025.4) — never from
 // spellings or paths, so renames converge.
-func dynProjectID(forgeRepoID, name string) string {
-	if name == "" {
-		return dynPrefix + forgeRepoID
+//
+// The id becomes a clone DIRECTORY NAME and reaches git argv, and both of its
+// inputs are attacker-influenced (the request spelling, and the manifest of
+// whatever repository is being opened). The idRe match is therefore the final
+// gate here rather than a caller-side precondition: the returned value is
+// provably a single lowercase path segment — no separators, no traversal, not
+// option-shaped (same discipline as gitx.safeRelPath, and a CodeQL barrier).
+func dynProjectID(forgeRepoID, name string) (string, error) {
+	// each part on its own: idRe only anchors its first character, so a
+	// segment like "-x" would ride along unnoticed inside the composed id
+	if name != "" && !idRe.MatchString(name) {
+		return "", fmt.Errorf("invalid subproject name %q", name)
 	}
-	return dynPrefix + forgeRepoID + "." + name
+	if !idRe.MatchString(forgeRepoID) {
+		return "", fmt.Errorf("invalid forge repository id %q", forgeRepoID)
+	}
+	id := dynPrefix + forgeRepoID
+	if name != "" {
+		id += "." + name
+	}
+	if !idRe.MatchString(id) {
+		return "", fmt.Errorf("invalid project id %q", id)
+	}
+	return id, nil
 }
 
 // forgeHostName is the single host dynamic projects may live on
@@ -220,8 +239,10 @@ func (s *Server) dynamicOpen(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if name != "" && !idRe.MatchString(name) {
-		jsonError2(w, http.StatusConflict, "manifest subproject name must be lowercase alphanumeric with ._-", "bad_manifest")
+	projectID, err := dynProjectID(info.ID, name)
+	if err != nil {
+		jsonError2(w, http.StatusConflict,
+			"manifest subproject name must be lowercase alphanumeric with ._-", "bad_manifest")
 		return
 	}
 	contentRoot = strings.Trim(contentRoot, "/")
@@ -235,7 +256,7 @@ func (s *Server) dynamicOpen(w http.ResponseWriter, r *http.Request) {
 		spelling += "#" + name
 	}
 	up := store.UserProject{
-		UserID: u.ID, ProjectID: dynProjectID(info.ID, name), ForgeRepoID: info.ID,
+		UserID: u.ID, ProjectID: projectID, ForgeRepoID: info.ID,
 		Name: name, Spelling: spelling, Remote: info.Remote, ContentRoot: contentRoot,
 		DefaultBranch: info.DefaultBranch, Role: info.Role,
 	}
@@ -290,6 +311,17 @@ func scopeName(userID int64) string { return fmt.Sprintf("u%d", userID) }
 
 func (s *Server) userScopeDir(userID int64) string {
 	return filepath.Join(s.cfg.DataDir, "repos", scopeName(userID))
+}
+
+// cloneDir locates one clone inside a user's own scope. repoID is
+// client-supplied, so the idRe match gates the RETURN here — the path is
+// provably built from a single lowercase segment that cannot escape the
+// scope directory.
+func (s *Server) cloneDir(userID int64, repoID string) (string, error) {
+	if !idRe.MatchString(repoID) {
+		return "", fmt.Errorf("invalid id %q", repoID)
+	}
+	return filepath.Join(s.userScopeDir(userID), repoID), nil
 }
 
 // checkoutEntry is one row of the per-user checkout overview (REQ-025.9).
@@ -377,13 +409,13 @@ func (s *Server) dynamicReclaim(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id is required")
 		return
 	}
-	if !idRe.MatchString(body.ID) {
+	u := auth.UserFrom(r.Context())
+	scope := scopeName(u.ID)
+	dir, err := s.cloneDir(u.ID, body.ID)
+	if err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	u := auth.UserFrom(r.Context())
-	scope := scopeName(u.ID)
-	dir := filepath.Join(s.userScopeDir(u.ID), body.ID)
 
 	if _, err := os.Stat(filepath.Join(dir, "git", "HEAD")); err == nil {
 		if err := gitx.ReclaimClone(dir, body.Force); err != nil {
