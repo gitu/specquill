@@ -26,7 +26,14 @@ link_types:
   maps_to:    { from: spec,         to: data_field }
   verifies:   { from: requirement,  to: test }
 
-# The SpecQuill product specs are self-contained — they reference no external
-# sources. (References select granted catalog sources by name; see
-# specs/references.md for how the mechanism works.)
-references: []
+# In forge-PAT deployments (no server-side catalog) the SpecQuill
+# implementation repo itself is a read-only reference, defined right here and
+# cloned with each user's own token — the speccy can navigate the source to
+# check specs against what is actually built. Catalog deployments ignore the
+# definition and show the reference as an Overview warning instead.
+sources:
+  - name: specquill-src
+    remote: https://github.com/gitu/specquill.git
+
+references:
+  - source: specquill-src
