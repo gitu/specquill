@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useFileAtHead, useFileQuery, useSaveFile } from '../api/hooks';
+import { useDrift, useFileAtHead, useFileQuery, useRunDrift, useSaveFile } from '../api/hooks';
 import { api, rawUrl, uploadAsset } from '../api/client';
 import { esc, isReservedMd, resolveDocHref, resolveFmRef, resolvePath, scalar, stripFrontmatter } from '../lib/model';
 import type { WorkspaceModel } from '../lib/model';
@@ -366,6 +366,8 @@ export function EditorView() {
   const save = useSaveFile(app.repoId, app.branch); // sketch-file creation
   const toasts = useToasts();
   const narrow = useNarrow();
+  const drift = useDrift(app.repoId, app.branch);
+  const runDrift = useRunDrift(app.repoId, app.branch);
   const { ensureWritableBranch } = useWorkspace();
   // documents open read-only by default; editing is an explicit mode
   const [mode, setMode] = useState<'view' | 'edit' | 'source'>('view');
@@ -707,6 +709,21 @@ export function EditorView() {
           <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
         </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
+        {!readOnly && !generated && kind === 'md' && drift.data?.enabled && (
+          <button
+            onClick={() => runDrift.mutate({ paths: [path] }, {
+              onSuccess: () => toasts.push({
+                text: `Checking ${name} for source drift…`, kind: 'info',
+                action: { label: 'View', onClick: () => nav('/alignment') },
+              }),
+              onError: (e) => toasts.push({ text: `Drift check: ${(e as Error).message}`, kind: 'error' }),
+            })}
+            disabled={runDrift.isPending || drift.data?.run?.status === 'running'}
+            title="Verify this document against the reference sources (AI) — findings appear on the Source alignment page"
+            style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
+            {drift.data?.run?.status === 'running' ? 'Checking…' : 'Check drift'}
+          </button>
+        )}
         {!readOnly && !generated && (
           <>
             <button onClick={() => setMoveOpen(true)} title="Move or rename this file — referencing documents can be rewritten"
@@ -851,7 +868,9 @@ export function EditorView() {
                         : p.items.map((it, i) => (
                           it.openPath
                             ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
-                            : <span key={i} style={sx(it.style)}>{it.text}</span>
+                            : it.href
+                              ? <a key={i} href={it.href} target="_blank" rel="noopener noreferrer" style={sx(it.style)}>{it.text}</a>
+                              : <span key={i} style={sx(it.style)}>{it.text}</span>
                         ))}
                     </div>
                   </div>

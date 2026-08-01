@@ -111,6 +111,144 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
+- **Extraction is the baseline** (mode `extract`), and it is DIVIDE AND
+  CONQUER, not one pass: (1) `ai.SurveyPrompt` divides the app into
+  capability areas with file hints (capped at `maxExtractAreas`), (2) each
+  area is extracted on its OWN AI loop — a failed area is noted and skipped,
+  never sinking the source, (3) `ai.MatchPrompt` then walks the extracted
+  requirements in batches of `matchBatchSize` and matches each against the
+  workspace docs (full/partial/none + the document + why). Extraction no
+  longer guesses coverage inline — matching is its own phase, and a match
+  naming a document that does not exist degrades to `none`. The result is a
+  grouped inventory: capability areas, atomic RFC-2119 statements, verbatim
+  evidence, coverage per requirement. It persists
+  as its own living document BESIDE the alignment report
+  (`<report folder>/extracted-<source>.md`, `specquill:extraction:begin/end`
+  markers, `type: extraction`); the run records what it wrote in
+  `drift_runs.extractions_json`, which is what GET /drift lists (the docs
+  may live on the caller's ws branch, not the queried one). Later drift and
+  gap runs feed that block into their prompts as the analyzed baseline
+  (`extractionContext`, narrated as "using extracted requirements as the
+  baseline"). Engine-marked docs — reports AND extractions — never enter a
+  run scope.
+- **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
+  `views/AlignmentView.tsx`, rail icon. `DriftControls` (run controls) and
+  the last-run panel sit compact side by side; below them a TABBED
+  FULL-WIDTH panel switches between `DriftFindings` and the run activity —
+  findings need the width for their paths, evidence and actions, and the log
+  needs it to stay unwrapped. The Overview keeps only the compact
+  `AlignmentSummary` card + "Check drift" in the editor) has TWO run modes:
+  **drift** —
+  scoped per-document AI runs verify docs against the selected references —
+  and **gaps** — per-source sweeps report capabilities no document covers.
+  Any run may be RESTRICTED to a subset of the project's references
+  (`sources:` on the run request, 422 when none match) and a gaps sweep may
+  be AIMED at one area (`focus:`, a hard constraint in the prompt — out-of-
+  area gaps are another sweep's job); `POST .../drift/focus` proposes where
+  to aim next from the extracted inventories (read-only: no run, no writes),
+  and the card offers those as clickable chips that set both the focus and
+  its sources
+  (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
+  path). Drift ALSO proposes documents that don't exist yet: kind
+  `new-requirement` (the source mandates something in the audited doc's
+  area that no requirement states) carries a `suggestedPath` and is
+  draftable exactly like a gap — `draftableKind()` gates the draft
+  action, so never re-gate it on `doc_path == ""`. Runs narrate
+  themselves per unit AND per model tool call (`· read ~src/path`,
+  `search "…"` — `toolNote`), naming every finding kept and dropped;
+  the feed persists live (each note) while the report is rewritten
+  per unit, and is capped at 400 lines. Finding rows carry
+  `data-drift-finding=<kind>` — the e2e must scope to them, since the
+  activity feed repeats finding titles in the DOM. A gap's missing requirement can be **reverse-engineered**
+  (`POST .../findings/{fp}/draft`, `ai.ReversePrompt`, one-shot Complete):
+  the AI drafts the doc from the finding's evidence files, it lands as an
+  uncommitted worktree save (ws-branch on protected mains) and
+  `draft_path` links finding → doc. Reopening a finding
+  (`dismiss {reopen:true}`) clears EVERY pointer to a document the finding
+  produced (draft, remedy, the planned set) — the e2e self-heal depends on
+  that, and a leftover pointer hides the create actions in the UI. A
+  finding can also be PLANNED (`POST .../findings/{fp}/plan` → which
+  documents to create, from the workspace's OWN families and link types;
+  read-only) and the plan APPLIED (`.../create`) as a linked SET — e.g. one
+  change with two requirements carrying `drivers:` up to it. `validatePlan`
+  is the gate: unknown families and untitled entries are dropped, paths are
+  forced into the family's folder, and only links `linkBetween` permits (on
+  the document that may carry them) survive. On create the server also
+  applies the family's `type:` label read from a sibling document
+  (`familyType` — the label is workspace prose, observable but not
+  derivable), so the model drafts content, never placement or
+  classification. Every created document is recorded in
+  `drift_findings.documents_json`. Every finding also spawns its own
+  **remedy document** (`POST .../findings/{fp}/remedy {kind:
+  change|work_item}`, `ai.RemedyPrompt`): the AI drafts the WHY/WHEN doc
+  in the family folder, learning conventions from an EXISTING doc of that
+  family (the fixture's `type: Change Record` is prose no default could
+  guess), and the server — never the model — writes the typed link,
+  choosing the direction from the workspace's own link_types via
+  `linkBetween` (work_item carries `delivers:` → the spec; a change is
+  instead pointed AT by the requirement's `drivers:`; change↔spec has no
+  link type, so none is written). `workspaceModel`/`docKind` in
+  `api/linker.go` are the ONE parse of entities+link_types (modelRules
+  reuses them). Each drift check inlines the doc's LINKED
+  documents (frontmatter link graph, both directions — `api/linker.go`
+  buildLinkIndex) as context. Large scopes are NOT refused: the worker just
+  loops (sequential, cancellable); an EXPLICIT `drift.max_docs` remains a
+  hard ceiling. The **linker** (`POST .../linker/propose|apply`, "Link
+  suggestions" card) AI-proposes missing typed links per the configured
+  link_types (tool-loop over the workspace, validated server-side: known
+  field, both docs exist, not already linked); apply appends to the
+  from-doc's frontmatter as a worktree save; the linker + the on-demand
+  LinkCheckCard live on their OWN page `/links` (`views/LinksView.tsx`,
+  chain-link rail icon; the Overview keeps the `LinksSummary` pointer
+  card). **Live feedback + git-native
+  report**: every run narrates per-unit activity (`run.activity` in
+  GET /drift, shown in the card while running) and continuously rewrites a
+  report doc IN the repo. WHERE it lives belongs to the PROJECT, not the
+  server: `drift.report:` in that project's own `.specquill/config.yml`
+  (fallback `reports/alignment-{date}.md` — DATED, so a day's runs continue
+  one report and the next day starts fresh; `{date}/{yyyy}/{mm}/{dd}` expand
+  at run time and a path without them means one standing report). Every
+  report/draft/remedy
+  path is PROJECT-relative — `project.SaveFile` MapIns it, so a monorepo
+  project's alignment docs land under its own `content_root` beside the
+  config that names them, never at the repo root (see
+  TestDriftReportStaysInsideTheProjectContentRoot). The run request's
+  `report:` field still overrides per run — creating a new one or
+  CONTINUING any existing one (the card has a picker). Because a run
+  WRITES, starting one from a protected branch first moves the user onto
+  their `ws/<user>` branch (`ensureWritableBranch`, same as any edit) and
+  runs THERE — so the run, its findings (keyed repo+branch), its report
+  and every draft/remedy belong to one branch and stay visible. The card
+  re-asks 400ms after starting: the branch switch remounts its query, and
+  that mount fetch can land before the run row exists, leaving a "no run"
+  card that would never poll. Reports are LIVING documents: the engine owns
+  only the `<!-- specquill:alignment:begin/end -->` block (run summary +
+  findings table + activity + accumulated run log); everything outside it
+  is the human's and survives every rewrite. Written on the caller's ws
+  branch when the run branch is protected; any doc containing the begin
+  marker is excluded from run scopes (plus the run's own report path
+  pre-marker). Dismiss/file/draft refresh the last finished run's report
+  too. Because `CREATE TABLE IF NOT EXISTS`
+  never adds columns, `store.Open` drops drift tables whose shape is stale
+  (`dropStaleDriftTables` — safe, they hold derived state only). E2e gotcha:
+  findings from reopened state are visible/fileable while a run is still
+  going — await run completion via the API before asserting on the report
+  file. Findings are SQLite rows keyed by an ANCHOR-based
+  fingerprint (docPath|source|kind|anchor — model titles are display-only, so
+  dismissals stick across reruns) and evidence quotes are string-verified
+  against the source snapshot (unverifiable findings are silently dropped,
+  counted as `droppedUnverified`). Filing a finding creates a GitLab/GitHub
+  issue (`forge.CreateIssue`, marker `<!-- specquill:drift:<fp> -->` +
+  `specquill-drift` label = idempotency) or a Jira issue (`internal/tracker`,
+  REST **v2** on purpose — plain-text description; `token_env` with ':' →
+  Basic, bare → Bearer) and appends the URL to the doc's `work-items:`
+  frontmatter (worktree save; on a protected branch it claims the caller's
+  ws branch). Targets = server `work_item_targets:` catalog ∩ in-repo
+  `drift.targets` + the project forge as implicit target; in dev,
+  `mock-forge.py` plays the `dev-board` target (its /issues endpoints are
+  deliberately unauthenticated, and it is a ThreadingHTTPServer — a
+  single-threaded mock deadlocks 15s between playwright's keep-alive probe
+  and the Go client). The drift e2e needs BOTH mocks (mock-llm + mock-forge).
 - **Speccy chat tools** (`ai.StreamTools` + `api/speccytools.go`): read_file /
   list_files / search / ask_user always — the read tools span the workspace
   plus ALL selected references (`resolveSources`; `grounding: true` only
@@ -213,3 +351,66 @@ from the code.
   `scripts/mock-forge.py` (:8992) is the keyless GitLab mock for exercising
   PAT mode; `web/e2e/patlogin.spec.ts` self-skips unless the target server
   reports a `forge` provider.
+
+## Runs outlive the page; one-shot actions do not
+
+- A **run** is a server-side worker (goroutine + `drift_runs` row). Closing
+  the tab does not stop it, findings and the report are written per unit, and
+  the card picks it back up on return — the card SAYS so while running,
+  because nothing else would tell the user.
+- Boot closes what the previous process left behind: `MarkInterruptedDriftRuns`
+  (called from `api/router.go`) turns every `running` row into status
+  **`interrupted`** — its own status, not an error, since the units already
+  checked stand.
+- A run that stopped with units left (`interrupted`, `cancelled`, errored) is
+  **resumable**: `POST .../drift/run {resume: <runId>}` inherits its mode,
+  sources, focus and report and runs ONLY `scope[DocsDone:]`. The worker is
+  sequential, so `DocsDone` is exactly how far it got — which is why it now
+  persists REAL progress when it stops (it used to mark every unit done at
+  the end, making a cancelled run look complete and killing the resume).
+  `store.DriftRun.Resumable()` is the one gate; a run already picked up by
+  another 409s, so the same units never run twice.
+- The per-finding actions (draft, plan, remedy, create) and the linker are
+  ONE request each — navigating away cancels them. Both surface a
+  `data-keep-open` hint while in flight; do not promise resumability there.
+
+## AI call resilience
+
+A long run makes hundreds of model calls, so a single blip must not sink a
+unit. Two independent layers, both silent on the happy path:
+
+- **Transport** (`ai.Client.attempt`): 3 attempts with a doubling pause from
+  1s for TRANSIENT failures only — 429, 408, any 5xx (the Azure/OpenAI
+  "server_error" 502 is the common one) and network errors. A 400/401/404
+  fails once. `Retry-After` wins when the provider sends a sane
+  delta-seconds; a cancelled run never sleeps out the backoff. Streaming
+  calls retry only before the first byte — a mid-stream break is already
+  delivered content.
+- **Parse** (`askJSON` / `completeJSON` in `api/drift.go`): when a reply is
+  not JSON, the engine hands the model its own reply plus the parse error and
+  asks ONCE more. Every drift/gaps/extract/match/plan/remedy/create/linker/
+  speccy-draft JSON path goes through these two helpers — do not call
+  `StreamTools`+`ExtractJSON` directly.
+- `ai.ExtractJSON` decodes the first object that FITS the target's json tags,
+  NOT first-`{`-to-last-`}` — models emit a trailing second object (which made
+  the span invalid: "invalid character '{' after top-level value") or a
+  preamble object (which decoded into an empty struct and silently turned a
+  failed call into a zero-finding result).
+
+## Server logs
+
+Beyond the `METHOD /path duration` request line, the server narrates the work
+itself — read `/tmp/…` or journald when a run "does nothing":
+
+- **`ai: <model> [<label>] complete|tool loop in <dur> (rounds, tools, sizes)`**
+  — every model call, with WHAT it was for. The label rides on the context
+  (`ai.WithLabel`, `internal/ai/label.go`): `drift specs/x.md`,
+  `extract survey ~src`, `extract area <name>`, `match 1-8`, `gaps ~src`,
+  `plan <fp>`, `create <kind> <path>`, `remedy <kind>`, `linker propose`,
+  `focus areas`, `speccy chat|draft`. Sizes only — prompts carry workspace
+  content and never enter the log.
+- **`drift [<repo>@<branch>]: run N …`** — start (mode, units, sources,
+  report + branch, focus), one line per unit (findings, dropped, duration),
+  and the finish (status, live findings, dropped, failed units). Plus every
+  action: filed, drafted, remedy, created, extracted, planned, cancelled.
+- **`linker [<repo>@<branch>]:`** — proposed/applied counts and validation drops.

@@ -571,93 +571,12 @@ func (tb *speccyToolbox) finishMarkdown(path, content string, isNew bool) (strin
 // web/src/lib/config.ts), so the rules are accurate with zero workspace
 // boilerplate.
 func modelRules(files map[string]string) string {
-	type ent struct{ folder, group string }
-	entities := map[string]ent{
-		"regulation":   {"regulations/", "why"},
-		"change":       {"changes/", "why"},
-		"requirement":  {"requirements/", "what"},
-		"spec":         {"specs/", "how"},
-		"data_mapping": {"data-mappings/", "how"},
-		"diagram":      {"diagrams/", "how"},
-		"work_item":    {"work-items/", "when"},
-	}
-	type link struct {
-		name     string
-		from, to []string
-	}
-	links := []link{
-		{"drivers", []string{"requirement"}, []string{"regulation", "change"}},
-		{"implements", []string{"spec", "data_mapping"}, []string{"requirement"}},
-		{"delivers", []string{"work_item"}, []string{"spec", "requirement"}},
-	}
-
-	var cfg struct {
-		Entities map[string]struct {
-			Folder string `yaml:"folder"`
-			Group  string `yaml:"group"`
-			Hidden bool   `yaml:"hidden"`
-		} `yaml:"entities"`
-		LinkTypes map[string]struct {
-			From any `yaml:"from"`
-			To   any `yaml:"to"`
-		} `yaml:"link_types"`
-	}
-	_ = yaml.Unmarshal([]byte(files[".specquill/config.yml"]), &cfg)
-	for kind, e := range cfg.Entities {
-		if e.Hidden {
-			delete(entities, kind)
-			continue
-		}
-		cur := entities[kind]
-		if e.Folder != "" {
-			cur.folder = strings.TrimSuffix(e.Folder, "/") + "/"
-		} else if cur.folder == "" {
-			cur.folder = kind + "s/"
-		}
-		if e.Group != "" {
-			cur.group = e.Group
-		}
-		entities[kind] = cur
-	}
-	if len(cfg.LinkTypes) > 0 { // a declared section replaces the defaults wholesale
-		kinds := func(v any) []string {
-			switch t := v.(type) {
-			case string:
-				var out []string
-				for _, k := range strings.Split(t, ",") {
-					if k = strings.TrimSpace(k); k != "" {
-						out = append(out, k)
-					}
-				}
-				return out
-			case []any:
-				var out []string
-				for _, k := range t {
-					if s, ok := k.(string); ok {
-						out = append(out, strings.TrimSpace(s))
-					}
-				}
-				return out
-			}
-			return nil
-		}
-		links = links[:0]
-		names := make([]string, 0, len(cfg.LinkTypes))
-		for name := range cfg.LinkTypes {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			l := cfg.LinkTypes[name]
-			links = append(links, link{name, kinds(l.From), kinds(l.To)})
-		}
-	}
-
+	entities, links := workspaceModel(files)
 	folders := func(ks []string) string {
 		var out []string
 		for _, k := range ks {
 			if e, ok := entities[k]; ok {
-				out = append(out, e.folder+" ("+e.group+")")
+				out = append(out, e.Folder+" ("+e.Group+")")
 			}
 		}
 		return strings.Join(out, ", ")
@@ -666,11 +585,11 @@ func modelRules(files map[string]string) string {
 	b.WriteString("\n# Document model (WHY ← WHAT ← HOW ← WHEN)\n")
 	b.WriteString("Documents are classified by their frontmatter `type:` (each family's folder is the DEFAULT location for new documents); the LOWER level carries the frontmatter link UP to the level it exists for:\n")
 	for _, l := range links {
-		from, to := folders(l.from), folders(l.to)
+		from, to := folders(l.From), folders(l.To)
 		if from == "" || to == "" {
 			continue // link type between kinds this workspace doesn't have
 		}
-		b.WriteString("- `" + l.name + ":` on " + from + " → " + to + "\n")
+		b.WriteString("- `" + l.Name + ":` on " + from + " → " + to + "\n")
 	}
 	b.WriteString("Link values are plain root-relative path lists (never {type, ref} maps). A driver's type is derived from the referenced document — its `source:` frontmatter, else its family — and is never written on the link. Every new document carries its upward link.\n")
 	return b.String()

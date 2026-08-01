@@ -3,7 +3,7 @@ import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { buildTimed, todayISO } from '../lib/derive';
-import { IconChanges, IconClock, IconDash, IconFolder, IconGear, IconHistory, IconModel, IconSpark, IconTrace } from './icons';
+import { IconAlign, IconChanges, IconClock, IconDash, IconFolder, IconGear, IconHistory, IconLink, IconModel, IconSpark, IconTrace } from './icons';
 
 const VIEW_LABEL: Record<ViewName, string> = {
   dashboard: 'Overview', editor: 'Specs', timed: 'Timed dependencies',
@@ -40,6 +40,8 @@ export function Rail() {
       <button title="Pending changes" onClick={() => nav('/changes')} style={sx(BTN + (is('/changes') ? A : I))}><IconChanges /></button>
       <button title="Change history" onClick={() => nav('/history')} style={sx(BTN + (is('/history') ? A : I))}><IconHistory /></button>
       <button title="Traceability" onClick={() => nav('/graph')} style={sx(BTN + (is('/graph') ? A : I))}><IconTrace /></button>
+      <button title="Source alignment" onClick={() => nav('/alignment')} style={sx(BTN + (is('/alignment') ? A : I))}><IconAlign /></button>
+      <button title="Links" onClick={() => nav('/links')} style={sx(BTN + (is('/links') ? A : I))}><IconLink size={18} /></button>
       <button title="Model definitions" onClick={() => nav('/model')} style={sx(BTN + (is('/model') ? A : I))}><IconModel /></button>
       <div style={sx('flex:1')} />
       <button title="Speccy" onClick={app.toggleSpeccy} style={sx(BTN + (app.speccyOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>

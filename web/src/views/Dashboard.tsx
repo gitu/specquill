@@ -4,8 +4,9 @@ import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
 import { buildDashboard, statusMeta, windowPhrase } from '../lib/derive';
-import { LinkCheckCard } from '../components/LinkCheck';
+import { LinksSummary } from '../components/LinksSummary';
 import { ForgeReview } from '../components/ForgeReview';
+import { AlignmentSummary } from '../components/AlignmentSummary';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -165,7 +166,8 @@ export function Dashboard() {
               </div>
             </div>
             )}
-            <LinkCheckCard />
+            <AlignmentSummary repo={app.repoId} branch={app.branch} />
+            <LinksSummary />
             <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>

@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ToolFunc is the function half of a tool call.
@@ -62,7 +64,26 @@ func (c *Client) StreamTools(ctx context.Context, msgs []Message, tools []ToolSp
 	}
 	conv := append([]Message{}, msgs...)
 	used := 0
+	// one summary line per tool loop: how long the model worked, how many
+	// rounds it took and which tools it reached for (never the content)
+	started := time.Now()
+	rounds := 0
+	var ran []string
+	defer func() {
+		what := "no tools"
+		if len(ran) > 0 {
+			what = strings.Join(ran, ", ")
+		}
+		if err != nil {
+			log.Printf("ai: %s%s tool loop failed after %s (%d round(s), %s): %v",
+				c.model, labelOf(ctx), since(started), rounds, what, err)
+			return
+		}
+		log.Printf("ai: %s%s tool loop in %s (%d round(s), %s, %s read, prompt %s)",
+			c.model, labelOf(ctx), since(started), rounds, what, size(used), size(msgLen(msgs)))
+	}()
 	for round := 0; ; round++ {
+		rounds = round + 1
 		body := c.chatBody(c.model, conv, true)
 		// budget exhausted → last request goes out tool-less so the model
 		// must answer with what it has instead of looping forever
@@ -95,6 +116,7 @@ func (c *Client) StreamTools(ctx context.Context, msgs []Message, tools []ToolSp
 					Content: "(not executed: waiting for the user's answer to your question)"})
 				continue
 			}
+			ran = append(ran, tc.Function.Name)
 			result, halt, execErr := exec(tc.Function.Name, tc.Function.Arguments)
 			if onCall != nil {
 				if err := onCall(tc, result, execErr); err != nil {

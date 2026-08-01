@@ -190,7 +190,7 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		send(map[string]any{"tool": ev})
 		return nil
 	}
-	resume, pending, err := s.ai.StreamTools(r.Context(), msgs, tb.specs(files), tb.exec,
+	resume, pending, err := s.ai.StreamTools(ai.WithLabel(r.Context(), "speccy chat "+repo.ID), msgs, tb.specs(files), tb.exec,
 		func(delta string) error {
 			send(map[string]string{"delta": delta})
 			return nil
@@ -288,17 +288,13 @@ func (s *Server) speccyDraft(w http.ResponseWriter, r *http.Request, repo *proje
 		}
 		authoring = ai.AuthoringRules(snap, instr)
 	}
-	reply, err := s.ai.Complete(r.Context(), ai.DraftPrompt(changeContent, allowed, authoring))
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var draft struct {
 		Summary string      `json:"summary"`
 		Edits   []draftEdit `json:"edits"`
 	}
-	if err := ai.ExtractJSON(reply, &draft); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not valid edit JSON: "+err.Error())
+	if err := s.completeJSON(ai.WithLabel(r.Context(), "speccy draft "+body.ChangePath),
+		ai.DraftPrompt(changeContent, allowed, authoring), &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 

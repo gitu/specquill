@@ -57,3 +57,18 @@ references:
   - source: regulations
     grounding: true
   - source: specquill-src
+
+# source-drift detection: the AI verifies documents against the selected
+# references and files findings as work items. `targets` selects from the
+# server's work_item_targets catalog (the project's own forge is always an
+# implicit target); paths is the default run scope.
+drift:
+  references: [regulations]
+  paths: [specs/, requirements/, data-mappings/]
+  targets: [dev-board]
+  # where THIS project keeps its alignment reports (project-relative: in a
+  # monorepo it lands under the project's own content_root, beside this file).
+  # {date}/{yyyy}/{mm}/{dd} expand at run time — a day's runs continue one
+  # report, the next day starts a fresh one. Omit the tokens for a single
+  # standing report.
+  report: reports/alignment-{date}.md

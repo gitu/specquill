@@ -57,9 +57,13 @@ type Doc struct {
 }
 
 var (
-	fmRe      = regexp.MustCompile(`(?s)^---\n(.*?)\n---\n?`)
-	bodyLink  = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
-	fenceRe   = regexp.MustCompile("(?s)```.*?```")
+	fmRe     = regexp.MustCompile(`(?s)^---\n(.*?)\n---\n?`)
+	bodyLink = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	fenceRe  = regexp.MustCompile("(?s)```.*?```")
+	// prose ABOUT links (`[text](path.md)` shown as an example) is not a link:
+	// it would otherwise become a references edge to a document that does not
+	// exist — the same reason linkcheck skips code spans
+	codeRe    = regexp.MustCompile("``[^`]*``|`[^`\n]*`")
 	driverRef = regexp.MustCompile(`(?m)^\s+ref:\s*(.+)$`)
 )
 
@@ -165,7 +169,7 @@ func parse(rel, content string, linkFields []string) Doc {
 		dir = rel[:i]
 	}
 	seen := map[string]bool{}
-	for _, m := range bodyLink.FindAllStringSubmatch(fenceRe.ReplaceAllString(body, ""), -1) {
+	for _, m := range bodyLink.FindAllStringSubmatch(codeRe.ReplaceAllString(fenceRe.ReplaceAllString(body, ""), ""), -1) {
 		t := strings.SplitN(m[1], "#", 2)[0]
 		if t == "" || !strings.HasSuffix(t, ".md") || regexp.MustCompile(`^[a-zA-Z][a-zA-Z+.-]*:`).MatchString(t) {
 			continue

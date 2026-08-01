@@ -94,6 +94,65 @@ CREATE TABLE IF NOT EXISTS source_syncs (
   synced_at  BIGINT NOT NULL
 );
 
+-- source-drift runs: one row per AI drift check over a doc scope. Derived
+-- state (like source_syncs) — the durable artifact of a filed finding is the
+-- work-items frontmatter entry in the document itself.
+CREATE TABLE IF NOT EXISTS drift_runs (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_key           TEXT NOT NULL,
+  branch             TEXT NOT NULL,
+  mode               TEXT NOT NULL DEFAULT 'drift', -- drift (per-doc verify) | gaps (per-source coverage)
+  status             TEXT NOT NULL,               -- running | ok | error | cancelled | interrupted
+  error              TEXT NOT NULL DEFAULT '',
+  scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list (gaps: source list)
+  docs_total         INT NOT NULL DEFAULT 0,
+  docs_done          INT NOT NULL DEFAULT 0,
+  dropped_unverified INT NOT NULL DEFAULT 0,      -- findings whose evidence failed verification
+  head_sha           TEXT NOT NULL DEFAULT '',
+  activity_json      TEXT NOT NULL DEFAULT '[]',  -- per-unit progress lines (live feedback)
+  report_path        TEXT NOT NULL DEFAULT '',    -- the in-repo report doc this run maintains
+  report_branch      TEXT NOT NULL DEFAULT '',
+  extractions_json   TEXT NOT NULL DEFAULT '[]',  -- persisted application inventories [{source,path}]
+  sources_json       TEXT NOT NULL DEFAULT '[]',  -- reference names this run was restricted to (resume)
+  focus              TEXT NOT NULL DEFAULT '',    -- gaps: the area the sweep was aimed at (resume)
+  resumed_from       INT NOT NULL DEFAULT 0,      -- the run this one picked up where it stopped
+  started_at         BIGINT NOT NULL,
+  finished_at        BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS drift_runs_repo ON drift_runs(repo_key, branch, id);
+
+-- drift findings, keyed by the anchor-based fingerprint so dismissals stick
+-- and re-runs upsert instead of duplicating. resolved_at != 0 = the last run
+-- over the doc no longer reported it. Coverage gaps (mode 'gaps') have
+-- doc_path = '' — no document covers them yet; suggested_path is where one
+-- should live and draft_path the reverse-engineered draft once created.
+CREATE TABLE IF NOT EXISTS drift_findings (
+  repo_key         TEXT NOT NULL,
+  branch           TEXT NOT NULL,
+  fingerprint      TEXT NOT NULL,
+  run_id           BIGINT NOT NULL,
+  doc_path         TEXT NOT NULL,
+  suggested_path   TEXT NOT NULL DEFAULT '',
+  draft_path       TEXT NOT NULL DEFAULT '',
+  remedy_path      TEXT NOT NULL DEFAULT '',   -- in-repo change/work-item doc created to remedy it
+  remedy_kind      TEXT NOT NULL DEFAULT '',   -- change | work_item
+  documents_json   TEXT NOT NULL DEFAULT '[]', -- every document created for it [{kind,path}]
+  anchor           TEXT NOT NULL DEFAULT '',
+  source           TEXT NOT NULL DEFAULT '',
+  kind             TEXT NOT NULL DEFAULT '',
+  severity         TEXT NOT NULL DEFAULT 'medium',
+  title            TEXT NOT NULL DEFAULT '',
+  detail           TEXT NOT NULL DEFAULT '',
+  evidence_json    TEXT NOT NULL DEFAULT '[]',
+  status           TEXT NOT NULL DEFAULT 'open',  -- open | dismissed | filed
+  work_item_url    TEXT NOT NULL DEFAULT '',
+  work_item_target TEXT NOT NULL DEFAULT '',
+  created_at       BIGINT NOT NULL,
+  updated_at       BIGINT NOT NULL,
+  resolved_at      BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (repo_key, branch, fingerprint)
+);
+
 -- unauthenticated OKF-bundle share links: the URL token is the only
 -- credential (LLM copy-paste use case). One active link per project;
 -- minting again rotates the token, deleting revokes access.
