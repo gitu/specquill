@@ -3,7 +3,7 @@ import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { buildDashboard } from '../lib/derive';
-import { IconAlign, IconChanges, IconDash, IconFolder, IconGear, IconModel, IconSpark, IconTrace } from './icons';
+import { IconAlign, IconChanges, IconDash, IconFolder, IconGear, IconLink, IconModel, IconSpark, IconTrace } from './icons';
 
 const VIEW_LABEL: Record<ViewName, string> = {
   dashboard: 'Overview', editor: 'Specs', changes: 'Changes', graph: 'Graph',
@@ -36,6 +36,7 @@ export function Rail() {
       </button>
       <button title="Traceability" onClick={() => nav('/graph')} style={sx(BTN + (is('/graph') ? A : I))}><IconTrace /></button>
       <button title="Source alignment" onClick={() => nav('/alignment')} style={sx(BTN + (is('/alignment') ? A : I))}><IconAlign /></button>
+      <button title="Links" onClick={() => nav('/links')} style={sx(BTN + (is('/links') ? A : I))}><IconLink size={18} /></button>
       <button title="Model definitions" onClick={() => nav('/model')} style={sx(BTN + (is('/model') ? A : I))}><IconModel /></button>
       <div style={sx('flex:1')} />
       <button title="Speccy" onClick={app.toggleSpeccy} style={sx(BTN + (app.speccyOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>

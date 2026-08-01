@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import { Dashboard } from './views/Dashboard';
 import { AlignmentView } from './views/AlignmentView';
+import { LinksView } from './views/LinksView';
 import { EditorView } from './views/EditorView';
 import { ChangesView } from './views/ChangesView';
 import { GraphView } from './views/GraphView';
@@ -41,6 +42,7 @@ const projectViews = () => [
   { index: true, element: <ProjectIndexRedirect /> },
   { path: 'dashboard', element: <Dashboard /> },
   { path: 'alignment', element: <AlignmentView /> },
+  { path: 'links', element: <LinksView /> },
   { path: 'editor/*', element: <EditorView /> },
   { path: 'changes', element: <ChangesView /> },
   { path: 'graph/*', element: <GraphView /> }, // /graph/<docPath> focuses on that doc's chain

@@ -128,7 +128,10 @@ from the code.
   suggestions" card) AI-proposes missing typed links per the configured
   link_types (tool-loop over the workspace, validated server-side: known
   field, both docs exist, not already linked); apply appends to the
-  from-doc's frontmatter as a worktree save. **Live feedback + git-native
+  from-doc's frontmatter as a worktree save; the linker + the on-demand
+  LinkCheckCard live on their OWN page `/links` (`views/LinksView.tsx`,
+  chain-link rail icon; the Overview keeps the `LinksSummary` pointer
+  card). **Live feedback + git-native
   report**: every run narrates per-unit activity (`run.activity` in
   GET /drift, shown in the card while running) and continuously rewrites a
   report doc IN the repo (default `reports/source-alignment.md`; the run

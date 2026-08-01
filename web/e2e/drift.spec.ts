@@ -160,7 +160,7 @@ test('linker proposes and applies a missing typed link', async ({ page, request 
     headers: H, data: { paths: ['specs/venue.md'] },
   });
 
-  await page.goto(`/p/${REPO}/alignment`);
+  await page.goto(`/p/${REPO}/links`);
   await expect(page.getByText('Link suggestions')).toBeVisible();
   await page.getByRole('button', { name: 'Suggest links' }).click();
 

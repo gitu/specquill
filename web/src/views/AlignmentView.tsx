@@ -4,12 +4,11 @@ import { useApp } from '../state/AppContext';
 import { projectPath } from '../state/nav';
 import { useDrift } from '../api/hooks';
 import { DriftCard } from '../components/DriftCard';
-import { LinkerCard } from '../components/LinkerCard';
 
 /**
  * Source alignment as its own page: drift and gap reporting against the
- * reference sources, with the full run activity, the git-native report, and
- * the linker beside it. The Dashboard keeps only a compact summary card.
+ * reference sources, with the full run activity and the git-native report
+ * beside it. The Dashboard keeps only a compact summary card.
  */
 export function AlignmentView() {
   const app = useApp();
@@ -24,7 +23,7 @@ export function AlignmentView() {
         <div style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-3)")}>{app.repoId} · {app.branch}</div>
         <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Source alignment</h1>
         <div style={sx('font-size:12.5px;color:var(--text-2);margin-top:6px;line-height:1.5')}>
-          Drift checks and gap analysis against the reference sources, work-item filing, and link suggestions.
+          Drift checks and gap analysis against the reference sources, with work-item filing.
           Reports are living documents in the repository — commit them with your work.
         </div>
 
@@ -67,8 +66,6 @@ export function AlignmentView() {
                 </div>
               </div>
             )}
-
-            <LinkerCard repo={app.repoId} branch={app.branch} />
           </div>
         </div>
       </div>

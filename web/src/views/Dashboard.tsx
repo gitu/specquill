@@ -4,7 +4,7 @@ import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
 import { buildDashboard, driverMeta } from '../lib/derive';
-import { LinkCheckCard } from '../components/LinkCheck';
+import { LinksSummary } from '../components/LinksSummary';
 import { ForgeReview } from '../components/ForgeReview';
 import { AlignmentSummary } from '../components/AlignmentSummary';
 import { NewDocDialog } from '../components/NewDocDialog';
@@ -167,7 +167,7 @@ export function Dashboard() {
             </div>
             )}
             <AlignmentSummary repo={app.repoId} branch={app.branch} />
-            <LinkCheckCard />
+            <LinksSummary />
             <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>
