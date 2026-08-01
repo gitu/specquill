@@ -388,20 +388,12 @@ func (s *Server) postLinkerPropose(w http.ResponseWriter, r *http.Request, repo 
 			specs = append(specs, spec)
 		}
 	}
-	var reply strings.Builder
-	_, _, err = s.ai.StreamTools(ai.WithLabel(r.Context(), "linker propose"),
-		ai.LinkerPrompt(b.String(), modelRules(files)), specs, tb.exec,
-		func(delta string) error { reply.WriteString(delta); return nil },
-		func(ai.ToolCall, string, error) error { return nil })
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var out struct {
 		Proposals []linkProposal `json:"proposals"`
 	}
-	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not proposals JSON: "+err.Error())
+	if err = s.askJSON(ai.WithLabel(r.Context(), "linker propose"),
+		ai.LinkerPrompt(b.String(), modelRules(files)), specs, tb.exec, nil, &out); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	proposals := []linkProposal{}

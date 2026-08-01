@@ -1072,3 +1072,56 @@ func TestReportTitleKeepsTheDateReadable(t *testing.T) {
 		}
 	}
 }
+
+// A malformed reply used to sink the whole unit. It is a sampling fluke, so
+// the engine quotes the parse error back and asks once more.
+func TestDriftRunReAsksWhenTheReplyIsNotJSON(t *testing.T) {
+	good := `{"findings":[
+		{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high","title":"recovered",
+		 "detail":"spec says ms, regulation says µs","evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]}
+	]}`
+	h, _, _, _, prompts := testDriftServer(t, []string{"Certainly! I checked the document.", good})
+	cookie := login(t, h)
+
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	if run := drift["run"].(map[string]any); run["status"] != "ok" {
+		t.Fatalf("run status = %v (%v)", run["status"], run["error"])
+	}
+	found := drift["findings"].([]any)
+	if len(found) != 1 || found[0].(map[string]any)["title"] != "recovered" {
+		t.Fatalf("the re-ask must salvage the unit, got %v", found)
+	}
+	reasks := 0
+	for _, p := range *prompts {
+		if strings.Contains(p, "not valid JSON") {
+			reasks++
+		}
+	}
+	if reasks != 1 {
+		t.Errorf("want exactly one corrective re-ask, got %d in %q", reasks, *prompts)
+	}
+}
+
+func TestDriftRunGivesUpAfterOneReAsk(t *testing.T) {
+	h, _, _, _, prompts := testDriftServer(t, []string{"no json here", "still no json", "and again"})
+	cookie := login(t, h)
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	if run := drift["run"].(map[string]any); run["status"] == "ok" {
+		t.Fatal("a model that never returns JSON must fail the run, not pass it empty")
+	}
+	reasks := 0
+	for _, p := range *prompts {
+		if strings.Contains(p, "not valid JSON") {
+			reasks++
+		}
+	}
+	if reasks != 1 {
+		t.Errorf("the re-ask must happen once, not in a loop (got %d)", reasks)
+	}
+}

@@ -1186,18 +1186,11 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 	}
 	msgs := ai.DriftPrompt(doc, content, linked, extracted, instructions, names)
 
-	var reply strings.Builder
-	_, _, err := s.ai.StreamTools(ai.WithLabel(ctx, "drift "+doc), msgs, specs, tb.exec,
-		func(delta string) error { reply.WriteString(delta); return nil },
-		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
-	if err != nil {
-		return nil, 0, err
-	}
 	var out struct {
 		Findings []modelFinding `json:"findings"`
 	}
-	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
-		return nil, 0, fmt.Errorf("model reply was not findings JSON: %w", err)
+	if err := s.askJSON(ai.WithLabel(ctx, "drift "+doc), msgs, specs, tb.exec, note, &out); err != nil {
+		return nil, 0, err
 	}
 	var findings []store.DriftFinding
 	dropped := 0
@@ -1258,18 +1251,11 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 	}
 	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, focus, instructions)
 
-	var reply strings.Builder
-	_, _, err := s.ai.StreamTools(ai.WithLabel(ctx, "gaps ~"+sourceName), msgs, specs, tb.exec,
-		func(delta string) error { reply.WriteString(delta); return nil },
-		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
-	if err != nil {
-		return nil, 0, err
-	}
 	var out struct {
 		Findings []modelFinding `json:"findings"`
 	}
-	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
-		return nil, 0, fmt.Errorf("model reply was not findings JSON: %w", err)
+	if err := s.askJSON(ai.WithLabel(ctx, "gaps ~"+sourceName), msgs, specs, tb.exec, note, &out); err != nil {
+		return nil, 0, err
 	}
 	var findings []store.DriftFinding
 	droppedCount := 0
@@ -1366,14 +1352,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 				specs = append(specs, spec)
 			}
 		}
-		var reply strings.Builder
-		if _, _, err := s.ai.StreamTools(askCtx, msgs, specs, tb.exec,
-			func(delta string) error { reply.WriteString(delta); return nil },
-			func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil },
-		); err != nil {
-			return err
-		}
-		return ai.ExtractJSON(reply.String(), out)
+		return s.askJSON(askCtx, msgs, specs, tb.exec, note, out)
 	}
 
 	// ---- divide: survey the application into areas
@@ -1671,16 +1650,6 @@ func (s *Server) postDriftFocus(w http.ResponseWriter, r *http.Request, repo *pr
 			specs = append(specs, spec)
 		}
 	}
-	var reply strings.Builder
-	_, _, err = s.ai.StreamTools(ai.WithLabel(r.Context(), "focus areas"),
-		ai.FocusPrompt(b.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), instructions),
-		specs, tb.exec,
-		func(delta string) error { reply.WriteString(delta); return nil },
-		func(ai.ToolCall, string, error) error { return nil })
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var out struct {
 		Areas []struct {
 			Name    string   `json:"name"`
@@ -1688,8 +1657,10 @@ func (s *Server) postDriftFocus(w http.ResponseWriter, r *http.Request, repo *pr
 			Sources []string `json:"sources"`
 		} `json:"areas"`
 	}
-	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not focus JSON: "+err.Error())
+	if err = s.askJSON(ai.WithLabel(r.Context(), "focus areas"),
+		ai.FocusPrompt(b.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), instructions),
+		specs, tb.exec, nil, &out); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	known := map[string]bool{}
@@ -1801,18 +1772,13 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		"detail": finding.Detail, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
 	})
 	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
-	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "reverse-engineer "+finding.Fingerprint),
-		ai.ReversePrompt(string(findingJSON), excerpts.String(), guidance))
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var draft struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := ai.ExtractJSON(reply, &draft); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not draft JSON: "+err.Error())
+	if err := s.completeJSON(ai.WithLabel(r.Context(), "reverse-engineer "+finding.Fingerprint),
+		ai.ReversePrompt(string(findingJSON), excerpts.String(), guidance), &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	path := cleanDocPath(draft.Path)
@@ -1974,19 +1940,14 @@ func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *p
 	}
 	kindLabel := strings.ReplaceAll(body.Kind, "_", " ")
 	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
-	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "remedy "+body.Kind),
-		ai.RemedyPrompt(kindLabel, entity.Folder, linkNote,
-			string(findingJSON), targetExcerpt, example, guidance))
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var draft struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := ai.ExtractJSON(reply, &draft); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not draft JSON: "+err.Error())
+	if err := s.completeJSON(ai.WithLabel(r.Context(), "remedy "+body.Kind),
+		ai.RemedyPrompt(kindLabel, entity.Folder, linkNote,
+			string(findingJSON), targetExcerpt, example, guidance), &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	path := cleanDocPath(draft.Path)
@@ -2215,19 +2176,14 @@ func (s *Server) postDriftPlan(w http.ResponseWriter, r *http.Request, repo *pro
 		"detail": finding.Detail, "document": finding.DocPath, "anchor": finding.Anchor,
 		"source": "~" + finding.Source, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
 	})
-	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "plan "+finding.Fingerprint),
-		ai.PlanPrompt(string(findingJSON), target,
-			fam.String(), lt.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), guidance))
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var plan struct {
 		Rationale string       `json:"rationale"`
 		Documents []plannedDoc `json:"documents"`
 	}
-	if err := ai.ExtractJSON(reply, &plan); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not plan JSON: "+err.Error())
+	if err := s.completeJSON(ai.WithLabel(r.Context(), "plan "+finding.Fingerprint),
+		ai.PlanPrompt(string(findingJSON), target,
+			fam.String(), lt.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), guidance), &plan); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	docs := validatePlan(plan.Documents, targetPath, targetKind, entities, links)
@@ -2325,16 +2281,11 @@ func (s *Server) postDriftCreate(w http.ResponseWriter, r *http.Request, repo *p
 				"]` — do not write link fields yourself."
 		}
 		kindLabel := strings.ReplaceAll(d.Kind, "_", " ")
-		reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "create "+d.Kind+" "+d.Path),
-			ai.RemedyPrompt(kindLabel, entities[d.Kind].Folder,
-				note, string(findingJSON), "", example, guidance))
-		if err != nil {
-			failures = append(failures, d.Path+": "+err.Error())
-			continue
-		}
 		var draft struct{ Path, Content string }
-		if err := ai.ExtractJSON(reply, &draft); err != nil {
-			failures = append(failures, d.Path+": model reply was not draft JSON")
+		if err := s.completeJSON(ai.WithLabel(r.Context(), "create "+d.Kind+" "+d.Path),
+			ai.RemedyPrompt(kindLabel, entities[d.Kind].Folder,
+				note, string(findingJSON), "", example, guidance), &draft); err != nil {
+			failures = append(failures, d.Path+": "+err.Error())
 			continue
 		}
 		if err := mdfm.Validate(draft.Content); err != nil {
@@ -2702,4 +2653,66 @@ func (s *Server) claimWorkspace(r *http.Request, repo *project.Project) (string,
 		return "", err
 	}
 	return branch, nil
+}
+
+// askJSON runs a tool loop and decodes its JSON reply, re-asking ONCE with the
+// parse error quoted back when the reply does not decode. A malformed reply is
+// a sampling fluke — a trailing second object, a stray sentence — and without
+// this it sinks a whole unit (an extraction area, a match batch) that costs a
+// full model call to redo. Transport blips are handled a layer down, in
+// ai.Client's own retry.
+func (s *Server) askJSON(ctx context.Context, msgs []ai.Message, specs []ai.ToolSpec, exec ai.ToolExec, note func(string), out any) error {
+	if note == nil {
+		note = func(string) {}
+	}
+	for attempt := 0; ; attempt++ {
+		var reply strings.Builder
+		if _, _, err := s.ai.StreamTools(ctx, msgs, specs, exec,
+			func(delta string) error { reply.WriteString(delta); return nil },
+			func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil },
+		); err != nil {
+			return err
+		}
+		err := ai.ExtractJSON(reply.String(), out)
+		if err == nil {
+			return nil
+		}
+		if attempt > 0 {
+			return fmt.Errorf("model reply was not JSON: %w", err)
+		}
+		note("    · reply was not valid JSON (" + err.Error() + ") — asking again")
+		log.Printf("ai: reply did not parse (%v) — re-asking once", err)
+		msgs = append(append([]ai.Message{}, msgs...), repairMessages(reply.String(), err)...)
+	}
+}
+
+// completeJSON is askJSON for the one-shot actions (draft, remedy, plan,
+// create): no tool loop, same corrective re-ask when the reply does not parse.
+func (s *Server) completeJSON(ctx context.Context, msgs []ai.Message, out any) error {
+	for attempt := 0; ; attempt++ {
+		reply, err := s.ai.Complete(ctx, msgs)
+		if err != nil {
+			return err
+		}
+		err = ai.ExtractJSON(reply, out)
+		if err == nil {
+			return nil
+		}
+		if attempt > 0 {
+			return fmt.Errorf("model reply was not JSON: %w", err)
+		}
+		log.Printf("ai: reply did not parse (%v) — re-asking once", err)
+		msgs = append(append([]ai.Message{}, msgs...), repairMessages(reply, err)...)
+	}
+}
+
+// repairMessages quote the parse failure back to the model. Handing it its own
+// reply plus the error beats re-rolling the same prompt: the model can see what
+// it did wrong.
+func repairMessages(reply string, err error) []ai.Message {
+	return []ai.Message{
+		{Role: "assistant", Content: reply},
+		{Role: "user", Content: "That reply was not valid JSON: " + err.Error() +
+			". Reply again with ONLY the JSON object — no prose, no code fence, and nothing after the closing brace."},
+	}
 }

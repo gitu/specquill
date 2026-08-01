@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +38,11 @@ type Client struct {
 	budget  int    // grounding system-prompt cap in bytes (0 = package default)
 	effort  string // reasoning_effort passthrough ("" = omit from requests)
 	http    *http.Client
+
+	// transient-failure retry: attempts total, with an exponentially growing
+	// pause from retryBase (fields, so tests don't sleep)
+	attempts  int
+	retryBase time.Duration
 }
 
 func New(cfg config.AIConfig) *Client {
@@ -47,13 +55,15 @@ func New(cfg config.AIConfig) *Client {
 		quick = cfg.Model
 	}
 	return &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		model:   cfg.Model,
-		quick:   quick,
-		key:     key,
-		budget:  cfg.GroundingBudget,
-		effort:  cfg.ReasoningEffort,
-		http:    &http.Client{Timeout: 5 * time.Minute},
+		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
+		model:     cfg.Model,
+		quick:     quick,
+		key:       key,
+		budget:    cfg.GroundingBudget,
+		effort:    cfg.ReasoningEffort,
+		http:      &http.Client{Timeout: 5 * time.Minute},
+		attempts:  3,
+		retryBase: time.Second,
 	}
 }
 
@@ -81,7 +91,7 @@ func (c *Client) GroundingBudget() int { return c.budget }
 // is retried once with reasoning_effort forced to "none" (an explicit
 // ai.reasoning_effort config skips the wasted round trip).
 func (c *Client) request(ctx context.Context, body map[string]any) (*http.Response, error) {
-	res, err := c.post(ctx, body)
+	res, err := c.attempt(ctx, body)
 	if err == nil || body["reasoning_effort"] == "none" || !strings.Contains(err.Error(), "reasoning_effort") {
 		return res, err
 	}
@@ -90,7 +100,68 @@ func (c *Client) request(ctx context.Context, body map[string]any) (*http.Respon
 		retry[k] = v
 	}
 	retry["reasoning_effort"] = "none"
-	return c.post(ctx, retry)
+	return c.attempt(ctx, retry)
+}
+
+// attempt posts the body, retrying TRANSIENT failures with a growing pause:
+// providers 502/503/429 under load and a dropped connection is not an answer.
+// A long drift run makes hundreds of calls, and one blip used to sink a whole
+// unit. Only retryable failures are repeated — a 400 is deterministic, and a
+// cancelled context (the user stopped the run) must not sleep.
+func (c *Client) attempt(ctx context.Context, body map[string]any) (*http.Response, error) {
+	attempts := max(c.attempts, 1)
+	var err error
+	for i := 0; ; i++ {
+		var res *http.Response
+		res, err = c.post(ctx, body)
+		if err == nil || i == attempts-1 || !retryable(err) || ctx.Err() != nil {
+			return res, err
+		}
+		wait := c.retryBase << i
+		if hint := retryAfter(err); hint > 0 {
+			wait = hint
+		}
+		log.Printf("ai: %s%s failed (%v) — retry %d/%d in %s", body["model"], labelOf(ctx), err, i+1, attempts-1, wait.Round(time.Millisecond))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// statusErr is a non-200 provider answer; the status decides retryability.
+type statusErr struct {
+	code       int
+	body       string
+	retryAfter string
+}
+
+func (e *statusErr) Error() string { return fmt.Sprintf("ai provider %d: %s", e.code, e.body) }
+
+// retryable: provider-side or transport failures that a second try can fix —
+// 429 (rate limit), 408, any 5xx, and network errors (reset/EOF/timeout).
+// Everything else (400 bad request, 401, 404 …) fails the same way twice.
+func retryable(err error) bool {
+	var se *statusErr
+	if errors.As(err, &se) {
+		return se.code == http.StatusTooManyRequests || se.code == http.StatusRequestTimeout || se.code >= 500
+	}
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// retryAfter honours the provider's own pacing hint (delta-seconds only; the
+// HTTP-date form is rare here and a wrong parse would sleep for hours).
+func retryAfter(err error) time.Duration {
+	var se *statusErr
+	if !errors.As(err, &se) || se.retryAfter == "" {
+		return 0
+	}
+	secs, convErr := strconv.Atoi(strings.TrimSpace(se.retryAfter))
+	if convErr != nil || secs <= 0 || secs > 120 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 func (c *Client) post(ctx context.Context, body map[string]any) (*http.Response, error) {
@@ -113,7 +184,7 @@ func (c *Client) post(ctx context.Context, body map[string]any) (*http.Response,
 	if res.StatusCode != http.StatusOK {
 		defer res.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		return nil, fmt.Errorf("ai provider %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, &statusErr{code: res.StatusCode, body: strings.TrimSpace(string(raw)), retryAfter: res.Header.Get("Retry-After")}
 	}
 	return res, nil
 }
@@ -214,10 +285,73 @@ func ExtractJSON(reply string, v any) error {
 			s = s[:j]
 		}
 	}
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start < 0 || end <= start {
-		return fmt.Errorf("no JSON object in model reply")
+	// Decode the first object that FITS: models sometimes emit a second object
+	// (a repeat, or a commentary blob) after the answer — spanning first-`{` to
+	// last-`}` is then invalid JSON ("invalid character '{' after top-level
+	// value") — and sometimes a preamble object before it, which decodes
+	// "successfully" into an empty struct and silently turns a failed call into
+	// an empty result. So: prefer the first object sharing a field with the
+	// target, and fall back to the first that decodes at all.
+	want := jsonFields(v)
+	var firstErr error
+	fallback := -1
+	for off := 0; ; {
+		i := strings.IndexByte(s[off:], '{')
+		if i < 0 {
+			break
+		}
+		start := off + i
+		var probe map[string]json.RawMessage
+		if err := json.NewDecoder(strings.NewReader(s[start:])).Decode(&probe); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			off = start + 1
+			continue
+		}
+		if fallback < 0 {
+			fallback = start
+		}
+		if len(want) == 0 || fits(probe, want) {
+			return json.NewDecoder(strings.NewReader(s[start:])).Decode(v)
+		}
+		off = start + 1
 	}
-	return json.Unmarshal([]byte(s[start:end+1]), v)
+	if fallback >= 0 {
+		return json.NewDecoder(strings.NewReader(s[fallback:])).Decode(v)
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	return fmt.Errorf("no JSON object in model reply")
+}
+
+// jsonFields lists the json field names of a struct (pointer) target, so
+// ExtractJSON can tell the answer from a preamble object. Empty for map or
+// slice targets — anything decodes into those, and any object will do.
+func jsonFields(v any) map[string]bool {
+	t := reflect.TypeOf(v)
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
+	}
+	out := map[string]bool{}
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func fits(probe map[string]json.RawMessage, want map[string]bool) bool {
+	for k := range probe {
+		if want[k] {
+			return true
+		}
+	}
+	return false
 }

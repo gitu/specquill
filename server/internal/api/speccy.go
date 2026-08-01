@@ -288,18 +288,13 @@ func (s *Server) speccyDraft(w http.ResponseWriter, r *http.Request, repo *proje
 		}
 		authoring = ai.AuthoringRules(snap, instr)
 	}
-	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "speccy draft "+body.ChangePath),
-		ai.DraftPrompt(changeContent, allowed, authoring))
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
 	var draft struct {
 		Summary string      `json:"summary"`
 		Edits   []draftEdit `json:"edits"`
 	}
-	if err := ai.ExtractJSON(reply, &draft); err != nil {
-		jsonError(w, http.StatusBadGateway, "model reply was not valid edit JSON: "+err.Error())
+	if err := s.completeJSON(ai.WithLabel(r.Context(), "speccy draft "+body.ChangePath),
+		ai.DraftPrompt(changeContent, allowed, authoring), &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 

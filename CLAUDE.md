@@ -327,6 +327,29 @@ from the code.
   PAT mode; `web/e2e/patlogin.spec.ts` self-skips unless the target server
   reports a `forge` provider.
 
+## AI call resilience
+
+A long run makes hundreds of model calls, so a single blip must not sink a
+unit. Two independent layers, both silent on the happy path:
+
+- **Transport** (`ai.Client.attempt`): 3 attempts with a doubling pause from
+  1s for TRANSIENT failures only — 429, 408, any 5xx (the Azure/OpenAI
+  "server_error" 502 is the common one) and network errors. A 400/401/404
+  fails once. `Retry-After` wins when the provider sends a sane
+  delta-seconds; a cancelled run never sleeps out the backoff. Streaming
+  calls retry only before the first byte — a mid-stream break is already
+  delivered content.
+- **Parse** (`askJSON` / `completeJSON` in `api/drift.go`): when a reply is
+  not JSON, the engine hands the model its own reply plus the parse error and
+  asks ONCE more. Every drift/gaps/extract/match/plan/remedy/create/linker/
+  speccy-draft JSON path goes through these two helpers — do not call
+  `StreamTools`+`ExtractJSON` directly.
+- `ai.ExtractJSON` decodes the first object that FITS the target's json tags,
+  NOT first-`{`-to-last-`}` — models emit a trailing second object (which made
+  the span invalid: "invalid character '{' after top-level value") or a
+  preamble object (which decoded into an empty struct and silently turned a
+  failed call into a zero-finding result).
+
 ## Server logs
 
 Beyond the `METHOD /path duration` request line, the server narrates the work
