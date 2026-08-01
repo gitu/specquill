@@ -33,7 +33,8 @@ title: Writing requirements
 When asked to draft or edit a requirement (requirements/REQ-*.md):
 
 - One requirement per file, id ` + "`REQ-<nnn>`" + `; the frontmatter id, filename and title heading agree.
-- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and drivers — the WHY documents (regulations/change records) that motivate it, as a plain path list. Specs point back via their implements list.
+- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and drivers — the WHY documents (regulations, product asks) that motivate it, as a plain path list. Specs point back via their implements list.
+- When the requirement only applies from or until a date — a rule coming into force, a commitment with a deadline, a rule being retired — record it as ` + "`starts:`" + ` / ` + "`ends:`" + ` (yyyy-mm-dd). Those keys put the document on the workspace's timed-dependency timeline, where the readiness of everything implementing it is tracked against the date. Never invent a date: take it from the driving document, or ask.
 - Body: one short context paragraph, then atomic sub-requirements as blockquotes: "**REQ-<nnn>.<m> · MUST** — <single testable statement>" using RFC-2119 keywords (MUST/SHALL/SHOULD/MAY).
 - Each statement is verifiable: no "user-friendly", "fast", "appropriate" without a measurable bound.
 - Never invent regulation references — link only files that exist in the workspace.
@@ -82,6 +83,7 @@ When working with regulations/*.md:
 - Regulation files are reference material — quote and link them (path#anchor), never rewrite their normative text.
 - Requirements cite them via the drivers frontmatter list as plain paths like regulations/<file>.md#<article-anchor>; the regulatory type is derived from the target.
 - When summarizing a regulatory change, list the driven requirements and where their coverage stands.
+- A regulation that comes into force (or lapses) on a date carries ` + "`effective_from:`" + ` / ` + "`effective_until:`" + ` — that is what puts it, and the requirements behind it, on the timed-dependency timeline.
 `,
 	},
 	"data-mappings": {
@@ -171,7 +173,7 @@ title: Writing work items
 
 When asked to draft or edit a work item (work-items/WI-*.md):
 
-- One deliverable per file, id WI-<nnn>; frontmatter: id, title, status (backlog|in_progress|done), priority, owner, delivers (the requirements/specs this item ships), due (yyyy-mm-dd, optional).
+- One deliverable per file, id WI-<nnn>; frontmatter: id, title, status (backlog|in_progress|done), priority, owner, delivers (the requirements/specs this item ships), due (yyyy-mm-dd, optional — a due date puts the item on the timed-dependency timeline).
 - The body answers: what ships, why now (link the driving change records), and how we know it is done (acceptance checks referencing the linked requirements).
 - Keep delivers accurate — it is the WHEN edge of the traceability graph; do not pad it.
 `,
@@ -325,6 +327,11 @@ entities:
     attributes: [id, title, status, priority, owner, delivers, due]
     description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
 
+# NOTE (Aug 2026): the change-record inbox was replaced by timed dependencies
+# (below) and the git-derived change history. The old entity keys inbox,
+# attention_statuses and closed_statuses are accepted and IGNORED — a change
+# family still works as an ordinary document family, it simply has no inbox UI.
+
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
 # The categories a driver can fall into (chips in the Properties panel and
 # the dashboards). A drivers link's type is DERIVED from the referenced
@@ -453,6 +460,8 @@ with your team's structure and content expectations. Examples to adapt:
 
 - Every requirement gets a rationale paragraph before its normative statements.
 - Specs describe current behavior only; planned work belongs in work items.
+- A requirement that only applies from a date carries starts: (and ends: when it
+  lapses) — that is what puts it on the timed-dependency timeline.
 - Use tables for field mappings, mermaid flowcharts for branching flows.
 `
 
@@ -493,9 +502,18 @@ Place the document in its family folder, seed the family's attributes, and
 set the upward link to a REAL upper-level document — list_files/search first
 to find it, ask_user when ambiguous. Never invent target paths.
 
+## Timed dependencies
+A document with a validity window in its frontmatter (` + "`starts`" + `/` + "`ends`" + `, or
+regulatory wording like ` + "`effective_from`" + `/` + "`effective_until`" + ` — the exact keys are the
+workspace's ` + "`timed:`" + ` config) is a timed dependency: the deadline lives on the
+document it binds, never in a separate change record. When a driving document
+names a date, put it on the document it binds and say which documents must be
+approved before it.
+
 ## Ensure ("audit the model")
 Walk the workspace and report per level: documents missing their upward link,
-links whose target is the wrong kind, and legacy shapes (` + "`{type, ref}`" + ` driver
+links whose target is the wrong kind, timed documents whose window opens soon
+while the documents implementing them are still draft, and legacy shapes (` + "`{type, ref}`" + ` driver
 maps, ` + "`satisfies:`" + `, ` + "`implements:`" + ` on requirements). Report first; fix only on
 request.
 

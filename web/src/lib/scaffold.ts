@@ -92,6 +92,11 @@ entities:
     description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
   # decision: { group: why, folder: "decisions/", label: "Decisions", icon: "◆", color: "#7c5cd6", description: "Why the system is shaped this way." }
 
+# NOTE (Aug 2026): the change-record inbox was replaced by timed dependencies
+# (below) and the git-derived change history. The old entity keys inbox,
+# attention_statuses and closed_statuses are accepted and IGNORED — a change
+# family still works as an ordinary document family, it simply has no inbox UI.
+
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
 # The categories a driver can fall into (chips in the Properties panel and
 # the dashboards). A \`drivers:\` link's type is DERIVED from the referenced
@@ -226,6 +231,8 @@ with your team's structure and content expectations. Examples to adapt:
 
 - Every requirement gets a rationale paragraph before its normative statements.
 - Specs describe current behavior only; planned work belongs in work items.
+- A requirement that only applies from a date carries starts: (and ends: when it
+  lapses) — that is what puts it on the timed-dependency timeline.
 - Use tables for field mappings, mermaid flowcharts for branching flows.
 `;
 }

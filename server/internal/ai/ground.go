@@ -47,6 +47,16 @@ const ToolRules = `
   in plain text and never end a reply with "reply X to proceed": ask_user
   renders as clickable answer options, a plain-text question does not.
 - Ask ONE question per ask_user call, with the choices as its options.
+- Your tools read the workspace AS IT IS NOW. You cannot read git history, so
+  never claim what a document used to say, who changed it or when. For that,
+  point the user at the Change history view (which reads the commits and
+  explains each one as a document delta) or at a document's own history in
+  the editor — and say plainly that you cannot see it yourself.
+- Deadlines live on the documents: a validity window in the frontmatter
+  (starts/ends, effective_from/effective_until, due) puts a document on the
+  Timed dependencies view together with the readiness of everything that
+  links to it. When asked what is pending or at risk, read those keys rather
+  than guessing from statuses alone.
 - Prefer asking over assuming. When a request or spec leaves behavior
   undefined — actors, permissions, notifications, timing, edge cases, scope —
   enumerate the gaps and work through them with ask_user, most consequential
