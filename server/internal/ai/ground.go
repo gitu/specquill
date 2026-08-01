@@ -438,6 +438,51 @@ func SurveyPrompt(sourceName, instructions string) []Message {
 	}
 }
 
+const focusSystem = `You are the specquill focus adviser. You propose the AREAS
+a requirements analyst could aim the next gap analysis at, so they can work
+through a large application deliberately instead of sweeping everything.
+
+Base the proposals on what you are given: the extracted requirement
+inventories (with their coverage), the reference sources, and the workspace's
+documents. Explore with the tools where the material is thin. Reply with ONLY
+a JSON object, no prose:
+
+{
+  "areas": [
+    {
+      "name": "Data retention",
+      "reason": "4 of 6 extracted retention requirements have no document.",
+      "sources": ["regulations"]
+    }
+  ]
+}
+
+Rules:
+- Propose 3-6 areas, most valuable first. "reason" says concretely why it is
+  worth a sweep — uncovered requirements, thin documentation, recent source
+  activity — never generic praise.
+- "name" is short enough to use as a filter (2-5 words) and describes a
+  capability, not a file or folder.
+- "sources" names the reference sources that area lives in, exactly as given.
+- Prefer areas with real coverage gaps over areas that are already well
+  documented.`
+
+// FocusPrompt builds the propose-where-to-look conversation.
+func FocusPrompt(sourcesBlock, docIndex, instructions string) []Message {
+	system := focusSystem
+	if instructions != "" {
+		system += "\n\nWorkspace drift instructions:\n" + instructions
+	}
+	var b strings.Builder
+	b.WriteString("# Reference sources and what has been extracted from them\n" + sourcesBlock + "\n")
+	b.WriteString("\n# Workspace documents\n" + docIndex + "\n")
+	b.WriteString("\nPropose the areas worth focusing a gap analysis on, as JSON.")
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: b.String()},
+	}
+}
+
 const matchSystem = `You are the specquill coverage matcher. You are given
 requirements extracted from an application and the workspace's requirement
 documents. For EACH extracted requirement you decide whether a document
@@ -577,8 +622,14 @@ Rules:
 // GapPrompt builds the per-source coverage-audit conversation. docIndex lists
 // the workspace's document paths so the model knows what exists before it
 // searches.
-func GapPrompt(sourceName, docIndex, extracted, instructions string) []Message {
+func GapPrompt(sourceName, docIndex, extracted, focus, instructions string) []Message {
 	system := gapSystem
+	if focus != "" {
+		system += "\n\n# Focus\nThis sweep is aimed at ONE area: " + focus +
+			".\nReport only gaps that belong to it. Capabilities outside the focus are " +
+			"another sweep's job — skip them silently, and return an empty list when the " +
+			"source has nothing in this area."
+	}
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
 	}

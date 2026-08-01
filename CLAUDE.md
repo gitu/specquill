@@ -132,7 +132,14 @@ from the code.
   `AlignmentSummary` card + "Check drift" in the editor) has TWO run modes:
   **drift** —
   scoped per-document AI runs verify docs against the selected references —
-  and **gaps** — per-source sweeps report capabilities no document covers
+  and **gaps** — per-source sweeps report capabilities no document covers.
+  Any run may be RESTRICTED to a subset of the project's references
+  (`sources:` on the run request, 422 when none match) and a gaps sweep may
+  be AIMED at one area (`focus:`, a hard constraint in the prompt — out-of-
+  area gaps are another sweep's job); `POST .../drift/focus` proposes where
+  to aim next from the extracted inventories (read-only: no run, no writes),
+  and the card offers those as clickable chips that set both the focus and
+  its sources
   (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
   path). Drift ALSO proposes documents that don't exist yet: kind
   `new-requirement` (the source mandates something in the audited doc's

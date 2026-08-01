@@ -900,3 +900,71 @@ func TestExtractDividesConquersAndMatches(t *testing.T) {
 		t.Fatalf("drift prompt did not carry the extracted baseline:\n%s", last)
 	}
 }
+
+func TestGapsRestrictToSourcesAndFocus(t *testing.T) {
+	empty := `{"findings": []}`
+	h, _, _, _, prompts := testDriftServer(t, []string{empty})
+	cookie := login(t, h)
+
+	// an unknown source leaves nothing to sweep
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"mode": "gaps", "sources": []string{"nope"}})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown source restriction: %d %v", code, out)
+	}
+
+	// a focused sweep over the named source only
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"mode": "gaps", "sources": []string{"~reg"}, "focus": "  data retention  "})
+	if code != http.StatusOK {
+		t.Fatalf("focused run: %d %v", code, out)
+	}
+	if out["sources"].(float64) != 1 || out["focus"] != "data retention" {
+		t.Fatalf("run did not record the restriction/focus: %v", out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if scope, _ := run["scope"].([]any); len(scope) != 1 || scope[0] != "reg" {
+		t.Fatalf("scope = %v", run["scope"])
+	}
+	feed := ""
+	for _, l := range run["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	if !strings.Contains(feed, "focus: data retention") || !strings.Contains(feed, "(~reg)") {
+		t.Fatalf("activity should name the restriction and focus:\n%s", feed)
+	}
+	// …and the focus reaches the model as a hard constraint
+	sys := ""
+	for _, p := range *prompts {
+		sys += p
+	}
+	if !strings.Contains(sys, "~reg") {
+		t.Fatalf("gap prompt did not run on the restricted source:\n%s", sys)
+	}
+}
+
+func TestFocusProposalsFilterUnknownSources(t *testing.T) {
+	focus := `{"areas":[
+		{"name":"Data retention","reason":"4 of 6 uncovered","sources":["reg","ghost"]},
+		{"name":"","reason":"nameless — dropped","sources":[]}
+	]}`
+	h, _, _, _, _ := testDriftServer(t, []string{focus})
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/focus?branch=main", map[string]any{})
+	if code != http.StatusOK {
+		t.Fatalf("focus: %d %v", code, out)
+	}
+	areas, _ := out["areas"].([]any)
+	if len(areas) != 1 {
+		t.Fatalf("nameless area must be dropped: %v", areas)
+	}
+	a := areas[0].(map[string]any)
+	if a["name"] != "Data retention" || a["reason"] != "4 of 6 uncovered" {
+		t.Fatalf("unexpected area: %v", a)
+	}
+	if srcs, _ := a["sources"].([]any); len(srcs) != 1 || srcs[0] != "reg" {
+		t.Fatalf("unknown source must be filtered out: %v", a["sources"])
+	}
+}

@@ -6,7 +6,7 @@ import { projectPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import {
   DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
-  useFileFinding, useRemedyFinding, useRunDrift, useTree,
+  FocusArea, useFileFinding, useFocusAreas, useRemedyFinding, useRunDrift, useTree,
 } from '../api/hooks';
 
 const SEV: Record<string, { label: string; fg: string; bg: string; rank: number }> = {
@@ -36,10 +36,14 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const draft = useDraftRequirement(repo, branch);
   const remedy = useRemedyFinding(repo, branch);
   const { ensureWritableBranch } = useWorkspace();
+  const suggest = useFocusAreas(repo, branch);
   const qc = useQueryClient();
   const [mode, setMode] = useState<DriftMode>('drift');
   const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
   const [report, setReport] = useState(''); // '' = follow the last run / default
+  const [pickSources, setPickSources] = useState<string[]>([]); // [] = every selected source
+  const [focus, setFocus] = useState('');
+  const [areas, setAreas] = useState<FocusArea[] | null>(null);
   const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
 
@@ -74,7 +78,12 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
     // off a protected branch FIRST, so the whole run — findings included —
     // belongs to the branch the user is now on and stays visible here
     void ensureWritableBranch().then(async (on) => {
-      const body = { mode, report: reportTarget, branch: on, ...(mode === 'drift' ? { paths: scope } : {}) };
+      const body = {
+        mode, report: reportTarget, branch: on,
+        ...(pickSources.length ? { sources: pickSources } : {}),
+        ...(mode === 'gaps' && focus.trim() ? { focus: focus.trim() } : {}),
+        ...(mode === 'drift' ? { paths: scope } : {}),
+      };
       await run.mutateAsync(body);
       // the switch remounts this card's query against the new branch; that
       // mount fetch can land BEFORE the run row exists, and a card showing
@@ -153,9 +162,52 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
               ))}
             </div>
           ) : (
-            <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:9px')}>
-              {mode === 'extract' ? 'analyzes' : 'sweeps'} {sources.length} reference source{sources.length === 1 ? '' : 's'}
-              {sources.length > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-3)")}> — {sources.map((s) => '~' + s).join(', ')}</span>}
+            <div style={sx('margin-top:9px')}>
+              <div style={sx('display:flex;flex-wrap:wrap;gap:5px;align-items:center')}>
+                <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>
+                  {mode === 'extract' ? 'analyze' : 'sweep'}
+                </span>
+                <ScopeChip label="All sources" active={pickSources.length === 0} onClick={() => setPickSources([])} />
+                {sources.map((n) => (
+                  <ScopeChip key={n} label={'~' + n} active={pickSources.includes(n)}
+                    onClick={() => setPickSources((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]))} />
+                ))}
+              </div>
+              {mode === 'gaps' && (
+                <>
+                  <div style={sx('display:flex;align-items:center;gap:6px;margin-top:7px')}>
+                    <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>focus</span>
+                    <input value={focus} placeholder="whole source — or name an area to aim at"
+                      onChange={(e) => setFocus(e.target.value)}
+                      title="Restrict this sweep to one area; gaps outside it are another sweep's job"
+                      style={sx('flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px')} />
+                    {focus && (
+                      <button onClick={() => setFocus('')}
+                        style={sx('height:24px;padding:0 8px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>clear</button>
+                    )}
+                    <button onClick={() => { setErr(''); suggest.mutate(pickSources.length ? pickSources : undefined, { onSuccess: (r) => setAreas(r.areas), onError: (e) => setErr(String((e as Error).message ?? e)) }); }}
+                      disabled={suggest.isPending}
+                      title="Ask where a gap sweep would pay off, based on what has been extracted"
+                      style={sx('height:24px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none')}>
+                      {suggest.isPending ? 'Thinking…' : 'Suggest areas'}
+                    </button>
+                  </div>
+                  {areas?.length === 0 && (
+                    <div style={sx('font-size:10.5px;color:var(--text-3);margin-top:5px')}>no focus areas proposed</div>
+                  )}
+                  {(areas ?? []).map((a) => (
+                    <div key={a.name} onClick={() => { setFocus(a.name); if (a.sources.length) setPickSources(a.sources); }}
+                      title={'focus on ' + a.name}
+                      style={sx('display:flex;gap:7px;align-items:baseline;margin-top:5px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;background:' + (focus === a.name ? 'var(--ai-bg)' : 'var(--surface)'))}>
+                      <span style={sx('font-size:11.5px;font-weight:600;flex:none')}>{a.name}</span>
+                      <span style={sx('font-size:10.5px;color:var(--text-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{a.reason}</span>
+                      {a.sources.length > 0 && (
+                        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);flex:none")}>~{a.sources.join(' ~')}</span>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
           <div style={sx('display:flex;align-items:center;gap:6px;margin-top:9px')}>
@@ -177,8 +229,9 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
               {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope`
-                : mode === 'extract' ? 'writes a grouped requirement inventory per source'
-                  : 'reports uncovered capabilities as gaps'}
+                : `${pickSources.length || sources.length} source${(pickSources.length || sources.length) === 1 ? '' : 's'}` +
+                  (mode === 'extract' ? ' → grouped requirement inventory'
+                    : focus.trim() ? ` · focused on “${focus.trim()}”` : ' · uncovered capabilities')}
             </span>
             <button onClick={start} disabled={run.isPending || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
               style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>

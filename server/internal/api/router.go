@@ -128,6 +128,7 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("GET /api/repos/{repo}/drift", s.writableViewH(s.getDrift))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/run", s.writableH(s.postDriftRun))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/cancel", s.writableH(s.postDriftCancel))
+	apiMux.HandleFunc("POST /api/repos/{repo}/drift/focus", s.writableH(s.postDriftFocus))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/dismiss", s.writableH(s.postDriftDismiss))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/file", s.writableH(s.postDriftFile))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/draft", s.writableH(s.postDriftDraft))

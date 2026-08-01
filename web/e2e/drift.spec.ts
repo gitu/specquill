@@ -177,7 +177,8 @@ test('gap analysis reverse-engineers the missing requirement', async ({ page, re
 
   // switch to gap analysis: sweeps the selected references, not the docs
   await page.getByText('Gaps', { exact: true }).click();
-  await expect(page.getByText(/sweeps 1 reference source/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '~regulations' })).toBeVisible();
+  await expect(page.getByText(/1 source · uncovered capabilities/)).toBeVisible();
   await page.getByRole('button', { name: 'Find gaps' }).click();
 
   // the mock reports one uncovered capability from ~regulations
@@ -300,7 +301,7 @@ test('extract analyzes the app into a persisted requirement inventory', async ({
   await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
 
   await page.getByText('Extract', { exact: true }).click();
-  await expect(page.getByText(/analyzes 1 reference source/)).toBeVisible();
+  await expect(page.getByText(/1 source → grouped requirement inventory/)).toBeVisible();
   const prev = await runId(request, ws.branch);
   await page.getByRole('button', { name: 'Analyze app' }).click();
   await runFinished(request, ws.branch, prev);
@@ -345,4 +346,33 @@ test('extract analyzes the app into a persisted requirement inventory', async ({
   expect(after.run.activity.join('\n')).toContain('using extracted requirements as the baseline');
 
   await request.delete(`/api/repos/${REPO}/files/reports/extracted-regulations.md?branch=${q(ws.branch)}`, { headers: H });
+});
+
+test('gap sweeps can be aimed: suggested areas, a focus and chosen sources', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await page.getByText('Gaps', { exact: true }).click();
+
+  // ask where to look — the proposals name an area and why it pays off
+  await page.getByRole('button', { name: 'Suggest areas' }).click();
+  const area = page.getByText('Data retention', { exact: true });
+  await expect(area).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/retention rules have no requirement document/)).toBeVisible();
+
+  // picking one aims the sweep (and selects the sources it lives in)
+  await area.click();
+  await expect(page.locator('input[placeholder*="name an area"]')).toHaveValue('Data retention');
+  await expect(page.getByText(/1 source · focused on “Data retention”/)).toBeVisible();
+
+  const prev = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Find gaps' }).click();
+  await runFinished(request, ws.branch, prev);
+
+  // the run records the restriction and the focus, and says so
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { scope: string[]; activity: string[] };
+  };
+  expect(d.run.scope).toEqual(['regulations']);
+  expect(d.run.activity.join('\n')).toContain('focus: Data retention');
 });

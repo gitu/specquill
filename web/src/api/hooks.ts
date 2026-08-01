@@ -213,7 +213,7 @@ export function useRunDrift(repo: string | undefined, branch: string) {
   return useMutation({
     // `branch` overrides the hook's branch: the caller may have just been
     // moved onto their workspace branch and the run must target THAT one
-    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string }) =>
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string }) =>
       api<{ runId: number; docsTotal: number; mode: DriftMode }>(
         `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),
@@ -238,6 +238,18 @@ export function useRemedyFinding(repo: string | undefined, branch: string) {
       qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
       qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
     },
+  });
+}
+
+export interface FocusArea { name: string; reason: string; sources: string[] }
+
+/** Ask where to aim the next gap sweep (read-only: no run, no writes). */
+export function useFocusAreas(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (sources?: string[]) =>
+      api<{ areas: FocusArea[] }>(
+        `/api/repos/${repo}/drift/focus?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ sources: sources ?? [] }) }),
   });
 }
 

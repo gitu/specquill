@@ -50,7 +50,17 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'application surveyor' in system:
+        if 'focus adviser' in system:
+            # propose where a gap sweep would pay off
+            reply = json.dumps({'areas': [
+                {'name': 'Data retention',
+                 'reason': '(mock) the retention rules have no requirement document.',
+                 'sources': ['regulations']},
+                {'name': 'Incident reporting',
+                 'reason': '(mock) DORA windows are only partially covered.',
+                 'sources': ['regulations']},
+            ]})
+        elif 'application surveyor' in system:
             # divide: two capability areas of the demo regulations source
             reply = json.dumps({'areas': [
                 {'name': 'Transaction reporting',

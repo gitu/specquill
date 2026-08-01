@@ -437,9 +437,13 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		return
 	}
 	var body struct {
-		Mode   string   `json:"mode"`
-		Paths  []string `json:"paths"`
-		Report string   `json:"report"` // report doc to create/continue; default: the standing report
+		Mode  string   `json:"mode"`
+		Paths []string `json:"paths"`
+		// Sources restricts which references this run touches (default: all
+		// selected); Focus aims a gaps sweep at one area.
+		Sources []string `json:"sources"`
+		Focus   string   `json:"focus"`
+		Report  string   `json:"report"` // report doc to create/continue; default: the standing report
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = default scope
 	if body.Mode == "" {
@@ -471,6 +475,28 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusUnprocessableEntity,
 			"no reference sources selected — drift needs references in .specquill/config.yml")
 		return
+	}
+	if len(body.Sources) > 0 { // restrict this run to the named references
+		want := map[string]bool{}
+		for _, n := range body.Sources {
+			want[strings.TrimPrefix(strings.TrimSpace(n), "~")] = true
+		}
+		kept := sources[:0:0]
+		for _, src := range sources {
+			if want[src.Name] {
+				kept = append(kept, src)
+			}
+		}
+		if len(kept) == 0 {
+			jsonError(w, http.StatusUnprocessableEntity,
+				"none of the requested sources is selected by this project")
+			return
+		}
+		sources = kept
+	}
+	body.Focus = strings.TrimSpace(body.Focus)
+	if len(body.Focus) > 200 {
+		body.Focus = body.Focus[:200]
 	}
 	// units: the docs to verify (drift) or the sources to sweep (gaps)
 	var units []string
@@ -542,8 +568,9 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	// documents inlined, so the check sees the chain around it
 	idx := buildLinkIndex(files, linkFieldNames(files))
 	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx,
-		driftCfg.Instructions, body.Report)
-	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode})
+		driftCfg.Instructions, body.Report, body.Focus)
+	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode,
+		"sources": len(sources), "focus": body.Focus})
 }
 
 // POST /api/repos/{repo}/drift/cancel?branch=
@@ -614,7 +641,7 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 // run continues; only cancellation stops it early.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
 	mode string, repo *project.Project, branch string, units []string, files map[string]string,
-	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath string) {
+	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string) {
 	defer cancel()
 	defer s.drift.release(key)
 
@@ -660,7 +687,12 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		note(fmt.Sprintf("▸ analyzing %d application source%s into extracted requirements",
 			len(units), plural(len(units))))
 	} else if mode == "gaps" {
-		note(fmt.Sprintf("▸ gap analysis over %d source%s", len(units), plural(len(units))))
+		line := fmt.Sprintf("▸ gap analysis over %d source%s (%s)",
+			len(units), plural(len(units)), strings.Join(srcNames, ", "))
+		if focus != "" {
+			line += " · focus: " + focus
+		}
+		note(line)
 	} else {
 		note(fmt.Sprintf("▸ drift check of %d document%s against %s",
 			len(units), plural(len(units)), strings.Join(srcNames, ", ")))
@@ -706,7 +738,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				}
 			}
 		case "gaps":
-			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, reportPath, liveNote(i))
+			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, reportPath, focus, liveNote(i))
 		default:
 			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, reportPath, liveNote(i))
 		}
@@ -1113,7 +1145,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 // carry no doc_path — reverse engineering (postDriftDraft) creates the
 // missing document from them.
 func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions, reportPath string,
+	files map[string]string, sources []ai.GroundingSource, instructions, reportPath, focus string,
 	note func(string)) ([]store.DriftFinding, int, error) {
 	var src *ai.GroundingSource
 	for i := range sources {
@@ -1138,7 +1170,7 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 	if extracted != "" {
 		note("    · using extracted requirements as the baseline")
 	}
-	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, instructions)
+	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, focus, instructions)
 
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
@@ -1486,6 +1518,112 @@ func mergeExtraction(existing, block, source string) string {
 		"_What the application itself requires, read out of `~" + source + "` and grouped by " +
 		"capability. The block below is engine-maintained and rewritten on every extraction run; " +
 		"everything outside it is yours._\n\n" + wrapped + "\n"
+}
+
+// POST /api/repos/{repo}/drift/focus?branch= {sources?} — propose the areas
+// worth aiming the next gap analysis at. Read-only: it writes nothing and
+// creates no run, it only answers "where should I look?".
+func (s *Server) postDriftFocus(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	var body struct {
+		Sources []string `json:"sources"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	files, err := repo.Snapshot(branch)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+	var driftCfg project.DriftConfig
+	instructions := ""
+	if cfg := inRepoConfig(repo, branch); cfg != nil {
+		driftCfg, instructions = cfg.Drift, cfg.Speccy.Instructions
+	}
+	sources := s.driftSources(r, repo, branch, driftCfg)
+	if len(body.Sources) > 0 {
+		want := map[string]bool{}
+		for _, n := range body.Sources {
+			want[strings.TrimPrefix(strings.TrimSpace(n), "~")] = true
+		}
+		kept := sources[:0:0]
+		for _, src := range sources {
+			if want[src.Name] {
+				kept = append(kept, src)
+			}
+		}
+		sources = kept
+	}
+	if len(sources) == 0 {
+		jsonError(w, http.StatusUnprocessableEntity, "no reference sources selected")
+		return
+	}
+
+	// what we already know about each source: its extracted inventory when it
+	// has one (coverage included), else just its size
+	reportPath := driftReportPath(driftCfg)
+	var b strings.Builder
+	for _, src := range sources {
+		fmt.Fprintf(&b, "\n## ~%s (%d files)\n", src.Name, len(src.Files))
+		if block := extractionContext(files, reportPath, src.Name); block != "" {
+			b.WriteString(block + "\n")
+		} else {
+			b.WriteString("(not extracted yet — explore it with the tools)\n")
+		}
+	}
+	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
+		files: files, publish: func() {}}
+	var specs []ai.ToolSpec
+	for _, spec := range tb.specs(files) {
+		if spec.Name != "ask_user" {
+			specs = append(specs, spec)
+		}
+	}
+	var reply strings.Builder
+	_, _, err = s.ai.StreamTools(r.Context(),
+		ai.FocusPrompt(b.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), instructions),
+		specs, tb.exec,
+		func(delta string) error { reply.WriteString(delta); return nil },
+		func(ai.ToolCall, string, error) error { return nil })
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var out struct {
+		Areas []struct {
+			Name    string   `json:"name"`
+			Reason  string   `json:"reason"`
+			Sources []string `json:"sources"`
+		} `json:"areas"`
+	}
+	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
+		jsonError(w, http.StatusBadGateway, "model reply was not focus JSON: "+err.Error())
+		return
+	}
+	known := map[string]bool{}
+	for _, src := range sources {
+		known[src.Name] = true
+	}
+	areas := []map[string]any{}
+	for _, a := range out.Areas {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			continue
+		}
+		names := []string{}
+		for _, n := range a.Sources { // only sources this project actually has
+			if n = strings.TrimPrefix(strings.TrimSpace(n), "~"); known[n] {
+				names = append(names, n)
+			}
+		}
+		areas = append(areas, map[string]any{
+			"name": name, "reason": strings.TrimSpace(a.Reason), "sources": names,
+		})
+	}
+	jsonOK(w, map[string]any{"areas": areas})
 }
 
 // ---------------------------------------------------------------- reverse engineering
