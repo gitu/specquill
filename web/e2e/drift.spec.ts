@@ -280,7 +280,11 @@ test('the run narrates its work and proposes new requirements', async ({ page, r
   expect(log).toMatch(/· read ~regulations\//);        // tool use, live
   expect(log).toMatch(/⚠ (high|medium) [\w-]+ @ /);      // each finding named
   expect(log).toMatch(/▪ ok — \d+ findings? live/);     // closing summary
+  // the full log lives on its own full-width tab
+  await page.getByRole('button', { name: /^Run activity/ }).click();
   await expect(page.getByText(/· read ~regulations\//).first()).toBeVisible();
+  await page.getByRole('button', { name: /^Findings/ }).click();
+  await expect(rows(page).first()).toBeVisible();
 
   // drift also detects requirements that do not exist yet: the source
   // mandates something no document states, with a path proposed for it

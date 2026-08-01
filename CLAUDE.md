@@ -127,8 +127,11 @@ from the code.
   baseline"). Engine-marked docs — reports AND extractions — never enter a
   run scope.
 - **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
-  `views/AlignmentView.tsx`, rail icon — hosting the full card, last-run
-  panel, activity log and the linker; the Overview keeps only the compact
+  `views/AlignmentView.tsx`, rail icon. `DriftControls` (run controls) and
+  the last-run panel sit compact side by side; below them a TABBED
+  FULL-WIDTH panel switches between `DriftFindings` and the run activity —
+  findings need the width for their paths, evidence and actions, and the log
+  needs it to stay unwrapped. The Overview keeps only the compact
   `AlignmentSummary` card + "Check drift" in the editor) has TWO run modes:
   **drift** —
   scoped per-document AI runs verify docs against the selected references —

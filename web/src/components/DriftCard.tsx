@@ -16,25 +16,18 @@ const SEV: Record<string, { label: string; fg: string; bg: string; rank: number 
 };
 
 /**
- * Source alignment: AI runs that hold the workspace and its read-only
- * reference sources against each other. Two modes — "Drift" verifies each
- * document against the sources ("source" drift; "mapping drifts" are the
- * frontmatter-flagged fields elsewhere), "Gaps" sweeps each source for
- * capabilities no document covers, from which the missing requirement can be
- * reverse-engineered as a draft. Review-then-file: every work item and every
- * draft is an explicit human click on a displayed finding.
+ * The run controls: pick a mode (Drift verifies each document against the
+ * sources, Gaps sweeps the sources for uncovered capabilities, Extract
+ * analyzes the app into a requirement inventory), aim it, choose the report,
+ * and watch it go. The findings it produces render full-width in
+ * DriftFindings — they need the room.
  */
-export function DriftCard({ repo, branch }: { repo: string | undefined; branch: string }) {
-  const nav = useNav();
+export function DriftControls({ repo, branch }: { repo: string | undefined; branch: string }) {
   const navigate = useNavigate();
   const drift = useDrift(repo, branch);
   const tree = useTree(repo, branch);
   const run = useRunDrift(repo, branch);
   const cancel = useCancelDrift(repo, branch);
-  const dismiss = useDismissFinding(repo, branch);
-  const file = useFileFinding(repo, branch);
-  const draft = useDraftRequirement(repo, branch);
-  const remedy = useRemedyFinding(repo, branch);
   const { ensureWritableBranch } = useWorkspace();
   const suggest = useFocusAreas(repo, branch);
   const qc = useQueryClient();
@@ -44,7 +37,6 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const [pickSources, setPickSources] = useState<string[]>([]); // [] = every selected source
   const [focus, setFocus] = useState('');
   const [areas, setAreas] = useState<FocusArea[] | null>(null);
-  const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
 
   const docs = useMemo(() => (tree.data ?? []).map((e) => e.path)
@@ -61,10 +53,6 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const data = drift.data;
   if (!data?.enabled) return null;
   const running = data.run?.status === 'running';
-  const findings = (data.findings ?? []).filter((f) => f.status !== 'dismissed')
-    .sort((a, b) => (SEV[a.severity]?.rank ?? 3) - (SEV[b.severity]?.rank ?? 3));
-  const dismissed = (data.findings ?? []).filter((f) => f.status === 'dismissed');
-  const targets = data.targets ?? [];
   const sources = data.sources ?? [];
   const unitNoun = data.run?.mode === 'gaps' ? 'sources' : 'docs';
 
@@ -91,32 +79,6 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
       setTimeout(() => qc.invalidateQueries({ queryKey: ['drift', repo] }), 400);
     }).catch((e) => setErr(String((e as Error).message ?? e)));
   };
-  const doFile = (f: DriftFinding) => {
-    setErr('');
-    const target = pickTarget[f.fingerprint] || targets[0]?.name;
-    if (!target) { setErr('no work-item target configured (forge or work_item_targets)'); return; }
-    file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath || f.draftPath }, {
-      onError: (e) => setErr(String((e as Error).message ?? e)),
-      onSuccess: (resp) => { if (resp.backlinkError) setErr('work item created; backlink failed: ' + resp.backlinkError); },
-    });
-  };
-  const doRemedy = (f: DriftFinding, kind: 'change' | 'work_item') => {
-    setErr('');
-    remedy.mutate({ fingerprint: f.fingerprint, kind }, {
-      onError: (e) => setErr(String((e as Error).message ?? e)),
-      // open the created change/work item on the branch it landed on
-      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
-    });
-  };
-  const doDraft = (f: DriftFinding) => {
-    setErr('');
-    draft.mutate({ fingerprint: f.fingerprint }, {
-      onError: (e) => setErr(String((e as Error).message ?? e)),
-      // open the fresh draft on the branch it landed on (ws when main is protected)
-      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
-    });
-  };
-
   return (
     <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       <div style={sx('display:flex;align-items:center;gap:9px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)')}>
@@ -260,6 +222,63 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
           ⎙ {data.run.reportPath}
           <span style={sx('color:var(--text-3)')}>— {running ? 'updating live' : 'run report in the repo'}{data.run.reportBranch && data.run.reportBranch !== branch ? ` on ${data.run.reportBranch}` : ''}</span>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The findings of the last run, full width: each one keeps its evidence, the
+ * documents it touches and every action (draft, change, work item, issue,
+ * dismiss) on screen without wrapping.
+ */
+export function DriftFindings({ repo, branch }: { repo: string | undefined; branch: string }) {
+  const nav = useNav();
+  const navigate = useNavigate();
+  const drift = useDrift(repo, branch);
+  const dismiss = useDismissFinding(repo, branch);
+  const file = useFileFinding(repo, branch);
+  const draft = useDraftRequirement(repo, branch);
+  const remedy = useRemedyFinding(repo, branch);
+  const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
+  const [err, setErr] = useState('');
+
+  const data = drift.data;
+  if (!data?.enabled) return null;
+  const running = data.run?.status === 'running';
+  const findings = (data.findings ?? []).filter((f) => f.status !== 'dismissed')
+    .sort((a, b) => (SEV[a.severity]?.rank ?? 3) - (SEV[b.severity]?.rank ?? 3));
+  const dismissed = (data.findings ?? []).filter((f) => f.status === 'dismissed');
+  const targets = data.targets ?? [];
+
+  const doFile = (f: DriftFinding) => {
+    setErr('');
+    const target = pickTarget[f.fingerprint] || targets[0]?.name;
+    if (!target) { setErr('no work-item target configured (forge or work_item_targets)'); return; }
+    file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath || f.draftPath }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (resp) => { if (resp.backlinkError) setErr('work item created; backlink failed: ' + resp.backlinkError); },
+    });
+  };
+  const doRemedy = (f: DriftFinding, kind: 'change' | 'work_item') => {
+    setErr('');
+    remedy.mutate({ fingerprint: f.fingerprint, kind }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
+    });
+  };
+  const doDraft = (f: DriftFinding) => {
+    setErr('');
+    draft.mutate({ fingerprint: f.fingerprint }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
+    });
+  };
+
+  return (
+    <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+      {err && (
+        <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{err}</div>
       )}
 
       {findings.map((f) => {
