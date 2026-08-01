@@ -150,8 +150,14 @@ class Handler(BaseHTTPRequestHandler):
                                 '- [ ] update the OMS transform\n- [ ] re-validate the mapping\n'),
                 })
             elif 'requirement document' in system:
-                m = re.search(r'Write this document: ([^.]+)\.', system)
-                title = m.group(1).strip() if m else 'Extracted requirement'
+                # plain string split, not a regex: `([^.]+)\.` backtracks
+                # polynomially on a prompt full of "Write this document: "
+                # without a period (CodeQL py/polynomial-redos)
+                _, found, rest = system.partition('Write this document: ')
+                # first sentence, and never past the line: without a period a
+                # naive split would swallow the rest of the prompt as a title
+                title = rest.split('.', 1)[0].splitlines()[0].strip() if found else ''
+                title = title or 'Extracted requirement'
                 reply = json.dumps({
                     'path': 'requirements/REQ-mock.md',
                     'content': ('---\ntitle: ' + title + '\ntype: Requirement\nstatus: draft\n'

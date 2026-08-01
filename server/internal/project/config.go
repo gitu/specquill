@@ -53,7 +53,10 @@ type DriftConfig struct {
 	// Report is this project's standing alignment report document, written
 	// PROJECT-relative (a monorepo project's report lands under its own
 	// content_root, beside the .specquill/config.yml that declares it).
-	// Default: reports/source-alignment.md. A run may target another one.
+	// Default: reports/alignment-{date}.md (api.defaultDriftReportPath) —
+	// the {date}/{yyyy}/{mm}/{dd} tokens expand at run time, so a day's runs
+	// continue one report and the next day starts fresh; a path without them
+	// is one standing report. A run may target another one.
 	Report string `yaml:"report"`
 }
 
