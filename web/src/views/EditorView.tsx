@@ -707,12 +707,12 @@ export function EditorView() {
             onClick={() => runDrift.mutate({ paths: [path] }, {
               onSuccess: () => toasts.push({
                 text: `Checking ${name} for source drift…`, kind: 'info',
-                action: { label: 'View', onClick: () => nav('/dashboard') },
+                action: { label: 'View', onClick: () => nav('/alignment') },
               }),
               onError: (e) => toasts.push({ text: `Drift check: ${(e as Error).message}`, kind: 'error' }),
             })}
             disabled={runDrift.isPending || drift.data?.run?.status === 'running'}
-            title="Verify this document against the reference sources (AI) — findings appear on the Overview"
+            title="Verify this document against the reference sources (AI) — findings appear on the Source alignment page"
             style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
             {drift.data?.run?.status === 'running' ? 'Checking…' : 'Check drift'}
           </button>

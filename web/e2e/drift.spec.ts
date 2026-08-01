@@ -5,6 +5,15 @@ import { expect, test, APIRequestContext } from '@playwright/test';
 const H = { 'X-SpecQuill': '1' };
 const REPO = 'trading-specs';
 
+// Runs write (their report, drafts, remedies, backlinks), so starting one on
+// the protected main moves the user onto their workspace branch and keys the
+// run, its findings and its report there. API assertions follow that branch.
+async function wsBranch(request: APIRequestContext) {
+  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  return ws.branch;
+}
+const q = (b: string) => encodeURIComponent(b);
+
 test.beforeEach(async ({ request }) => {
   const info = await request.get('/api/speccy/info');
   const body = (await info.json()) as { enabled: boolean; model?: string };
@@ -15,21 +24,29 @@ test.beforeEach(async ({ request }) => {
 // also clears stale draft pointers) and drop leftover reverse-engineered
 // drafts so each test starts from a deterministic slate (self-heal)
 async function resetFindings(request: APIRequestContext) {
-  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
-  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+  const branch = await wsBranch(request);
+  const ws = { branch };
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as {
     findings?: { fingerprint: string; draftPath: string; remedyPath: string }[];
   };
   for (const f of drift.findings ?? []) {
     for (const p of [f.draftPath, f.remedyPath]) {
-      if (p) await request.delete(`/api/repos/${REPO}/files/${p}?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
+      if (p) await request.delete(`/api/repos/${REPO}/files/${p}?branch=${q(ws.branch)}`, { headers: H });
     }
-    await request.post(`/api/repos/${REPO}/drift/findings/${f.fingerprint}/dismiss?branch=main`, {
+    await request.post(`/api/repos/${REPO}/drift/findings/${f.fingerprint}/dismiss?branch=${q(branch)}`, {
       headers: H, data: { reopen: true },
     });
   }
+  // the mock's document paths are deterministic: delete them unconditionally,
+  // since a pointer cleared without its file would otherwise 409 the next
+  // draft/remedy ("already exists")
+  for (const p of ['requirements/REQ-gdpr-retention.md', 'work-items/WI-timestamp-precision.md',
+    'changes/2026-08-timestamp-precision.md']) {
+    await request.delete(`/api/repos/${REPO}/files/${p}?branch=${q(branch)}`, { headers: H });
+  }
   // a previous run's report (and any remedy link written into a doc) are
   // worktree saves on ws — drop them too
-  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+  await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
     headers: H, data: { paths: ['reports/source-alignment.md', 'specs/txn-report.md', 'specs/venue.md'] },
   });
 }
@@ -64,16 +81,16 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
 
   // the filing wrote a work-items backlink into the doc's frontmatter as an
   // uncommitted save on the workspace branch (main is protected in dev)
-  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+  const ws = { branch: await wsBranch(request) };
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
     findings: { status: string; docPath: string; workItemUrl: string }[];
   };
   const filed = drift.findings.find((f) => f.status === 'filed');
   expect(filed).toBeTruthy();
   expect(filed!.workItemUrl).toContain('/issues/');
 
-  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
   const file = (await (await request.get(
-    `/api/repos/${REPO}/files/${filed!.docPath}?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+    `/api/repos/${REPO}/files/${filed!.docPath}?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('work-items:');
   expect(file.content).toContain(filed!.workItemUrl);
 
@@ -82,25 +99,26 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   // fileable) while the run is still going — await completion before
   // reading the report file.
   await expect.poll(async () => {
-    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as { run?: { status: string } };
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as { run?: { status: string } };
     return d.run?.status;
   }, { timeout: 30_000 }).not.toBe('running');
   await expect(page.getByText('reports/source-alignment.md').first()).toBeVisible();
   const report = (await (await request.get(
-    `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+    `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(report.content).toContain('# Source Alignment');
   expect(report.content).toContain('<!-- specquill:alignment:begin');
   expect(report.content).toContain('## Run activity');
   expect(report.content).toContain('timestamp precision drifted');
 
   // self-heal: drop the uncommitted backlink + report saves
-  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+  await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
     headers: H, data: { paths: [filed!.docPath, 'reports/source-alignment.md'] },
   });
 });
 
 test('dismissing a finding survives a re-run', async ({ page, request }) => {
   await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
   await page.goto(`/p/${REPO}/alignment`);
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
   await page.getByRole('button', { name: 'Check drift' }).click();
@@ -115,7 +133,7 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
   // via the API — the mock finishes runs faster than the UI poll interval.
   await page.getByRole('button', { name: 'Check drift' }).click();
   await expect.poll(async () => {
-    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as { run?: { status: string } };
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as { run?: { status: string } };
     return d.run?.status;
   }, { timeout: 30_000 }).toBe('ok');
   await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
@@ -144,20 +162,20 @@ test('gap analysis reverse-engineers the missing requirement', async ({ page, re
   await expect(page.getByText('Report Data Retention').first()).toBeVisible({ timeout: 10_000 });
 
   // the draft exists on the workspace branch with proper frontmatter
-  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  const ws = { branch: await wsBranch(request) };
   const file = (await (await request.get(
-    `/api/repos/${REPO}/files/requirements/REQ-gdpr-retention.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+    `/api/repos/${REPO}/files/requirements/REQ-gdpr-retention.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('type: requirement');
   expect(file.content).toContain('status: draft');
 
   // self-heal: remove the draft (resetFindings clears the pointer next run)
-  await request.delete(`/api/repos/${REPO}/files/requirements/REQ-gdpr-retention.md?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
+  await request.delete(`/api/repos/${REPO}/files/requirements/REQ-gdpr-retention.md?branch=${q(ws.branch)}`, { headers: H });
 });
 
 test('linker proposes and applies a missing typed link', async ({ page, request }) => {
   // self-heal: a previous run's applied link lives on the ws worktree
-  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
-  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+  const ws = { branch: await wsBranch(request) };
+  await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
     headers: H, data: { paths: ['specs/venue.md'] },
   });
 
@@ -174,11 +192,11 @@ test('linker proposes and applies a missing typed link', async ({ page, request 
 
   // the from-doc's frontmatter carries the link on the workspace branch
   const file = (await (await request.get(
-    `/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+    `/api/repos/${REPO}/files/specs/venue.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('requirements/REQ-063.md');
 
   // self-heal for the next suite run
-  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+  await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
     headers: H, data: { paths: ['specs/venue.md'] },
   });
 });
@@ -196,17 +214,17 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   await expect(page.getByText('Raise execution-timestamp precision').first()).toBeVisible({ timeout: 10_000 });
 
   // it carries the configured typed link (delivers) back to the drifted spec
-  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  const ws = { branch: await wsBranch(request) };
   const file = (await (await request.get(
-    `/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+    `/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('delivers:');
   expect(file.content).toMatch(/specs\/(txn-report|venue)\.md/);
 
   // and the finding now carries the remedy instead of the create buttons
-  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
     findings: { remedyPath: string; remedyKind: string }[];
   };
   expect(drift.findings.some((f) => f.remedyPath === 'work-items/WI-timestamp-precision.md' && f.remedyKind === 'work_item')).toBe(true);
 
-  await request.delete(`/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
+  await request.delete(`/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?branch=${q(ws.branch)}`, { headers: H });
 });

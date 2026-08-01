@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
 import { projectPath, useNav } from '../state/nav';
+import { useWorkspace } from '../hooks/useWorkspace';
 import {
   DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
   useFileFinding, useRemedyFinding, useRunDrift, useTree,
@@ -33,6 +35,8 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const file = useFileFinding(repo, branch);
   const draft = useDraftRequirement(repo, branch);
   const remedy = useRemedyFinding(repo, branch);
+  const { ensureWritableBranch } = useWorkspace();
+  const qc = useQueryClient();
   const [mode, setMode] = useState<DriftMode>('drift');
   const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
   const [report, setReport] = useState(''); // '' = follow the last run / default
@@ -64,8 +68,17 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const reportExists = (data.reports ?? []).includes(reportTarget);
   const start = () => {
     setErr('');
-    const body = { mode, report: reportTarget, ...(mode === 'drift' ? { paths: scope } : {}) };
-    run.mutate(body, { onError: (e) => setErr(String((e as Error).message ?? e)) });
+    // a run writes (its report, and later drafts/remedies/backlinks): move
+    // off a protected branch FIRST, so the whole run — findings included —
+    // belongs to the branch the user is now on and stays visible here
+    void ensureWritableBranch().then(async (on) => {
+      const body = { mode, report: reportTarget, branch: on, ...(mode === 'drift' ? { paths: scope } : {}) };
+      await run.mutateAsync(body);
+      // the switch remounts this card's query against the new branch; that
+      // mount fetch can land BEFORE the run row exists, and a card showing
+      // "no run" never polls. Re-ask once the remount has settled.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['drift', repo] }), 400);
+    }).catch((e) => setErr(String((e as Error).message ?? e)));
   };
   const doFile = (f: DriftFinding) => {
     setErr('');

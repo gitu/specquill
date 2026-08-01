@@ -208,11 +208,14 @@ export function useDrift(repo: string | undefined, branch: string) {
 export function useRunDrift(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { mode?: DriftMode; paths?: string[]; report?: string }) =>
+    // `branch` overrides the hook's branch: the caller may have just been
+    // moved onto their workspace branch and the run must target THAT one
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string }) =>
       api<{ runId: number; docsTotal: number; mode: DriftMode }>(
-        `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(branch)}`,
+        `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+    // prefix key: a run started on a freshly switched branch must refresh too
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo] }),
   });
 }
 
@@ -317,9 +320,9 @@ export function useProposeLinks(repo: string | undefined, branch: string) {
 export function useApplyLinks(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (links: LinkProposal[]) =>
+    mutationFn: ({ links, branch: on }: { links: LinkProposal[]; branch?: string }) =>
       api<{ applied: LinkProposal[]; failures: string[]; branch: string }>(
-        `/api/repos/${repo}/linker/apply?branch=${encodeURIComponent(branch)}`,
+        `/api/repos/${repo}/linker/apply?branch=${encodeURIComponent(on || branch)}`,
         { method: 'POST', body: JSON.stringify({ links }) }),
     onSuccess: (resp) => {
       qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });

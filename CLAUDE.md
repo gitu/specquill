@@ -153,7 +153,14 @@ from the code.
   config that names them, never at the repo root (see
   TestDriftReportStaysInsideTheProjectContentRoot). The run request's
   `report:` field still overrides per run — creating a new one or
-  CONTINUING any existing one (the card has a picker). Reports are LIVING documents: the engine owns
+  CONTINUING any existing one (the card has a picker). Because a run
+  WRITES, starting one from a protected branch first moves the user onto
+  their `ws/<user>` branch (`ensureWritableBranch`, same as any edit) and
+  runs THERE — so the run, its findings (keyed repo+branch), its report
+  and every draft/remedy belong to one branch and stay visible. The card
+  re-asks 400ms after starting: the branch switch remounts its query, and
+  that mount fetch can land before the run row exists, leaving a "no run"
+  card that would never poll. Reports are LIVING documents: the engine owns
   only the `<!-- specquill:alignment:begin/end -->` block (run summary +
   findings table + activity + accumulated run log); everything outside it
   is the human's and survives every rewrite. Written on the caller's ws
