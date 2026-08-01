@@ -112,16 +112,28 @@ type driftEvidence struct {
 	Quote string `json:"quote"`
 }
 
-// modelFinding is the JSON shape the drift prompt asks the model for.
+// modelFinding is the JSON shape the drift/gap prompts ask the model for.
 type modelFinding struct {
-	Anchor      string          `json:"anchor"`
-	Source      string          `json:"source"`
-	Kind        string          `json:"kind"`
-	Severity    string          `json:"severity"`
-	Title       string          `json:"title"`
-	Detail      string          `json:"detail"`
-	SourcePaths []string        `json:"sourcePaths"`
-	Evidence    []driftEvidence `json:"evidence"`
+	Anchor        string          `json:"anchor"`
+	Source        string          `json:"source"`
+	Kind          string          `json:"kind"`
+	Severity      string          `json:"severity"`
+	Title         string          `json:"title"`
+	Detail        string          `json:"detail"`
+	SuggestedPath string          `json:"suggestedPath"` // gaps: where the missing doc should live
+	SourcePaths   []string        `json:"sourcePaths"`
+	Evidence      []driftEvidence `json:"evidence"`
+}
+
+// cleanDocPath sanitizes a model-suggested workspace path: relative, .md,
+// no traversal, no reference prefix. "" when unusable.
+func cleanDocPath(p string) string {
+	p = strings.TrimPrefix(strings.TrimSpace(p), "/")
+	if p == "" || !strings.HasSuffix(p, ".md") || strings.HasPrefix(p, "~") ||
+		strings.HasPrefix(p, ".") || strings.Contains(p, "..") || strings.ContainsAny(p, " \t\n\\") {
+		return ""
+	}
+	return p
 }
 
 // verifyEvidence checks every quote verbatim (whitespace-normalized) against
@@ -238,6 +250,17 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 		wireTargets = append(wireTargets, map[string]any{"name": t.name, "kind": t.kind, "project": t.project})
 	}
 	out["targets"] = wireTargets
+	// the reference sources a gaps run would sweep — the scope picker shows them
+	var driftCfg project.DriftConfig
+	if cfg := inRepoConfig(repo, branch); cfg != nil {
+		driftCfg = cfg.Drift
+	}
+	names := []string{}
+	for _, src := range s.driftSources(r, repo, branch, driftCfg) {
+		names = append(names, src.Name)
+	}
+	sort.Strings(names)
+	out["sources"] = names
 	jsonOK(w, out)
 }
 
@@ -245,7 +268,7 @@ func driftRunWire(run *store.DriftRun) map[string]any {
 	var scope []string
 	_ = json.Unmarshal([]byte(run.ScopeJSON), &scope)
 	return map[string]any{
-		"id": run.ID, "status": run.Status, "error": run.Error, "scope": scope,
+		"id": run.ID, "mode": run.Mode, "status": run.Status, "error": run.Error, "scope": scope,
 		"docsTotal": run.DocsTotal, "docsDone": run.DocsDone,
 		"droppedUnverified": run.DroppedUnverified, "headSha": run.HeadSHA,
 		"startedAt": run.StartedAt, "finishedAt": run.FinishedAt,
@@ -257,6 +280,7 @@ func driftFindingWire(f store.DriftFinding) map[string]any {
 	_ = json.Unmarshal([]byte(f.EvidenceJSON), &evidence)
 	return map[string]any{
 		"fingerprint": f.Fingerprint, "docPath": f.DocPath, "anchor": f.Anchor,
+		"suggestedPath": f.SuggestedPath, "draftPath": f.DraftPath,
 		"source": f.Source, "kind": f.Kind, "severity": f.Severity,
 		"title": f.Title, "detail": f.Detail, "evidence": evidence,
 		"status": f.Status, "workItemUrl": f.WorkItemURL, "workItemTarget": f.WorkItemTarget,
@@ -264,16 +288,26 @@ func driftFindingWire(f store.DriftFinding) map[string]any {
 	}
 }
 
-// POST /api/repos/{repo}/drift/run?branch= {paths?} — start an async run.
+// POST /api/repos/{repo}/drift/run?branch= {mode?, paths?} — start an async
+// run. mode "drift" (default) verifies each doc in scope against the sources;
+// mode "gaps" sweeps each source for capabilities no document covers.
 func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	if s.ai == nil {
 		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
 		return
 	}
 	var body struct {
+		Mode  string   `json:"mode"`
 		Paths []string `json:"paths"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = default scope
+	if body.Mode == "" {
+		body.Mode = "drift"
+	}
+	if body.Mode != "drift" && body.Mode != "gaps" {
+		jsonError(w, http.StatusBadRequest, "mode must be drift or gaps")
+		return
+	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
 	files, err := repo.Snapshot(branch)
 	if err != nil {
@@ -284,25 +318,34 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	if cfg := inRepoConfig(repo, branch); cfg != nil {
 		driftCfg = cfg.Drift
 	}
-	docs := resolveDriftScope(files, body.Paths, driftCfg.Paths)
-	if len(docs) == 0 {
-		jsonError(w, http.StatusUnprocessableEntity, "no documents in scope")
+	sources := s.driftSources(r, repo, branch, driftCfg)
+	if len(sources) == 0 {
+		jsonError(w, http.StatusUnprocessableEntity,
+			"no reference sources selected — drift needs references in .specquill/config.yml")
 		return
 	}
 	maxDocs := driftCfg.MaxDocs
 	if maxDocs <= 0 {
 		maxDocs = defaultDriftMaxDocs
 	}
-	if len(docs) > maxDocs {
-		jsonError(w, http.StatusUnprocessableEntity,
-			fmt.Sprintf("scope resolves to %d documents (max %d) — narrow the paths or raise drift.max_docs", len(docs), maxDocs))
-		return
-	}
-	sources := s.driftSources(r, repo, branch, driftCfg)
-	if len(sources) == 0 {
-		jsonError(w, http.StatusUnprocessableEntity,
-			"no reference sources selected — drift needs references in .specquill/config.yml")
-		return
+	// units: the docs to verify (drift) or the sources to sweep (gaps)
+	var units []string
+	if body.Mode == "gaps" {
+		for _, src := range sources {
+			units = append(units, src.Name)
+		}
+		sort.Strings(units)
+	} else {
+		units = resolveDriftScope(files, body.Paths, driftCfg.Paths)
+		if len(units) == 0 {
+			jsonError(w, http.StatusUnprocessableEntity, "no documents in scope")
+			return
+		}
+		if len(units) > maxDocs {
+			jsonError(w, http.StatusUnprocessableEntity,
+				fmt.Sprintf("scope resolves to %d documents (max %d) — narrow the paths or raise drift.max_docs", len(units), maxDocs))
+			return
+		}
 	}
 
 	key := driftKey(repo.Key(), branch)
@@ -312,11 +355,11 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusConflict, "a drift run is already in progress for this branch")
 		return
 	}
-	scopeJSON, _ := json.Marshal(docs)
+	scopeJSON, _ := json.Marshal(units)
 	headSHA, _ := repo.Repo.Head(branch)
 	runID, err := s.store.CreateDriftRun(store.DriftRun{
-		RepoKey: repo.Key(), Branch: branch, ScopeJSON: string(scopeJSON),
-		DocsTotal: len(docs), HeadSHA: headSHA,
+		RepoKey: repo.Key(), Branch: branch, Mode: body.Mode, ScopeJSON: string(scopeJSON),
+		DocsTotal: len(units), HeadSHA: headSHA,
 	})
 	if err != nil {
 		s.drift.release(key)
@@ -324,8 +367,8 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	go s.driftWorker(ctx, cancel, key, runID, repo, branch, docs, files, sources, driftCfg.Instructions)
-	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(docs)})
+	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, driftCfg.Instructions)
+	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode})
 }
 
 // POST /api/repos/{repo}/drift/cancel?branch=
@@ -348,6 +391,9 @@ func (s *Server) postDriftDismiss(w http.ResponseWriter, r *http.Request, repo *
 	status := "dismissed"
 	if body.Reopen {
 		status = "open"
+		// reopening treats the finding as fresh again — a stale draft pointer
+		// (the draft may have been discarded) is dropped with the dismissal
+		_ = s.store.SetDriftFindingDraft(repo.Key(), branch, r.PathValue("fp"), "")
 	}
 	err := s.store.SetDriftFindingStatus(repo.Key(), branch, r.PathValue("fp"), status)
 	if err == store.ErrNotFound {
@@ -385,11 +431,11 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 
 // ---------------------------------------------------------------- worker
 
-// driftWorker checks the scope one document per AI loop, persisting findings
-// incrementally. Per-doc failures are recorded and the run continues; only
-// cancellation stops it early.
+// driftWorker checks the scope one unit (document / source) per AI loop,
+// persisting findings incrementally. Per-unit failures are recorded and the
+// run continues; only cancellation stops it early.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
-	repo *project.Project, branch string, docs []string, files map[string]string,
+	mode string, repo *project.Project, branch string, units []string, files map[string]string,
 	sources []ai.GroundingSource, instructions string) {
 	defer cancel()
 	defer s.drift.release(key)
@@ -397,20 +443,27 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	dropped := 0
 	var docErrs []string
 	status := "ok"
-	for i, doc := range docs {
+	for i, unit := range units {
 		if ctx.Err() != nil {
 			status = "cancelled"
 			break
 		}
-		findings, droppedDoc, err := s.driftCheckDoc(ctx, repo, branch, doc, files, sources, instructions)
+		var findings []store.DriftFinding
+		var droppedDoc int
+		var err error
+		if mode == "gaps" {
+			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions)
+		} else {
+			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, instructions)
+		}
 		dropped += droppedDoc
 		if err != nil {
 			if ctx.Err() != nil {
 				status = "cancelled"
 				break
 			}
-			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, doc, err)
-			docErrs = append(docErrs, doc+": "+err.Error())
+			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, unit, err)
+			docErrs = append(docErrs, unit+": "+err.Error())
 			continue
 		}
 		keep := make([]string, 0, len(findings))
@@ -420,9 +473,14 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				log.Printf("drift [%s@%s]: persist %s: %v", repo.ID, branch, f.Fingerprint, err)
 			}
 		}
-		// scope-aware reconciliation: only THIS doc's stale findings resolve
-		if err := s.store.ResolveDriftFindingsExcept(repo.Key(), branch, doc, keep); err != nil {
-			log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, doc, err)
+		// scope-aware reconciliation: only THIS unit's stale findings resolve
+		if mode == "gaps" {
+			err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep)
+		} else {
+			err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep)
+		}
+		if err != nil {
+			log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, unit, err)
 		}
 		_ = s.store.UpdateDriftRunProgress(runID, i+1, dropped)
 		s.publish("drift", repo.Key(), branch)
@@ -504,6 +562,209 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 		})
 	}
 	return findings, dropped, nil
+}
+
+// driftCheckGaps sweeps one reference source for capabilities no workspace
+// document covers (gap analysis). Findings are anchored to the SOURCE and
+// carry no doc_path — reverse engineering (postDriftDraft) creates the
+// missing document from them.
+func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, branch, sourceName string,
+	files map[string]string, sources []ai.GroundingSource, instructions string) ([]store.DriftFinding, int, error) {
+	var src *ai.GroundingSource
+	for i := range sources {
+		if sources[i].Name == sourceName {
+			src = &sources[i]
+			break
+		}
+	}
+	if src == nil {
+		return nil, 0, fmt.Errorf("unknown source")
+	}
+	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
+		files: files, publish: func() {}}
+	var specs []ai.ToolSpec
+	for _, spec := range tb.specs(files) {
+		if spec.Name != "ask_user" {
+			specs = append(specs, spec)
+		}
+	}
+	docs := resolveDriftScope(files, nil, nil)
+	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), instructions)
+
+	var reply strings.Builder
+	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+		func(delta string) error { reply.WriteString(delta); return nil },
+		func(ai.ToolCall, string, error) error { return nil })
+	if err != nil {
+		return nil, 0, err
+	}
+	var out struct {
+		Findings []modelFinding `json:"findings"`
+	}
+	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
+		return nil, 0, fmt.Errorf("model reply was not findings JSON: %w", err)
+	}
+	var findings []store.DriftFinding
+	droppedCount := 0
+	seen := map[string]bool{}
+	for _, f := range out.Findings {
+		f.Source = sourceName // the sweep's source, whatever the model claims
+		anchor := strings.TrimSpace(f.Anchor)
+		if anchor == "" || !verifyEvidence(f, sources) {
+			droppedCount++
+			continue
+		}
+		fp := driftFingerprint("", sourceName, "coverage-gap", anchor)
+		if seen[fp] {
+			continue
+		}
+		seen[fp] = true
+		evidence, _ := json.Marshal(f.Evidence)
+		findings = append(findings, store.DriftFinding{
+			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp,
+			DocPath: "", SuggestedPath: cleanDocPath(f.SuggestedPath),
+			Anchor: anchor, Source: sourceName, Kind: "coverage-gap",
+			Severity: normDriftSeverity(f.Severity), Title: strings.TrimSpace(f.Title),
+			Detail: strings.TrimSpace(f.Detail), EvidenceJSON: string(evidence),
+		})
+	}
+	return findings, droppedCount, nil
+}
+
+// ---------------------------------------------------------------- reverse engineering
+
+// POST /api/repos/{repo}/drift/findings/{fp}/draft — reverse-engineer the
+// MISSING requirement document from a coverage-gap finding: the AI drafts it
+// from the finding's source evidence, following the workspace conventions,
+// and it lands as a normal uncommitted worktree save the human reviews.
+func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	finding, err := s.store.DriftFinding(repo.Key(), branch, r.PathValue("fp"))
+	if err == store.ErrNotFound {
+		jsonError(w, http.StatusNotFound, "unknown finding")
+		return
+	}
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if finding.DocPath != "" {
+		jsonError(w, http.StatusBadRequest, "only coverage-gap findings can be drafted — this one already has a document")
+		return
+	}
+	// idempotent: an existing draft is returned, a discarded one is redrafted
+	if finding.DraftPath != "" {
+		probe := branch
+		if repo.Repo.Cfg.IsProtected(branch) {
+			if ws, err := s.store.WorkspaceBranch(repo.Key(), auth.UserFrom(r.Context()).ID); err == nil && ws != "" {
+				probe = ws
+			}
+		}
+		if _, _, err := repo.File(probe, finding.DraftPath); err == nil {
+			jsonOK(w, map[string]any{"path": finding.DraftPath, "branch": probe, "existing": true})
+			return
+		}
+	}
+	files, err := repo.Snapshot(branch)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+	var driftCfg project.DriftConfig
+	instructions := ""
+	if cfg := inRepoConfig(repo, branch); cfg != nil {
+		driftCfg = cfg.Drift
+		instructions = cfg.Speccy.Instructions
+	}
+	sources := s.driftSources(r, repo, branch, driftCfg)
+
+	// source material: the full content of every quoted evidence file
+	var evidence []driftEvidence
+	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &evidence)
+	var excerpts strings.Builder
+	for i := range sources {
+		if sources[i].Name != finding.Source {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, ev := range evidence {
+			path := strings.TrimPrefix(ev.Path, "~"+finding.Source+"/")
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			if content, ok := sources[i].Files[path]; ok {
+				if len(content) > 12*1024 {
+					content = content[:12*1024] + "\n… (truncated)"
+				}
+				fmt.Fprintf(&excerpts, "\n## ~%s/%s\n```\n%s\n```\n", finding.Source, path, content)
+			}
+		}
+	}
+	if excerpts.Len() == 0 {
+		jsonError(w, http.StatusBadGateway, "the finding's evidence files are no longer readable — re-run the gap analysis")
+		return
+	}
+	findingJSON, _ := json.Marshal(map[string]any{
+		"anchor": finding.Anchor, "source": finding.Source, "title": finding.Title,
+		"detail": finding.Detail, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
+	})
+	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
+	reply, err := s.ai.Complete(r.Context(), ai.ReversePrompt(string(findingJSON), excerpts.String(), guidance))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var draft struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := ai.ExtractJSON(reply, &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, "model reply was not draft JSON: "+err.Error())
+		return
+	}
+	path := cleanDocPath(draft.Path)
+	if path == "" || okf.Reserved(base(path)) {
+		jsonError(w, http.StatusBadGateway, "model suggested an invalid document path: "+draft.Path)
+		return
+	}
+	if err := mdfm.Validate(draft.Content); err != nil {
+		jsonError(w, http.StatusBadGateway, "model draft has broken frontmatter: "+err.Error())
+		return
+	}
+	content, err := mdfm.Touch(draft.Content, true, time.Now())
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// drafting IS an edit: protected branches route to the caller's workspace
+	writeBranch := branch
+	if repo.Repo.Cfg.IsProtected(branch) {
+		if writeBranch, err = s.claimWorkspace(r, repo); err != nil {
+			gitFail(w, err)
+			return
+		}
+	}
+	if _, _, err := repo.File(writeBranch, path); err == nil {
+		jsonError(w, http.StatusConflict, path+" already exists on "+writeBranch)
+		return
+	}
+	if _, err := repo.SaveFile(writeBranch, path, content, ""); err != nil {
+		gitFail(w, err)
+		return
+	}
+	if err := s.store.SetDriftFindingDraft(repo.Key(), branch, finding.Fingerprint, path); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.publish("save", repo.Key(), writeBranch)
+	s.publish("drift", repo.Key(), branch)
+	jsonOK(w, map[string]any{"path": path, "branch": writeBranch})
 }
 
 // ---------------------------------------------------------------- targets
@@ -675,7 +936,16 @@ func (s *Server) postDriftFile(w http.ResponseWriter, r *http.Request, repo *pro
 		return
 	}
 
-	backlinked, backlinkBranch, backlinkErr := s.writeDriftBacklink(r, repo, branch, finding.DocPath, itemURL)
+	// backlink target: the drifted doc, or the reverse-engineered draft for a
+	// coverage gap; a gap without a draft has no document to backlink yet
+	backlinkDoc := finding.DocPath
+	if backlinkDoc == "" {
+		backlinkDoc = finding.DraftPath
+	}
+	backlinked, backlinkBranch, backlinkErr := false, "", ""
+	if backlinkDoc != "" {
+		backlinked, backlinkBranch, backlinkErr = s.writeDriftBacklink(r, repo, branch, backlinkDoc, itemURL)
+	}
 	out := map[string]any{
 		"url": itemURL, "created": created, "target": target.name,
 		"backlinked": backlinked,
@@ -701,15 +971,27 @@ func (s *Server) driftIssueBody(repo *project.Project, f *store.DriftFinding, ma
 	var b strings.Builder
 	b.WriteString(f.Detail + "\n\n")
 	base := strings.TrimSuffix(s.cfg.BaseURL, "/")
-	docURL := f.DocPath
-	if base != "" {
-		docURL = base + "/p/" + repo.ID + "/editor/" + f.DocPath
+	link := func(p string) string {
+		if base != "" {
+			return base + "/p/" + repo.ID + "/editor/" + p
+		}
+		return p
 	}
-	fmt.Fprintf(&b, "- Document: %s", docURL)
-	if f.Anchor != "" {
-		fmt.Fprintf(&b, " (%s)", f.Anchor)
+	switch {
+	case f.DocPath != "":
+		fmt.Fprintf(&b, "- Document: %s", link(f.DocPath))
+		if f.Anchor != "" {
+			fmt.Fprintf(&b, " (%s)", f.Anchor)
+		}
+		b.WriteString("\n")
+	default: // coverage gap: nothing covers it yet
+		fmt.Fprintf(&b, "- Coverage gap at: %s\n", f.Anchor)
+		if f.DraftPath != "" {
+			fmt.Fprintf(&b, "- Draft requirement: %s\n", link(f.DraftPath))
+		} else if f.SuggestedPath != "" {
+			fmt.Fprintf(&b, "- Suggested document: %s\n", f.SuggestedPath)
+		}
 	}
-	b.WriteString("\n")
 	fmt.Fprintf(&b, "- Reference source: ~%s\n", f.Source)
 	fmt.Fprintf(&b, "- Kind: %s · Severity: %s\n", f.Kind, f.Severity)
 	var evidence []driftEvidence

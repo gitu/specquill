@@ -103,6 +103,64 @@ func TestResolveDriftFindingsScopeAware(t *testing.T) {
 	}
 }
 
+func TestGapFindingsReconcilePerSource(t *testing.T) {
+	s := OpenTest(t)
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "g1", RunID: 1, Source: "api", Kind: "coverage-gap", SuggestedPath: "requirements/REQ-x.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "g2", RunID: 1, Source: "api", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "g3", RunID: 1, Source: "docs", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "d1", RunID: 1, Source: "api", DocPath: "a.md"},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a fresh sweep of `api` keeps only g1 — other sources' gaps and
+	// doc-backed drift findings must survive
+	if err := s.ResolveGapFindingsExcept("r", "main", "api", []string{"g1"}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.DriftFindings("r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range live {
+		got[f.Fingerprint] = true
+	}
+	if !got["g1"] || got["g2"] || !got["g3"] || !got["d1"] {
+		t.Fatalf("unexpected live findings: %v", got)
+	}
+}
+
+func TestSetDriftFindingDraft(t *testing.T) {
+	s := OpenTest(t)
+	if err := s.UpsertDriftFinding(DriftFinding{RepoKey: "r", Branch: "main", Fingerprint: "g1", RunID: 1, Kind: "coverage-gap"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDriftFindingDraft("r", "main", "g1", "requirements/REQ-x.md"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.DriftFinding("r", "main", "g1")
+	if got.DraftPath != "requirements/REQ-x.md" {
+		t.Fatalf("draft not recorded: %+v", got)
+	}
+	if err := s.SetDriftFindingDraft("r", "main", "nope", "x.md"); err != ErrNotFound {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestDriftRunMode(t *testing.T) {
+	s := OpenTest(t)
+	if _, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", Mode: "gaps"}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.LatestDriftRun("r", "main")
+	if err != nil || run.Mode != "gaps" {
+		t.Fatalf("mode round-trip failed: %+v (%v)", run, err)
+	}
+}
+
 func TestFileDriftFinding(t *testing.T) {
 	s := OpenTest(t)
 	if err := s.UpsertDriftFinding(DriftFinding{RepoKey: "r", Branch: "main", Fingerprint: "fp", RunID: 1, DocPath: "a.md"}); err != nil {

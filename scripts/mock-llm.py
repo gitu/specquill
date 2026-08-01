@@ -50,7 +50,33 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'source-drift auditor' in system:
+        if 'coverage-gap auditor' in system:
+            # gap sweep: one canned uncovered capability, evidence quoting the
+            # demo regulations source VERBATIM (unverified quotes get dropped)
+            reply = json.dumps({'findings': [{
+                'anchor': 'regulations/gdpr.md#art-5-storage-limitation',
+                'severity': 'medium',
+                'title': '(mock) GDPR storage limitation has no requirement',
+                'detail': 'The regulations source constrains retention but no '
+                          'workspace document covers a retention requirement for reports.',
+                'suggestedPath': 'requirements/REQ-gdpr-retention.md',
+                'sourcePaths': ['regulations/gdpr.md'],
+                'evidence': [{'path': 'regulations/gdpr.md',
+                              'quote': 'kept for no longer than is necessary'}],
+            }]})
+        elif 'requirements reverse-engineer' in system:
+            # reverse engineering: draft the missing requirement document
+            reply = json.dumps({
+                'path': 'requirements/REQ-gdpr-retention.md',
+                'content': ('---\nid: REQ-gdpr-retention\ntitle: Report Data Retention\n'
+                            'type: requirement\nstatus: draft\npriority: should\n'
+                            'drivers: [regulations/gdpr.md]\n---\n\n'
+                            '# Report Data Retention\n\n'
+                            '(mock) Report data shall be kept for no longer than is necessary '
+                            'for the reporting purpose.\n\n'
+                            'Derived from ~regulations/gdpr.md (Art. 5 storage limitation).\n'),
+            })
+        elif 'source-drift auditor' in system:
             # drift check: one canned finding whose evidence quotes the demo
             # regulations source VERBATIM (the server drops unverified quotes)
             anchor = re.search(r'^id:\s*(\S+)', user, re.M)

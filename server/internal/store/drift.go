@@ -12,6 +12,7 @@ type DriftRun struct {
 	ID                int64
 	RepoKey           string
 	Branch            string
+	Mode              string // drift (per-doc verify) | gaps (per-source coverage)
 	Status            string // running | ok | error | cancelled
 	Error             string
 	ScopeJSON         string // resolved doc list, frozen at start
@@ -29,7 +30,9 @@ type DriftFinding struct {
 	Branch         string
 	Fingerprint    string
 	RunID          int64
-	DocPath        string
+	DocPath        string // '' for coverage gaps (nothing covers them yet)
+	SuggestedPath  string // gaps: where the missing document should live
+	DraftPath      string // gaps: the reverse-engineered draft, once created
 	Anchor         string
 	Source         string
 	Kind           string
@@ -47,10 +50,13 @@ type DriftFinding struct {
 
 // CreateDriftRun inserts a run in `running` state and returns its id.
 func (s *Store) CreateDriftRun(run DriftRun) (int64, error) {
+	if run.Mode == "" {
+		run.Mode = "drift"
+	}
 	res, err := s.exec(`INSERT INTO drift_runs
-		(repo_key, branch, status, scope_json, docs_total, head_sha, started_at)
-		VALUES (?, ?, 'running', ?, ?, ?, ?)`,
-		run.RepoKey, run.Branch, run.ScopeJSON, run.DocsTotal, run.HeadSHA, time.Now().Unix())
+		(repo_key, branch, mode, status, scope_json, docs_total, head_sha, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?)`,
+		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -74,11 +80,11 @@ func (s *Store) FinishDriftRun(id int64, status, errMsg string) error {
 // LatestDriftRun returns the most recent run for a repo+branch, or ErrNotFound.
 func (s *Store) LatestDriftRun(repoKey, branch string) (*DriftRun, error) {
 	r := &DriftRun{}
-	err := s.queryRow(`SELECT id, repo_key, branch, status, error, scope_json, docs_total,
+	err := s.queryRow(`SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
 			docs_done, dropped_unverified, head_sha, started_at, finished_at
 		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT 1`,
 		repoKey, branch).
-		Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Status, &r.Error, &r.ScopeJSON, &r.DocsTotal,
+		Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON, &r.DocsTotal,
 			&r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.StartedAt, &r.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -105,15 +111,16 @@ func (s *Store) MarkInterruptedDriftRuns() (int64, error) {
 func (s *Store) UpsertDriftFinding(f DriftFinding) error {
 	now := time.Now().Unix()
 	_, err := s.exec(`INSERT INTO drift_findings
-		(repo_key, branch, fingerprint, run_id, doc_path, anchor, source, kind, severity,
-		 title, detail, evidence_json, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+		(repo_key, branch, fingerprint, run_id, doc_path, suggested_path, anchor, source,
+		 kind, severity, title, detail, evidence_json, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
 		ON CONFLICT(repo_key, branch, fingerprint) DO UPDATE SET
 		  run_id = excluded.run_id, severity = excluded.severity, title = excluded.title,
 		  detail = excluded.detail, evidence_json = excluded.evidence_json,
+		  suggested_path = excluded.suggested_path,
 		  updated_at = excluded.updated_at, resolved_at = 0`,
-		f.RepoKey, f.Branch, f.Fingerprint, f.RunID, f.DocPath, f.Anchor, f.Source, f.Kind,
-		f.Severity, f.Title, f.Detail, f.EvidenceJSON, now, now)
+		f.RepoKey, f.Branch, f.Fingerprint, f.RunID, f.DocPath, f.SuggestedPath, f.Anchor,
+		f.Source, f.Kind, f.Severity, f.Title, f.Detail, f.EvidenceJSON, now, now)
 	return err
 }
 
@@ -134,10 +141,42 @@ func (s *Store) ResolveDriftFindingsExcept(repoKey, branch, docPath string, keep
 	return err
 }
 
+// ResolveGapFindingsExcept is the gaps-mode counterpart of
+// ResolveDriftFindingsExcept: coverage gaps have no doc_path, so a fresh
+// sweep of ONE source resolves that source's stale gaps only.
+func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep []string) error {
+	args := []any{time.Now().Unix(), repoKey, branch, source}
+	q := `UPDATE drift_findings SET resolved_at = ?
+		WHERE repo_key = ? AND branch = ? AND doc_path = '' AND source = ? AND resolved_at = 0`
+	if len(keep) > 0 {
+		q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
+		for _, fp := range keep {
+			args = append(args, fp)
+		}
+	}
+	_, err := s.exec(q, args...)
+	return err
+}
+
+// SetDriftFindingDraft records the reverse-engineered draft document created
+// for a coverage gap.
+func (s *Store) SetDriftFindingDraft(repoKey, branch, fingerprint, draftPath string) error {
+	res, err := s.exec(`UPDATE drift_findings SET draft_path = ?, updated_at = ?
+		WHERE repo_key = ? AND branch = ? AND fingerprint = ?`,
+		draftPath, time.Now().Unix(), repoKey, branch, fingerprint)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DriftFindings returns the live (unresolved) findings for a repo+branch.
 func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
-	rows, err := s.query(`SELECT repo_key, branch, fingerprint, run_id, doc_path, anchor,
-			source, kind, severity, title, detail, evidence_json, status,
+	rows, err := s.query(`SELECT repo_key, branch, fingerprint, run_id, doc_path, suggested_path,
+			draft_path, anchor, source, kind, severity, title, detail, evidence_json, status,
 			work_item_url, work_item_target, created_at, updated_at, resolved_at
 		FROM drift_findings
 		WHERE repo_key = ? AND branch = ? AND resolved_at = 0
@@ -150,9 +189,9 @@ func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
 	for rows.Next() {
 		var f DriftFinding
 		if err := rows.Scan(&f.RepoKey, &f.Branch, &f.Fingerprint, &f.RunID, &f.DocPath,
-			&f.Anchor, &f.Source, &f.Kind, &f.Severity, &f.Title, &f.Detail, &f.EvidenceJSON,
-			&f.Status, &f.WorkItemURL, &f.WorkItemTarget, &f.CreatedAt, &f.UpdatedAt,
-			&f.ResolvedAt); err != nil {
+			&f.SuggestedPath, &f.DraftPath, &f.Anchor, &f.Source, &f.Kind, &f.Severity,
+			&f.Title, &f.Detail, &f.EvidenceJSON, &f.Status, &f.WorkItemURL, &f.WorkItemTarget,
+			&f.CreatedAt, &f.UpdatedAt, &f.ResolvedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -163,14 +202,15 @@ func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
 // DriftFinding returns one finding by fingerprint, or ErrNotFound.
 func (s *Store) DriftFinding(repoKey, branch, fingerprint string) (*DriftFinding, error) {
 	f := &DriftFinding{}
-	err := s.queryRow(`SELECT repo_key, branch, fingerprint, run_id, doc_path, anchor,
-			source, kind, severity, title, detail, evidence_json, status,
+	err := s.queryRow(`SELECT repo_key, branch, fingerprint, run_id, doc_path, suggested_path,
+			draft_path, anchor, source, kind, severity, title, detail, evidence_json, status,
 			work_item_url, work_item_target, created_at, updated_at, resolved_at
 		FROM drift_findings WHERE repo_key = ? AND branch = ? AND fingerprint = ?`,
 		repoKey, branch, fingerprint).
-		Scan(&f.RepoKey, &f.Branch, &f.Fingerprint, &f.RunID, &f.DocPath, &f.Anchor,
-			&f.Source, &f.Kind, &f.Severity, &f.Title, &f.Detail, &f.EvidenceJSON, &f.Status,
-			&f.WorkItemURL, &f.WorkItemTarget, &f.CreatedAt, &f.UpdatedAt, &f.ResolvedAt)
+		Scan(&f.RepoKey, &f.Branch, &f.Fingerprint, &f.RunID, &f.DocPath, &f.SuggestedPath,
+			&f.DraftPath, &f.Anchor, &f.Source, &f.Kind, &f.Severity, &f.Title, &f.Detail,
+			&f.EvidenceJSON, &f.Status, &f.WorkItemURL, &f.WorkItemTarget, &f.CreatedAt,
+			&f.UpdatedAt, &f.ResolvedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

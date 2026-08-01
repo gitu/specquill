@@ -85,18 +85,10 @@ func TestVerifyEvidence(t *testing.T) {
 	}
 }
 
-// sseReply renders a one-round streaming completion (content, no tool calls).
-func sseReply(t *testing.T, content string) string {
-	t.Helper()
-	raw, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": content}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return "data: " + string(raw) + "\n\ndata: [DONE]\n\n"
-}
-
 // testDriftServer wires a writable workspace (one spec doc), a cataloged
-// read-only source, an AI fake scripted per request, and a fake forge target.
+// read-only source, an AI fake scripted per request (replies are plain
+// content — the fake wraps them as SSE for streaming calls and as a JSON
+// completion for one-shot calls), and a fake forge target.
 func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.Store, *httptest.Server, *int) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -127,16 +119,28 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "reg")
 
-	// scripted AI fake (SSE chat-completions)
+	// scripted AI fake (OpenAI-compatible; streaming and one-shot)
 	aiCalls := 0
 	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
 		if aiCalls >= len(aiResponses) {
 			t.Errorf("unexpected AI request #%d", aiCalls+1)
 			return
 		}
-		fmt.Fprint(w, aiResponses[aiCalls])
+		var req struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		content := aiResponses[aiCalls]
 		aiCalls++
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": content}}}})
+			fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", raw)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": content}}}})
+		_, _ = w.Write(raw)
 	}))
 	t.Cleanup(aiSrv.Close)
 
@@ -232,12 +236,12 @@ func waitDrift(t *testing.T, h http.Handler, cookie *http.Cookie) map[string]any
 
 func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	findings := func(title string) string {
-		return sseReply(t, `{"findings":[
-			{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high","title":"`+title+`",
+		return `{"findings":[
+			{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high","title":"` + title + `",
 			 "detail":"spec says ms, regulation says µs","evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]},
 			{"anchor":"REQ-9","source":"reg","kind":"contradiction","severity":"low","title":"bogus",
 			 "detail":"made up","evidence":[{"path":"rules.md","quote":"THIS IS NOT IN THE FILE"}]}
-		]}`)
+		]}`
 	}
 	h, _, _, _ := testDriftServer(t, []string{findings("first title"), findings("reworded title")})
 	cookie := login(t, h)
@@ -364,5 +368,78 @@ func TestDriftFileFindingCreatesIssueAndBacklinks(t *testing.T) {
 	}
 	if *issuePosts != 1 {
 		t.Fatalf("issue created %d times, want 1", *issuePosts)
+	}
+}
+
+func TestGapRunAndReverseEngineering(t *testing.T) {
+	gapFindings := `{"findings":[
+		{"anchor":"rules.md#reporting","severity":"medium","title":"Reporting deadline uncovered",
+		 "detail":"the source mandates a deadline no document covers",
+		 "suggestedPath":"requirements/REQ-deadline.md",
+		 "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]},
+		{"anchor":"","severity":"low","title":"anchorless","detail":"d",
+		 "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]},
+		{"anchor":"rules.md#bogus","severity":"low","title":"bogus","detail":"d",
+		 "evidence":[{"path":"rules.md","quote":"NOT IN THE FILE"}]}
+	]}`
+	draftReply := `{"path":"requirements/REQ-deadline.md","content":"---\nid: REQ-deadline\ntitle: Reporting deadline\ntype: requirement\nstatus: draft\ndrivers: []\n---\n\n# Reporting deadline\n\nReports carry microsecond timestamps. Derived from ~reg/rules.md.\n"}`
+	h, st, _, _ := testDriftServer(t, []string{gapFindings, draftReply})
+	cookie := login(t, h)
+
+	// gaps mode sweeps sources, not docs
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{"mode": "gaps"})
+	if code != http.StatusOK {
+		t.Fatalf("gap run: %d %v", code, out)
+	}
+	if out["mode"] != "gaps" || out["docsTotal"].(float64) != 1 {
+		t.Fatalf("unexpected run: %v", out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" || run["mode"] != "gaps" {
+		t.Fatalf("run = %v", run)
+	}
+	// anchorless + hallucinated evidence both dropped
+	if run["droppedUnverified"].(float64) != 2 {
+		t.Fatalf("dropped = %v, want 2", run["droppedUnverified"])
+	}
+	list := drift["findings"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want 1 gap finding, got %v", list)
+	}
+	f := list[0].(map[string]any)
+	if f["kind"] != "coverage-gap" || f["docPath"] != "" || f["suggestedPath"] != "requirements/REQ-deadline.md" {
+		t.Fatalf("unexpected finding: %v", f)
+	}
+	fp := f["fingerprint"].(string)
+
+	// reverse-engineer the missing requirement from the gap
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/"+fp+"/draft?branch=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("draft: %d %v", code, out)
+	}
+	if out["path"] != "requirements/REQ-deadline.md" || out["branch"] != "main" {
+		t.Fatalf("unexpected draft: %v", out)
+	}
+	code, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/requirements/REQ-deadline.md?ref=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("read draft: %d", code)
+	}
+	content := file["content"].(string)
+	if !strings.Contains(content, "type: requirement") || !strings.Contains(content, "created:") {
+		t.Fatalf("draft missing frontmatter/dates:\n%s", content)
+	}
+	got, err := st.DriftFinding("w", "main", fp)
+	if err != nil || got.DraftPath != "requirements/REQ-deadline.md" {
+		t.Fatalf("finding not linked to draft: %+v (%v)", got, err)
+	}
+
+	// drafting a finding that has a document is refused
+	if err := st.UpsertDriftFinding(store.DriftFinding{RepoKey: "w", Branch: "main",
+		Fingerprint: "hasdoc", RunID: 1, DocPath: "specs/txn.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/hasdoc/draft?branch=main", nil); code != http.StatusBadRequest {
+		t.Fatalf("draft of doc-backed finding must 400, got %d", code)
 	}
 }

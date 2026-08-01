@@ -364,3 +364,95 @@ func DriftPrompt(docPath, docContent, instructions string, sourceNames []string)
 		{Role: "user", Content: b.String()},
 	}
 }
+
+const gapSystem = `You are the specquill coverage-gap auditor. You sweep ONE
+read-only reference source (source code, API contracts, documentation) and
+report the capabilities, behaviors and rules it contains that NO document in
+the requirements workspace covers.
+
+Investigate with the tools: list_files/read_file over the ~source/... files to
+find what the source does, then search/read_file over the WORKSPACE documents
+to check whether a requirement or spec covers it. Then reply with ONLY a JSON
+object, no prose:
+
+{
+  "findings": [
+    {
+      "anchor": "openapi.json#POST /reports",
+      "severity": "medium",
+      "title": "Report submission endpoint has no requirement",
+      "detail": "The API exposes report submission with validation rules that no workspace document describes.",
+      "suggestedPath": "requirements/REQ-report-submission.md",
+      "sourcePaths": ["openapi.json"],
+      "evidence": [{"path": "openapi.json", "quote": "\"operationId\": \"submitReport\""}]
+    }
+  ]
+}
+
+Rules:
+- "anchor" identifies the uncovered capability STRUCTURALLY and stably: a
+  source file path plus the section/endpoint/function it lives in.
+- "suggestedPath" is where the missing document should live, following the
+  workspace's family folders and id conventions.
+- "evidence" quotes are VERBATIM excerpts copied from the named source file —
+  they are checked and the finding is discarded when they do not match.
+- Search the workspace BEFORE reporting: something covered by any document
+  (even partially, even under another name) is not a gap. Report substantive
+  capabilities only — never internal helpers, boilerplate or style.
+- A fully covered source yields {"findings": []}.`
+
+// GapPrompt builds the per-source coverage-audit conversation. docIndex lists
+// the workspace's document paths so the model knows what exists before it
+// searches.
+func GapPrompt(sourceName, docIndex, instructions string) []Message {
+	system := gapSystem
+	if instructions != "" {
+		system += "\n\nWorkspace drift instructions:\n" + instructions
+	}
+	var b strings.Builder
+	b.WriteString("# Reference source under audit: ~" + sourceName + "\n\n")
+	b.WriteString("# Workspace documents (read them with read_file, search them with search)\n")
+	b.WriteString(docIndex + "\n")
+	b.WriteString("\nSweep ~" + sourceName + " and report what the workspace does not cover as JSON.")
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: b.String()},
+	}
+}
+
+const reverseSystem = `You are the specquill requirements reverse-engineer.
+From a confirmed coverage gap (a capability a reference source implements that
+no workspace document covers) you draft the MISSING requirement document.
+
+Reply with ONLY a JSON object, no prose:
+
+{
+  "path": "requirements/REQ-report-submission.md",
+  "content": "---\nid: REQ-...\ntitle: ...\ntype: requirement\nstatus: draft\n---\n\n# ...\n"
+}
+
+Rules:
+- The document starts with complete frontmatter (id, title, type, status:
+  draft, the family's upward links) and follows the workspace conventions
+  described below.
+- Write WHAT the system must do (observable behavior, constraints, acceptance
+  criteria derived from the source evidence) — never HOW the source implements
+  it, and never invented behavior the evidence does not support.
+- Reference the evidence source honestly (e.g. a "Derived from" note naming
+  the ~source path) so reviewers can trace every statement.
+- "path" respects the suggested location unless it violates the conventions.`
+
+// ReversePrompt builds the draft-the-missing-requirement conversation.
+// findingJSON is the gap finding (anchor, detail, evidence), excerpts the
+// quoted source files' content, guidance the workspace conventions
+// (model rules, vocabulary, authoring rules).
+func ReversePrompt(findingJSON, excerpts, guidance string) []Message {
+	var b strings.Builder
+	b.WriteString("# Coverage gap\n```json\n" + findingJSON + "\n```\n")
+	b.WriteString("\n# Source material\n" + excerpts + "\n")
+	b.WriteString("\nDraft the missing requirement document as JSON.")
+	return []Message{
+		{Role: "system", Content: reverseSystem + guidance},
+		{Role: "user", Content: b.String()},
+	}
+}

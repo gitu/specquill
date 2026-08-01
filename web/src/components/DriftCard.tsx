@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
-import { useNav } from '../state/nav';
+import { projectPath, useNav } from '../state/nav';
 import {
-  DriftFinding, useCancelDrift, useDismissFinding, useDrift, useFileFinding, useRunDrift, useTree,
+  DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
+  useFileFinding, useRunDrift, useTree,
 } from '../api/hooks';
 
 const SEV: Record<string, { label: string; fg: string; bg: string; rank: number }> = {
@@ -12,19 +14,25 @@ const SEV: Record<string, { label: string; fg: string; bg: string; rank: number 
 };
 
 /**
- * Source drift: AI-verified divergence between the workspace documents and
- * the selected read-only reference sources ("source" drift — "mapping drifts"
- * are the frontmatter-flagged fields elsewhere). Scoped runs, review-then-file:
- * every work item is an explicit human click on a displayed finding.
+ * Source alignment: AI runs that hold the workspace and its read-only
+ * reference sources against each other. Two modes — "Drift" verifies each
+ * document against the sources ("source" drift; "mapping drifts" are the
+ * frontmatter-flagged fields elsewhere), "Gaps" sweeps each source for
+ * capabilities no document covers, from which the missing requirement can be
+ * reverse-engineered as a draft. Review-then-file: every work item and every
+ * draft is an explicit human click on a displayed finding.
  */
 export function DriftCard({ repo, branch }: { repo: string | undefined; branch: string }) {
   const nav = useNav();
+  const navigate = useNavigate();
   const drift = useDrift(repo, branch);
   const tree = useTree(repo, branch);
   const run = useRunDrift(repo, branch);
   const cancel = useCancelDrift(repo, branch);
   const dismiss = useDismissFinding(repo, branch);
   const file = useFileFinding(repo, branch);
+  const draft = useDraftRequirement(repo, branch);
+  const [mode, setMode] = useState<DriftMode>('drift');
   const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
   const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
@@ -47,18 +55,29 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
     .sort((a, b) => (SEV[a.severity]?.rank ?? 3) - (SEV[b.severity]?.rank ?? 3));
   const dismissed = (data.findings ?? []).filter((f) => f.status === 'dismissed');
   const targets = data.targets ?? [];
+  const sources = data.sources ?? [];
+  const unitNoun = data.run?.mode === 'gaps' ? 'sources' : 'docs';
 
   const start = () => {
     setErr('');
-    run.mutate({ paths: scope }, { onError: (e) => setErr(String((e as Error).message ?? e)) });
+    const body = mode === 'gaps' ? { mode } : { mode, paths: scope };
+    run.mutate(body, { onError: (e) => setErr(String((e as Error).message ?? e)) });
   };
   const doFile = (f: DriftFinding) => {
     setErr('');
     const target = pickTarget[f.fingerprint] || targets[0]?.name;
     if (!target) { setErr('no work-item target configured (forge or work_item_targets)'); return; }
-    file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath }, {
+    file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath || f.draftPath }, {
       onError: (e) => setErr(String((e as Error).message ?? e)),
       onSuccess: (resp) => { if (resp.backlinkError) setErr('work item created; backlink failed: ' + resp.backlinkError); },
+    });
+  };
+  const doDraft = (f: DriftFinding) => {
+    setErr('');
+    draft.mutate({ fingerprint: f.fingerprint }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      // open the fresh draft on the branch it landed on (ws when main is protected)
+      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
     });
   };
 
@@ -66,7 +85,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
     <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       <div style={sx('display:flex;align-items:center;gap:9px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)')}>
         <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
-          Source drift
+          Source alignment
         </span>
         <span style={sx('flex:1')} />
         {data.run && !running && (
@@ -79,7 +98,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
       {running ? (
         <div style={sx('padding:12px 14px')}>
           <div style={sx('display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)')}>
-            <span style={sx('flex:1')}>checking {data.run!.docsDone}/{data.run!.docsTotal} docs…</span>
+            <span style={sx('flex:1')}>checking {data.run!.docsDone}/{data.run!.docsTotal} {unitNoun}…</span>
             <button onClick={() => cancel.mutate()} style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>Cancel</button>
           </div>
           <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
@@ -88,18 +107,31 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
         </div>
       ) : (
         <div style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
-          <div style={sx('display:flex;flex-wrap:wrap;gap:5px')}>
-            <ScopeChip label="Everything" active={scope.length === 0} onClick={() => setScope([])} />
-            {folders.map((f) => (
-              <ScopeChip key={f} label={f} active={scope.includes(f)}
-                onClick={() => setScope((s) => (s.includes(f) ? s.filter((x) => x !== f) : [...s, f]))} />
-            ))}
+          <div style={sx('display:flex;gap:2px;background:var(--surface-2);border-radius:7px;padding:2px;width:fit-content')}>
+            <ModeSeg label="Drift" title="verify each document against the reference sources" active={mode === 'drift'} onClick={() => setMode('drift')} />
+            <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => setMode('gaps')} />
           </div>
+          {mode === 'drift' ? (
+            <div style={sx('display:flex;flex-wrap:wrap;gap:5px;margin-top:9px')}>
+              <ScopeChip label="Everything" active={scope.length === 0} onClick={() => setScope([])} />
+              {folders.map((f) => (
+                <ScopeChip key={f} label={f} active={scope.includes(f)}
+                  onClick={() => setScope((s) => (s.includes(f) ? s.filter((x) => x !== f) : [...s, f]))} />
+              ))}
+            </div>
+          ) : (
+            <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:9px')}>
+              sweeps {sources.length} reference source{sources.length === 1 ? '' : 's'}
+              {sources.length > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-3)")}> — {sources.map((s) => '~' + s).join(', ')}</span>}
+            </div>
+          )}
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
-            <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>{scopedCount} doc{scopedCount === 1 ? '' : 's'} in scope</span>
-            <button onClick={start} disabled={run.isPending || scopedCount === 0}
+            <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
+              {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope` : 'reports uncovered capabilities as gaps'}
+            </span>
+            <button onClick={start} disabled={run.isPending || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
               style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
-              Check drift
+              {mode === 'drift' ? 'Check drift' : 'Find gaps'}
             </button>
           </div>
         </div>
@@ -114,18 +146,36 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
 
       {findings.map((f) => {
         const sev = SEV[f.severity] ?? SEV.low;
+        const gap = f.docPath === '';
         return (
           <div key={f.fingerprint} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
             <div style={sx('display:flex;align-items:center;gap:7px')}>
               <span style={sx(`flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:${sev.bg};color:${sev.fg}`)}>{sev.label}</span>
+              {gap && <span style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>gap</span>}
               <span style={sx('font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')} title={f.detail}>{f.title}</span>
             </div>
-            <div onClick={() => nav('/editor/' + f.docPath)}
-              style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);margin-top:4px;cursor:pointer")}>
-              {f.docPath}{f.anchor ? ` · ${f.anchor}` : ''} <span style={sx('color:var(--text-3)')}>vs ~{f.source}</span>
-            </div>
+            {gap ? (
+              <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-2);margin-top:4px")}>
+                ~{f.source}/{f.anchor}
+                {f.draftPath
+                  ? <span onClick={() => nav('/editor/' + f.draftPath)} style={sx('color:var(--prod);cursor:pointer')}> → {f.draftPath}</span>
+                  : f.suggestedPath && <span style={sx('color:var(--text-3)')}> → suggests {f.suggestedPath}</span>}
+              </div>
+            ) : (
+              <div onClick={() => nav('/editor/' + f.docPath)}
+                style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);margin-top:4px;cursor:pointer")}>
+                {f.docPath}{f.anchor ? ` · ${f.anchor}` : ''} <span style={sx('color:var(--text-3)')}>vs ~{f.source}</span>
+              </div>
+            )}
             <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.45')}>{f.detail}</div>
-            <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px')}>
+            <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap')}>
+              {gap && !f.draftPath && (
+                <button onClick={() => doDraft(f)} disabled={draft.isPending}
+                  title="Reverse-engineer the missing requirement document from the source evidence (AI draft, uncommitted)"
+                  style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                  {draft.isPending ? 'Drafting…' : 'Draft requirement'}
+                </button>
+              )}
               {f.status === 'filed' && f.workItemUrl ? (
                 <a href={f.workItemUrl} target="_blank" rel="noopener noreferrer"
                   style={sx('font-size:11px;font-weight:600;color:var(--data);text-decoration:none')}>
@@ -160,7 +210,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
 
       {!running && findings.length === 0 && data.run && data.run.status === 'ok' && (
         <div style={sx('padding:11px 14px;font-size:12px;color:var(--text-3)')}>
-          <span style={sx('color:var(--data)')}>✓</span> no drift found in the last run
+          <span style={sx('color:var(--data)')}>✓</span> {data.run.mode === 'gaps' ? 'no coverage gaps found in the last run' : 'no drift found in the last run'}
         </div>
       )}
 
@@ -172,6 +222,15 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
         </div>
       )}
     </div>
+  );
+}
+
+function ModeSeg({ label, title, active, onClick }: { label: string; title: string; active: boolean; onClick: () => void }) {
+  return (
+    <span onClick={onClick} title={title}
+      style={sx(`padding:3px 12px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;user-select:none;${active ? 'background:var(--surface);color:var(--text);box-shadow:var(--shadow)' : 'color:var(--text-3)'}`)}>
+      {label}
+    </span>
   );
 }
 

@@ -101,9 +101,10 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_key           TEXT NOT NULL,
   branch             TEXT NOT NULL,
+  mode               TEXT NOT NULL DEFAULT 'drift', -- drift (per-doc verify) | gaps (per-source coverage)
   status             TEXT NOT NULL,               -- running | ok | error | cancelled
   error              TEXT NOT NULL DEFAULT '',
-  scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list
+  scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list (gaps: source list)
   docs_total         INT NOT NULL DEFAULT 0,
   docs_done          INT NOT NULL DEFAULT 0,
   dropped_unverified INT NOT NULL DEFAULT 0,      -- findings whose evidence failed verification
@@ -115,13 +116,17 @@ CREATE INDEX IF NOT EXISTS drift_runs_repo ON drift_runs(repo_key, branch, id);
 
 -- drift findings, keyed by the anchor-based fingerprint so dismissals stick
 -- and re-runs upsert instead of duplicating. resolved_at != 0 = the last run
--- over the doc no longer reported it.
+-- over the doc no longer reported it. Coverage gaps (mode 'gaps') have
+-- doc_path = '' — no document covers them yet; suggested_path is where one
+-- should live and draft_path the reverse-engineered draft once created.
 CREATE TABLE IF NOT EXISTS drift_findings (
   repo_key         TEXT NOT NULL,
   branch           TEXT NOT NULL,
   fingerprint      TEXT NOT NULL,
   run_id           BIGINT NOT NULL,
   doc_path         TEXT NOT NULL,
+  suggested_path   TEXT NOT NULL DEFAULT '',
+  draft_path       TEXT NOT NULL DEFAULT '',
   anchor           TEXT NOT NULL DEFAULT '',
   source           TEXT NOT NULL DEFAULT '',
   kind             TEXT NOT NULL DEFAULT '',

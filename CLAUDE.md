@@ -106,9 +106,18 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
-- **Source drift** (`api/drift.go`, "Source drift" card on the Overview +
-  "Check drift" in the editor): scoped per-document AI runs verify docs against
-  the selected references; findings are SQLite rows keyed by an ANCHOR-based
+- **Source alignment** (`api/drift.go`, "Source alignment" card on the
+  Overview + "Check drift" in the editor) has TWO run modes: **drift** —
+  scoped per-document AI runs verify docs against the selected references —
+  and **gaps** — per-source sweeps report capabilities no document covers
+  (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
+  path). A gap's missing requirement can be **reverse-engineered**
+  (`POST .../findings/{fp}/draft`, `ai.ReversePrompt`, one-shot Complete):
+  the AI drafts the doc from the finding's evidence files, it lands as an
+  uncommitted worktree save (ws-branch on protected mains) and
+  `draft_path` links finding → doc. Reopening a finding
+  (`dismiss {reopen:true}`) clears a stale draft pointer — the e2e
+  self-heal depends on that. Findings are SQLite rows keyed by an ANCHOR-based
   fingerprint (docPath|source|kind|anchor — model titles are display-only, so
   dismissals stick across reruns) and evidence quotes are string-verified
   against the source snapshot (unverifiable findings are silently dropped,
