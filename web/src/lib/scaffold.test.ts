@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { scaffoldConfigYml, scaffoldFor } from './scaffold';
 import { idPattern } from './ids';
 import { BUILTIN_ENTITIES } from './entities';
-import { DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES, DEFAULT_STATUSES, DEFAULT_TRACEABILITY, workspaceConfig } from './config';
+import { DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES, DEFAULT_STATUSES, DEFAULT_TIMED, DEFAULT_TRACEABILITY, workspaceConfig } from './config';
 import { defaultDoc } from './derive';
 
 describe('scaffold', () => {
@@ -22,6 +22,7 @@ describe('scaffold', () => {
     expect(cfg.linkTypes).toEqual(DEFAULT_LINK_TYPES);
     expect(cfg.traceability).toEqual(DEFAULT_TRACEABILITY);
     expect(cfg.properties).toEqual(DEFAULT_PROPERTIES);
+    expect(cfg.timed).toEqual(DEFAULT_TIMED);
   });
 
   it('scaffoldFor knows config.yml and instructions.md; schema.json is combined away', () => {

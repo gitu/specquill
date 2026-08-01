@@ -14,7 +14,7 @@ import { HistoryDrawer } from '../components/HistoryDrawer';
 import { DeleteDialog } from '../components/DeleteDialog';
 import { MoveDialog } from '../components/MoveDialog';
 import { ShareDialog } from '../components/ShareDialog';
-import { backlinkLabel, buildProps, collectBacklinks, defaultDoc, docLinkReport, driverMeta, srcMeta } from '../lib/derive';
+import { backlinkLabel, buildProps, buildTimed, collectBacklinks, daysLabel, defaultDoc, docLinkReport, driverMeta, srcMeta, todayISO } from '../lib/derive';
 import type { DocBacklink, LinkReportEntry } from '../lib/derive';
 import type { EntityDef } from '../lib/entities';
 import { scaffoldFor } from '../lib/scaffold';
@@ -586,7 +586,8 @@ export function EditorView() {
     return m;
   }, [app.files]);
 
-  const change = app.model?.changes.find((c) => c.status === 'triage');
+  // this document's own validity window, when it has one (timed dependency)
+  const timed = app.model ? buildTimed(app.model, todayISO()).items.find((t) => t.path === path) : undefined;
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
   // the draft briefly still holds the previous document; images skip the file
@@ -885,18 +886,24 @@ export function EditorView() {
             ) : (
               <DocBody html={viewHtml} docPath={raw0} />
             )}
-            {app.aiSuggestions && change && kind === 'md' && !readOnly && (
-              <div style={sx('margin-top:24px;border:1px solid var(--ai-line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)')}>
-                <div style={sx('display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--ai-bg);border-bottom:1px solid var(--ai-line)')}>
-                  <IconSpark size={14} stroke="var(--ai)" />
-                  <span style={sx('font-size:12px;font-weight:600;color:var(--ai)')}>Speccy suggests an edit</span>
-                  <span style={sx('font-size:11px;color:var(--text-2)')}>from {change.name} · {change.published}</span>
+            {timed && kind === 'md' && (
+              <div style={sx('margin-top:24px;border:1px solid ' + (timed.atRisk ? 'var(--reg-line)' : 'var(--border)') + ';border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)')}>
+                <div style={sx('display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--border);' + (timed.atRisk ? 'background:var(--reg-bg)' : 'background:var(--surface-2)'))}>
+                  <span style={sx('font-size:13px')}>⧗</span>
+                  <span style={{ ...sx('font-size:12px;font-weight:600'), color: timed.atRisk ? 'var(--reg)' : 'var(--text-2)' }}>
+                    {timed.state === 'pending' ? 'Comes into force' : timed.state === 'expired' ? 'Expired' : timed.state === 'expiring' ? 'Expiring' : 'In force'} {daysLabel(timed.days)}
+                  </span>
+                  <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{timed.governing}</span>
                   <div style={sx('flex:1')} />
-                  <button onClick={() => nav('/diff?change=' + encodeURIComponent(change.path))} style={sx('height:26px;padding:0 11px;border:none;border-radius:6px;background:var(--ai);color:#fff;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer')}>
-                    Review diff →
+                  <button onClick={() => nav('/timed?sel=' + encodeURIComponent(timed.path))} style={sx('height:26px;padding:0 11px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer')}>
+                    Open timeline →
                   </button>
                 </div>
-                <div style={sx('padding:12px 14px;font-size:13px;line-height:1.62;color:var(--text)')}>{change.summary}</div>
+                <div style={sx('padding:12px 14px;font-size:13px;line-height:1.62;color:var(--text)')}>
+                  {timed.deps.length
+                    ? `${timed.readyCount} of ${timed.deps.length} documents depending on this are ready.`
+                    : 'Nothing depends on this document yet.'}
+                </div>
               </div>
             )}
           </div>

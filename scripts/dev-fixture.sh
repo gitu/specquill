@@ -33,6 +33,18 @@ make_bare trading-specs repo
 # specquill-docs: SpecQuill's own product specs — a MONOREPO example whose
 # workspace lives in the docs/specs/ subfolder (content_root project)
 make_bare specquill-docs repo-product
+# a couple of real commits on main so the change history (REQ-027) has
+# something to read: a status transition and a reworded normative statement
+tmp="$(mktemp -d)"
+git clone -q "$ORIGIN/trading-specs.git" "$tmp"
+sed -i 's/^status: draft/status: in_review/' "$tmp/requirements/REQ-063.md"
+git "${fixture_env[@]}" -C "$tmp" commit -qam "req: partial-fill reporting moves to review"
+sed -i 's/SHALL carry a `fills\[\]` array; each fill/SHALL carry a `fills[]` array of at most 500 entries; each fill/' "$tmp/requirements/REQ-063.md"
+sed -i 's/^ends: 2026-09-10/ends: 2026-09-30/' "$tmp/requirements/REQ-090.md"
+git "${fixture_env[@]}" -C "$tmp" commit -qam "req: bound the fills array, extend the retention window"
+git -C "$tmp" push -q origin main
+rm -rf "$tmp"
+
 # feature branch so the branch switcher has something to show
 tmp="$(mktemp -d)"
 git clone -q "$ORIGIN/trading-specs.git" "$tmp"

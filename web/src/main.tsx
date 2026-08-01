@@ -6,9 +6,10 @@ import App from './App';
 import { Dashboard } from './views/Dashboard';
 import { EditorView } from './views/EditorView';
 import { ChangesView } from './views/ChangesView';
+import { TimedView } from './views/TimedView';
+import { HistoryView } from './views/HistoryView';
 import { GraphView } from './views/GraphView';
 import { ModelView } from './views/ModelView';
-import { DiffView } from './views/DiffView';
 import { LoginView } from './views/LoginView';
 import { AdminView } from './views/AdminView';
 import { useApp } from './state/AppContext';
@@ -40,10 +41,11 @@ const projectViews = () => [
   { index: true, element: <ProjectIndexRedirect /> },
   { path: 'dashboard', element: <Dashboard /> },
   { path: 'editor/*', element: <EditorView /> },
+  { path: 'timed', element: <TimedView /> },
   { path: 'changes', element: <ChangesView /> },
+  { path: 'history', element: <HistoryView /> },
   { path: 'graph/*', element: <GraphView /> }, // /graph/<docPath> focuses on that doc's chain
   { path: 'model', element: <ModelView /> },
-  { path: 'diff', element: <DiffView /> },
 ];
 
 // History routing: the Go spaHandler (and Vite in dev) serve index.html for

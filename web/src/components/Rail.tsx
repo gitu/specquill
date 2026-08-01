@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
-import { buildDashboard } from '../lib/derive';
-import { IconChanges, IconDash, IconFolder, IconGear, IconModel, IconSpark, IconTrace } from './icons';
+import { buildTimed, todayISO } from '../lib/derive';
+import { IconChanges, IconClock, IconDash, IconFolder, IconGear, IconHistory, IconModel, IconSpark, IconTrace } from './icons';
 
 const VIEW_LABEL: Record<ViewName, string> = {
-  dashboard: 'Overview', editor: 'Specs', changes: 'Changes', graph: 'Graph',
+  dashboard: 'Overview', editor: 'Specs', timed: 'Timed dependencies',
+  changes: 'Pending changes', history: 'Change history', graph: 'Graph',
   model: 'Model definitions',
 };
 
@@ -19,21 +20,25 @@ export function Rail() {
   const pathname = useAppPath();
   const app = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const openCount = app.model ? buildDashboard(app.model).openCount : 0;
+  // the rail badge counts what needs a human: windows opening (or closing)
+  // inside the horizon with work still unfinished behind them
+  const atRisk = app.model ? buildTimed(app.model, todayISO()).atRisk.length : 0;
   const is = (p: string) => pathname === p || pathname.startsWith(p + '/');
 
   return (
     <nav style={sx('width:52px;flex:none;background:var(--rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:3px')}>
       <button title="Overview" onClick={() => nav('/dashboard')} style={sx(BTN + (is('/dashboard') ? A : I))}><IconDash /></button>
-      <button title="Specs" onClick={() => nav('/editor')} style={sx(BTN + (is('/editor') || is('/diff') ? A : I))}><IconFolder /></button>
-      <button title="Changes" onClick={() => nav('/changes')} style={{ ...sx(BTN + (is('/changes') ? A : I)), position: 'relative' }}>
-        <IconChanges />
-        {openCount > 0 && (
+      <button title="Specs" onClick={() => nav('/editor')} style={sx(BTN + (is('/editor') ? A : I))}><IconFolder /></button>
+      <button title="Timed dependencies" onClick={() => nav('/timed')} style={{ ...sx(BTN + (is('/timed') ? A : I)), position: 'relative' }}>
+        <IconClock />
+        {atRisk > 0 && (
           <span style={sx('position:absolute;top:5px;right:6px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:var(--reg);color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center')}>
-            {openCount}
+            {atRisk}
           </span>
         )}
       </button>
+      <button title="Pending changes" onClick={() => nav('/changes')} style={sx(BTN + (is('/changes') ? A : I))}><IconChanges /></button>
+      <button title="Change history" onClick={() => nav('/history')} style={sx(BTN + (is('/history') ? A : I))}><IconHistory /></button>
       <button title="Traceability" onClick={() => nav('/graph')} style={sx(BTN + (is('/graph') ? A : I))}><IconTrace /></button>
       <button title="Model definitions" onClick={() => nav('/model')} style={sx(BTN + (is('/model') ? A : I))}><IconModel /></button>
       <div style={sx('flex:1')} />

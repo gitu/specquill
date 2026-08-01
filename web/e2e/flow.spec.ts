@@ -11,8 +11,9 @@ test('dashboard shows live KPIs', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByText('Trace coverage')).toBeVisible();
-  // the feed card takes the change entity's label from the workspace config
-  await expect(page.getByText('Changes', { exact: true }).first()).toBeVisible();
+  // the WHEN card comes from the documents' own validity windows
+  await expect(page.getByText('Coming up', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pending dependencies')).toBeVisible();
   await expect(page.getByText('Traceability health')).toBeVisible();
 });
 
@@ -24,8 +25,8 @@ test('graph renders from the model', async ({ page }) => {
 test('search palette finds a requirement', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
-  await page.getByText('Search requirements, specs, fields, changes…').first().click();
-  const input = page.getByPlaceholder('Search requirements, specs, fields, changes…');
+  await page.getByText('Search requirements, specs, fields, documents…').first().click();
+  const input = page.getByPlaceholder('Search requirements, specs, fields, documents…');
   await input.fill('REQ-042');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/editor\/requirements\/REQ-042\.md/);

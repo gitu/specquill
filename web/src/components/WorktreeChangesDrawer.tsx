@@ -1,64 +1,17 @@
-import { useNav } from '../state/nav';
+import { useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useDiscard, useFileAtHead, useFileQuery, useStatus, useWorktreeDiff } from '../api/hooks';
-import { rawUrl } from '../api/client';
-import { DiffCard } from './DiffCard';
+import { useDiscard, useStatus, useWorktreeDiff } from '../api/hooks';
 import { CommitDialog } from './CommitDialog';
-import { EXCALIDRAW_CMAP, excalidrawToSvg } from '../lib/model';
-import { useMemo, useState } from 'react';
+import { WorktreeDiffList } from './WorktreeDiffList';
 
-const IMG_STYLE = 'max-width:100%;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:6px';
-const EMPTY = "<div style=\"padding:20px;color:var(--text-3);font-size:11px;text-align:center\">—</div>";
-
-// before/after preview for binary-like changes: PNG sketches (and plain
-// images) render as images — the committed side reads the HEAD blob via
-// at=head, the uncommitted side the worktree state. Legacy .excalidraw JSON
-// keeps the themed SVG shim. Renames read the committed side from the OLD
-// path — that is where HEAD still has the blob.
-function WorktreeArtifact({ path, oldPath, status }: { path: string; oldPath?: string; status: string }) {
-  const app = useApp();
-  const beforePath = oldPath || path;
-  const legacyJson = /\.excalidraw$/i.test(path);
-  const before = useFileAtHead(legacyJson ? app.repoId : undefined, app.branch, beforePath, true);
-  const after = useFileQuery(legacyJson ? app.repoId : undefined, app.branch, path);
-  // bust the raw endpoint's short cache per drawer mount AND whenever sketch
-  // bytes change while the drawer is open (speccy draw + pixel upgrade)
-  const v = useMemo(() => Date.now().toString(36) + '-' + app.sketchGen, [app.sketchGen]);
-  const renderJson = (raw?: string) => {
-    if (!raw) return EMPTY;
-    try { return excalidrawToSvg(JSON.parse(raw), EXCALIDRAW_CMAP); } catch { return '<div style="padding:20px;color:var(--reg)">malformed</div>'; }
-  };
-  const side = (label: string, right: boolean) => {
-    const missing = right ? status === 'D' : status === 'A';
-    return (
-      <div style={sx('padding:14px;min-width:0;' + (right ? '' : 'border-right:1px solid var(--border)'))}>
-        <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px")}>{label}</div>
-        {legacyJson ? (
-          <div dangerouslySetInnerHTML={{ __html: renderJson(right ? after.data?.content : before.data?.content) }} />
-        ) : missing ? (
-          <div style={sx('padding:20px;color:var(--text-3);font-size:11px;text-align:center')}>—</div>
-        ) : (
-          <img
-            src={rawUrl(app.repoId!, app.branch, right ? path : beforePath) + (right ? '' : '&at=head') + '&v=' + v}
-            alt={label + ' ' + path}
-            style={sx(IMG_STYLE)}
-          />
-        )}
-      </div>
-    );
-  };
-  return (
-    <div style={sx('display:grid;grid-template-columns:1fr 1fr')}>
-      {side('committed', false)}
-      {side('uncommitted', true)}
-    </div>
-  );
-}
-
-/** Right-side drawer showing every uncommitted change on the current branch. */
+/**
+ * Right-side drawer showing every uncommitted change on the current branch —
+ * the quick path from the header. The full picture (uncommitted + ahead of
+ * the default branch + the open merge request) lives in the Changes view,
+ * and both render the file list through WorktreeDiffList.
+ */
 export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
-  const nav = useNav();
   const app = useApp();
   const diff = useWorktreeDiff(app.repoId, app.branch, true);
   const status = useStatus(app.repoId, app.branch);
@@ -94,26 +47,7 @@ export function WorktreeChangesDrawer({ onClose }: { onClose: () => void }) {
           <span onClick={onClose} style={sx('cursor:pointer;color:var(--text-3);font-size:16px')}>×</span>
         </div>
         <div style={sx('flex:1;overflow-y:auto;padding:16px')}>
-          {files.map((f) => (
-            <div key={f.path}>
-              <DiffCard file={f} artifact={f.binaryLike ? <WorktreeArtifact path={f.path} oldPath={f.oldPath} status={f.status} /> : undefined} />
-              <div style={sx('margin:-10px 0 16px;display:flex;justify-content:flex-end;gap:14px')}>
-                <span onClick={() => reject(f.oldPath ? [f.path, f.oldPath] : [f.path])}
-                  style={sx('font-size:11.5px;color:var(--del);cursor:pointer;font-weight:600')}>
-                  Discard
-                </span>
-                <span onClick={() => { onClose(); nav('/editor/' + f.path); }}
-                  style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>
-                  Open in editor →
-                </span>
-              </div>
-            </div>
-          ))}
-          {files.length === 0 && !diff.isLoading && (
-            <div style={sx("padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px")}>
-              working tree clean — nothing to commit
-            </div>
-          )}
+          {!diff.isLoading && <WorktreeDiffList files={files} onDiscard={reject} onNavigate={onClose} />}
         </div>
         {commitOpen && status.data && <CommitDialog status={status.data} onClose={() => setCommitOpen(false)} />}
       </div>

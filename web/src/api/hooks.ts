@@ -86,6 +86,55 @@ export interface DiffFile {
   additions: number; deletions: number; binaryLike: boolean; hunks: DiffHunk[] | null;
 }
 
+// ---------------------------------------------------------------- history
+
+export interface CommitFile { status: string; path: string; oldPath?: string }
+export interface Commit {
+  sha: string; parent?: string; author: string; email: string; date: string; subject: string;
+  files: CommitFile[];
+}
+export interface PropChange { key: string; before?: string; after?: string }
+export interface StmtChange { id: string; op: string; before?: string; after?: string }
+export interface DocDelta {
+  path: string; status: string;
+  props?: PropChange[]; statements?: StmtChange[]; sections?: string[]; plain?: boolean;
+}
+export interface CommitDetail { sha: string; files: DiffFile[]; deltas: DocDelta[] }
+
+/** The workspace's commits, newest first (REQ-027). */
+export function useLog(repo: string | undefined, ref: string, since?: string, limit = 50) {
+  const q = new URLSearchParams({ ref, limit: String(limit) });
+  if (since) q.set('since', since);
+  return useQuery({
+    queryKey: ['log', repo, ref, since ?? '', limit],
+    queryFn: () => api<Commit[]>(`/api/repos/${repo}/log?${q}`),
+    enabled: !!repo,
+    staleTime: 30_000,
+  });
+}
+
+/** One commit: file diffs plus the semantic delta of each document. */
+export function useCommitDetail(repo: string | undefined, sha?: string, parent?: string) {
+  return useQuery({
+    queryKey: ['commit', repo, sha],
+    queryFn: () => api<CommitDetail>(`/api/repos/${repo}/commit?sha=${sha}&parent=${parent ?? ''}`),
+    enabled: !!repo && !!sha,
+    staleTime: Infinity, // commits are immutable
+  });
+}
+
+/** Quick-tier summary of a commit; absent when no model is configured (501). */
+export function useCommitSummary(repo: string | undefined, sha?: string, parent?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['commitsummary', repo, sha],
+    queryFn: () => api<{ sha: string; summary: string; model: string }>(
+      `/api/repos/${repo}/commit/summary?sha=${sha}&parent=${parent ?? ''}`),
+    enabled: !!repo && !!sha && enabled,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
 // ---------------------------------------------------------------- merging
 
 export interface MergePreview {

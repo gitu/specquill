@@ -127,6 +127,26 @@ from the code.
   json`, so its boot import errors ("connection refused") before the listener is
   up — it goes green on the next interval or a manual `POST /api/sources/platform-api/sync`
   (or the Admin "Sync now" button).
+- **Timed dependencies replaced the change inbox** (Aug 2026, REQ-026): the
+  built-in `change` family and the whole `inbox:`/`closed_statuses:`/
+  `attention_statuses:` machinery are gone. Any document carrying a configured
+  validity-window key (`timed:` in the workspace config — `starts`/`ends`,
+  `effective_from`/`effective_until`, `due`, first key present wins) lands on
+  `/timed` as pending|active|expiring|expired with its dependents' readiness;
+  `atRisk` = opens/closes inside `horizon_days` while something is not in
+  `ready_statuses`. A `change:` family can still be declared in config as an
+  ordinary family (the `changes/` scaffold starter + skill are kept) — it just
+  gets no special UI.
+- **Three change surfaces** (REQ-027): `/timed` (deadlines), `/changes`
+  (pending: uncommitted + ahead-of-default + open MR, composed from existing
+  endpoints), `/history` (committed history from git). `GET /log` is
+  repo-wide and content-root scoped; the older `GET /history?path=` is
+  per-document (`--follow`) — do not confuse them. `GET /commit?sha=&parent=`
+  returns the two-dot diff (`gitx.DiffCommit`, NOT the three-dot `DiffRange`
+  used for merge previews) plus `internal/delta` semantic deltas; the parent
+  travels in the log payload because `ValidRef` rejects `sha^`. Commit
+  summaries run on `ai.quick_model` over the delta and cache per `repo@sha`
+  without a TTL (commits are immutable); 501 when no model is configured.
 - **Protected main**: the default branch is never edited; the first edit
   auto-creates/switches to the caller's `ws/<user>` branch (claimed in the store).
   Direct writes to protected branches 403 (`protected_branch`). A **merge** from

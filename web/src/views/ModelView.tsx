@@ -145,6 +145,25 @@ export function ModelView() {
           </div>
         </div>
 
+        <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);margin-top:18px;padding:16px 18px')}>
+          <div style={sx('display:flex;align-items:baseline;gap:8px')}>
+            <span style={sx('font-weight:700;font-size:13.5px')}>Timed dependencies</span>
+            <span style={sx('font-size:11.5px;color:var(--text-2)')}>Which frontmatter keys carry a validity window — any document with one joins the Timed view</span>
+          </div>
+          <div style={sx('display:grid;grid-template-columns:150px 1fr;gap:6px 14px;margin-top:12px;font-size:12.5px;align-items:baseline')}>
+            <span style={sx('color:var(--text-2)')}>Start keys</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px")}>{wcfg.timed.start.join(', ')}</span>
+            <span style={sx('color:var(--text-2)')}>End keys</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px")}>{wcfg.timed.end.join(', ')}</span>
+            <span style={sx('color:var(--text-2)')}>Ready statuses</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px")}>{wcfg.timed.readyStatuses.join(', ')}</span>
+            <span style={sx('color:var(--text-2)')}>Horizon</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px")}>{wcfg.timed.horizonDays} days</span>
+            <span style={sx('color:var(--text-2)')}>Families</span>
+            <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px")}>{wcfg.timed.kinds.length ? wcfg.timed.kinds.join(', ') : 'all'}</span>
+          </div>
+        </div>
+
         <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);margin-top:18px;overflow:hidden')}>
           <div style={sx('padding:14px 18px;border-bottom:1px solid var(--border)')}>
             <span style={sx('font-weight:700;font-size:13.5px')}>Link types</span>

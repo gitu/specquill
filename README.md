@@ -2,9 +2,9 @@
 
 **Requirements as readable, structured Markdown — what you end up with is an
 [OKF bundle](repo-product/docs/specs/specs/okf.md).** A git-native requirements-engineering tool:
-requirements, specs, regulations, data mappings and change records live as
-plain markdown in git; SpecQuill is the editing and review surface on top —
-traceability graph, change inbox, rich editors, and an in-app
+requirements, specs, regulations and data mappings live as plain markdown in
+git; SpecQuill is the editing and review surface on top — traceability graph,
+timed dependencies, a git-derived change history, rich editors, and an in-app
 branch-based merge flow, every commit authored by the logged-in user.
 
 The artifact SpecQuill produces is deliberately **not proprietary**: a
@@ -56,6 +56,22 @@ Key properties:
   `hidden: true`), and the Model view shows a **sample config** spelling out the full
   default setup — importable in one click when no config exists. A stand-alone
   `.specquill/schema.json` keeps working as the legacy property-schema form.
+- **Timed dependencies** ([REQ-026](repo-product/docs/specs/requirements/REQ-026.md)).
+  A document whose frontmatter carries a validity window — `starts`/`ends`, or
+  regulatory wording like `effective_from`, all configurable under `timed:` —
+  lands on a timeline as pending / active / expiring / expired, together with the
+  readiness of everything that links to it. A window that opens inside the horizon
+  while its dependents are still unfinished is flagged **at risk** on the Overview
+  and as a badge on the rail. No document *about* change is required: the dates
+  live on the documents themselves.
+- **Change history from git** ([REQ-027](repo-product/docs/specs/requirements/REQ-027.md)).
+  `/history` reads the workspace's commits (content-root scoped) and classifies every
+  touched path through the current config, so the feed reads "3 requirements · 1 spec"
+  rather than a file list. A selected commit is explained as a **semantic delta** —
+  frontmatter properties that moved, normative statements added, dropped or reworded,
+  sections that came and went — with the text diff one click away and, when an AI tier
+  is configured, a cached one-sentence summary generated from that delta. `/changes` is
+  the branch-scoped counterpart: uncommitted drafts, commits ahead of main, open MR.
 - **Protected main, personal workspaces.** The default branch is never edited directly:
   the first edit transparently creates/switches to the user's `ws/<user>` branch
   (server-claimed, fast-forwarded onto main when safe). Direct API writes to protected
@@ -138,7 +154,7 @@ Key properties:
   grounding (no index; the workspace is prompt-sized). Chat streams over SSE;
   "Draft edits & open as diff" asks the model for surgical search/replace edits,
   validates them (impacted files only, unique match), and applies them as
-  **uncommitted saves on a `speccy/<change>` branch** — the human reviews via the
+  **uncommitted saves on a `speccy/<doc>` branch** — the human reviews via the
   normal status → commit → merge flow. `scripts/mock-llm.py` is a keyless dev provider.
 - **Chat tools.** On a writable workspace branch the chat can act directly:
   `read_file`/`list_files`/`search` (full files, listings and text search over

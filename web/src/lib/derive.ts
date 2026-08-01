@@ -2,7 +2,7 @@
 // build*/renderVals methods. Styles are composed as strings (rendered via sx())
 // exactly like the design; navigation is carried as paths, not callbacks.
 
-import { Change, DataField, DocNode, PropEntry, Requirement, WorkspaceModel, getList, isReservedMd, parseDriverEntries, parseProps, resolveFmRef, stripFrontmatter } from './model';
+import { DataField, DocNode, PropEntry, Requirement, TimedDoc, WorkspaceModel, getList, isReservedMd, parseDriverEntries, parseProps, resolveFmRef, stripFrontmatter } from './model';
 import type { EntityDef } from './entities';
 import { GROUP_ORDER, primaryEntity, workspaceConfig } from './config';
 import type { PropertySchema } from './config';
@@ -35,6 +35,20 @@ export function statusMeta(s: string): { label: string; color: string } {
     done: ['Done', 'var(--data)'], merged: ['Merged', 'var(--data)'],
   };
   return m[v] ? { label: m[v][0], color: m[v][1] } : { label: (s || '').replace(/_/g, ' '), color: 'var(--text-2)' };
+}
+
+/** Today as YYYY-MM-DD in LOCAL time — the clock seam of timed dependencies. */
+export function todayISO(): string {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+/** "in 12d" / "today" / "8d ago" — signed day counts as the timeline reads them. */
+export function daysLabel(days: number): string {
+  if (days === 0) return 'today';
+  const n = Math.abs(days);
+  const unit = n < 45 ? `${n}d` : n < 365 ? `${Math.round(n / 30)}mo` : `${(n / 365).toFixed(1)}y`;
+  return days > 0 ? `in ${unit}` : `${unit} ago`;
 }
 
 export function daysAgo(d: string): string {
@@ -455,27 +469,85 @@ export function docLinkReport(files: Record<string, string>, model: WorkspaceMod
   };
 }
 
-// ---------------------------------------------------------------- changes
+// ---------------------------------------------------------------- timed
 
-export interface ChangeItem extends Change {
-  ago: string; nImpacted: number;
+/** A dependent document of a timed one, with whether it is ready in time. */
+export interface TimedDep { path: string; name: string; title: string; kind: string; status: string; ready: boolean }
+
+export interface TimedItem extends TimedDoc {
+  /** where the document sits on its own window, relative to `today` */
+  state: 'pending' | 'active' | 'expiring' | 'expired';
+  /** days until the governing date (negative = in the past) */
+  days: number;
+  /** the date `days` counts down to — the start while pending, else the end */
+  governing: string;
+  deps: TimedDep[];
+  readyCount: number;
+  /** starts (or ends) inside the horizon while it or its dependents are not ready */
+  atRisk: boolean;
 }
 
-export function buildChanges(model: WorkspaceModel, filter: string, selPath?: string | null) {
-  // ordering follows the CONFIGURED inbox lifecycle: attention statuses
-  // first, closed last, everything else in between (stable)
-  const attention = new Set(model.inbox?.attention || ['triage']);
-  const closed = new Set(model.inbox?.closed || ['done', 'merged']);
-  const rank = (st: string) => (attention.has(st) ? 0 : closed.has(st) ? 9 : 1);
-  const all: ChangeItem[] = model.changes
-    .map((c) => ({ ...c, ago: daysAgo(c.published), nImpacted: c.impReqs.length + c.impSpecs.length + c.impMaps.length }))
-    .sort((a, b) => rank(a.status) - rank(b.status));
+export const TIMED_STATES = ['pending', 'active', 'expiring', 'expired'] as const;
+
+const DAY = 86400000;
+const dayDiff = (from: string, to: string) =>
+  Math.round((new Date(to + 'T00:00:00').getTime() - new Date(from + 'T00:00:00').getTime()) / DAY);
+const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s);
+
+/**
+ * Timed dependencies: every document with a validity window, bucketed against
+ * `today` and joined with the documents that depend on it (inbound typed
+ * links). `pending` is the interesting bucket — a window that has not opened
+ * yet, with work possibly still unfinished behind it; `atRisk` marks the ones
+ * whose horizon is close while something is not `ready_statuses` yet.
+ *
+ * `today` is a parameter so the buckets are testable; the view passes the
+ * current date.
+ */
+export function buildTimed(model: WorkspaceModel, today: string, filter = 'all', selPath?: string | null) {
+  const def = model.timedDef;
+  const ready = new Set(def.readyStatuses);
+  const backlinks = collectBacklinks(model);
+  const byPath: Record<string, DocNode> = {};
+  model.docs.forEach((d) => { byPath[d.path] = d; });
+
+  const all: TimedItem[] = model.timed.map((t) => {
+    const start = isDate(t.start) ? t.start.slice(0, 10) : '';
+    const end = isDate(t.end) ? t.end.slice(0, 10) : '';
+    const toStart = start ? dayDiff(today, start) : 0;
+    const toEnd = end ? dayDiff(today, end) : 0;
+    let state: TimedItem['state'] = 'active';
+    let days = 0, governing = '';
+    if (start && toStart > 0) { state = 'pending'; days = toStart; governing = start; }
+    else if (end && toEnd < 0) { state = 'expired'; days = toEnd; governing = end; }
+    else if (end && toEnd <= def.horizonDays) { state = 'expiring'; days = toEnd; governing = end; }
+    else { state = 'active'; days = end ? toEnd : toStart; governing = end || start; }
+
+    const deps: TimedDep[] = (backlinks[t.path] || []).map((b) => {
+      const d = byPath[b.from];
+      return {
+        path: b.from, name: b.from.split('/').pop() || b.from,
+        title: d?.title || b.from.split('/').pop() || b.from,
+        kind: d?.kind || '', status: d?.status || '',
+        ready: ready.has(d?.status || ''),
+      };
+    }).sort((a, b) => a.path.localeCompare(b.path));
+    const readyCount = deps.filter((d) => d.ready).length;
+    const selfReady = ready.has(t.status);
+    const atRisk = (state === 'pending' || state === 'expiring') && days <= def.horizonDays
+      && (!selfReady || readyCount < deps.length);
+    return { ...t, start, end, state, days, governing, deps, readyCount, atRisk };
+  }).sort((a, b) => {
+    // soonest first within a bucket; expired counts down from the most recent
+    const rank = TIMED_STATES.indexOf(a.state) - TIMED_STATES.indexOf(b.state);
+    return rank || Math.abs(a.days) - Math.abs(b.days) || a.path.localeCompare(b.path);
+  });
+
   const counts: Record<string, number> = { all: all.length };
-  model.driverDefs.forEach((d) => { counts[d.key] = 0; });
-  all.forEach((c) => { if (c.source in counts) counts[c.source]++; });
-  const items = all.filter((c) => filter === 'all' || c.source === filter);
-  const sel = all.find((c) => c.path === (selPath || (items[0] && items[0].path))) || items[0] || null;
-  return { items, sel, counts };
+  TIMED_STATES.forEach((s) => { counts[s] = all.filter((i) => i.state === s).length; });
+  const items = all.filter((i) => filter === 'all' || i.state === filter);
+  const sel = all.find((i) => i.path === selPath) || items[0] || null;
+  return { items, sel, counts, atRisk: all.filter((i) => i.atRisk) };
 }
 
 // ---------------------------------------------------------------- dashboard
@@ -490,12 +562,11 @@ export interface DashTile { key: string; label: string; value: string; sub: stri
  * WHATs cite drivers (outbound), WHATs are covered by inbound `implements`
  * from HOWs, HOWs by inbound `delivers` from WHENs.
  */
-export function buildDashboard(model: WorkspaceModel) {
+export function buildDashboard(model: WorkspaceModel, today = todayISO()) {
   const ents = model.entities;
   const what = primaryEntity(ents, 'what');
   const how = primaryEntity(ents, 'how');
   const when = primaryEntity(ents, 'when');
-  const changeEnt = ents.find((e) => e.inbox);
   const mapEnt = ents.find((e) => e.kind === 'data_mapping');
   const whatDocs = model.docs.filter((d) => d.group === 'what');
   const lower = (s: string) => s.toLowerCase();
@@ -507,8 +578,7 @@ export function buildDashboard(model: WorkspaceModel) {
   const covered = (docs: DocNode[], kind: string, fromGroup: string) =>
     docs.filter((t) => (backlinks[t.path] || []).some((b) => b.kind === kind && groupOf[b.from] === fromGroup)).length;
 
-  const closedSet = new Set(model.inbox?.closed || ['done', 'merged']);
-  const openChanges = model.changes.filter((c) => !closedSet.has(c.status));
+  const timed = buildTimed(model, today);
   const drifts = model.fields.filter((f) => f.drift).length;
   const covVals = model.requirements.map((r) => r.coverage).filter((n) => n > 0);
   const cov = covVals.length ? Math.round((covVals.reduce((a, b) => a + b, 0) / covVals.length) * 100) : 0;
@@ -552,12 +622,13 @@ export function buildDashboard(model: WorkspaceModel) {
     }
   });
 
-  // KPI tiles — the change inbox iterates the CONFIGURED driver taxonomy
+  // KPI tiles — the timed tile only exists once documents carry a window
   const tiles: DashTile[] = [];
-  if (changeEnt) {
+  if (model.timed.length) {
     tiles.push({
-      key: 'changes', label: `Open ${lower(changeEnt.label)}`, value: String(openChanges.length),
-      sub: model.driverDefs.map((dd) => `${openChanges.filter((c) => c.source === dd.key).length} ${lower(dd.label)}`).join(' · '),
+      key: 'timed', label: 'Pending dependencies', value: String(timed.counts.pending),
+      sub: `${timed.counts.active} active · ${timed.counts.expiring} expiring · ${timed.counts.expired} expired`,
+      valueStyle: timed.atRisk.length ? 'color:var(--reg)' : undefined,
     });
   }
   if (what) {
@@ -572,11 +643,14 @@ export function buildDashboard(model: WorkspaceModel) {
   }
 
   return {
-    openCount: openChanges.length, drifts, cov,
+    drifts, cov,
     showCov: !!what && whatDocs.length > 0,
     tiles,
-    feed: changeEnt ? buildChanges(model, 'all').items.slice(0, 3) : [],
-    changeEntity: changeEnt ? { label: changeEnt.label, lower: lower(changeEnt.label) } : null,
+    // the WHEN card: the windows opening or closing next, at-risk ones first
+    hasTimed: model.timed.length > 0,
+    timedCounts: timed.counts,
+    upcoming: timed.items.filter((i) => i.state !== 'expired').slice(0, 3),
+    atRisk: timed.atRisk,
     newDoc: what ? { kind: what.kind, label: singular(what.label) } : null,
     mapEntity: !!mapEnt,
     health,
@@ -857,7 +931,7 @@ export function reqByName(model: WorkspaceModel, id: string): Requirement | unde
 }
 
 export function firstIn(model: WorkspaceModel, prefix: string): string {
-  const all = [...model.regs, ...model.requirements, ...model.specs, ...model.maps, ...model.changes];
+  const all = [...model.regs, ...model.requirements, ...model.specs, ...model.maps];
   const hit = all.find((x) => x.path && x.path.startsWith(prefix));
   return hit ? hit.path : prefix;
 }

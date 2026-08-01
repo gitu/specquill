@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_ENTITIES, DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES,
-  DEFAULT_STATUSES, idSchemes, rawTaxonomy, workspaceConfig,
+  DEFAULT_STATUSES, DEFAULT_TIMED, idSchemes, rawTaxonomy, workspaceConfig,
 } from './config';
 
 describe('workspaceConfig', () => {
@@ -13,9 +13,10 @@ describe('workspaceConfig', () => {
       expect(cfg.statuses).toEqual(DEFAULT_STATUSES);
       expect(cfg.linkTypes).toEqual(DEFAULT_LINK_TYPES);
       expect(cfg.properties).toEqual(DEFAULT_PROPERTIES);
+      expect(cfg.timed).toEqual(DEFAULT_TIMED);
       expect(cfg.hasProperties).toBe(false);
     }
-    expect(BUILTIN_ENTITIES.map((e) => e.group)).toEqual(['why', 'what', 'how', 'how', 'how', 'why', 'when']);
+    expect(BUILTIN_ENTITIES.map((e) => e.group)).toEqual(['why', 'what', 'how', 'how', 'how', 'when']);
   });
 
   it('a present section replaces its default wholesale', () => {

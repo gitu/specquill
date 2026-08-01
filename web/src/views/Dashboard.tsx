@@ -3,7 +3,7 @@ import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
-import { buildDashboard, driverMeta } from '../lib/derive';
+import { buildDashboard, daysLabel, statusMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
 import { ForgeReview } from '../components/ForgeReview';
 import { NewDocDialog } from '../components/NewDocDialog';
@@ -25,7 +25,7 @@ export function Dashboard() {
 
   // needs-your-attention: committed work not yet on the default branch,
   // mapping docs with drifted fields (only when the workspace HAS mappings),
-  // and change records still in triage (ditto)
+  // and timed dependencies at risk of missing their window
   const review: ReviewItem[] = [];
   const pending = merge.data?.files?.length ?? 0;
   if (pending > 0) {
@@ -45,16 +45,14 @@ export function Dashboard() {
       go: '/editor/' + map,
     }));
   }
-  if (d.changeEntity) {
-    // the ATTENTION statuses come from the inbox entity's config, not a
-    // hardcoded 'triage'
-    const attention = new Set(app.model.inbox?.attention || []);
-    app.model.changes.filter((c) => attention.has(c.status)).forEach((c) => review.push({
-      key: 'chg' + c.path, icon: '⚑', fg: 'var(--reg)', bg: 'var(--reg-bg)',
-      title: c.name, sub: `${d.changeEntity!.lower.replace(/s$/, '')} in ${c.status.replace(/_/g, ' ')}`,
-      go: '/changes?sel=' + encodeURIComponent(c.path),
-    }));
-  }
+  // timed dependencies whose window opens (or closes) inside the horizon
+  // while the document or something depending on it is not ready yet
+  d.atRisk.forEach((t) => review.push({
+    key: 'timed' + t.path, icon: '⧗', fg: 'var(--reg)', bg: 'var(--reg-bg)',
+    title: t.title || t.name,
+    sub: `${t.state === 'pending' ? 'starts' : 'ends'} ${daysLabel(t.days)} · ${t.readyCount}/${t.deps.length} dependents ready`,
+    go: '/timed?sel=' + encodeURIComponent(t.path),
+  }));
   const kpiCols = d.tiles.length + (d.showCov ? 1 : 0);
 
   return (
@@ -69,9 +67,9 @@ export function Dashboard() {
             {d.newDoc && (
               <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New {d.newDoc.label}</button>
             )}
-            {d.changeEntity && (
-              <button onClick={() => nav('/changes')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
-                Review {d.changeEntity.lower} · {d.openCount}
+            {d.hasTimed && (
+              <button onClick={() => nav('/timed')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
+                Timed dependencies · {d.timedCounts.pending}
               </button>
             )}
           </div>
@@ -94,35 +92,37 @@ export function Dashboard() {
           )}
         </div>
 
-        <div style={sx(`display:grid;grid-template-columns:${d.changeEntity ? '1.65fr 1fr' : '1fr'};gap:18px;margin-top:20px;align-items:start`)}>
-          {d.changeEntity && (
+        <div style={sx(`display:grid;grid-template-columns:${d.hasTimed ? '1.65fr 1fr' : '1fr'};gap:18px;margin-top:20px;align-items:start`)}>
+          {d.hasTimed && (
           <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
             <div style={sx('display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--border)')}>
-              <span style={sx('font-weight:700;font-size:13.5px')}>{d.changeEntity.label}</span>
-              <span style={sx('font-size:11px;color:var(--text-3)')}>— all sources</span>
+              <span style={sx('font-weight:700;font-size:13.5px')}>Coming up</span>
+              <span style={sx('font-size:11px;color:var(--text-3)')}>— validity windows</span>
               <div style={sx('flex:1')} />
-              <span onClick={() => nav('/changes')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Open inbox →</span>
+              <span onClick={() => nav('/timed')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Open timeline →</span>
             </div>
-            {d.feed.map((c) => {
-              const m = driverMeta(app.model!, c.source);
-              return (
-                <div key={c.path} onClick={() => nav('/changes?sel=' + encodeURIComponent(c.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
-                  <span style={sx(`flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:${m.bg};color:${m.fg}`)}>
-                    {m.icon} {m.label}
-                  </span>
-                  <div style={sx('flex:1;min-width:0')}>
-                    <div style={sx('display:flex;align-items:baseline;gap:8px')}>
-                      <span style={sx('font-weight:600;font-size:13px')}>{c.title}</span>
-                      <div style={sx('flex:1')} />
-                      <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{c.ago}</span>
-                    </div>
-                    <div style={sx('font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.5')}>
-                      <span style={sx('color:var(--ai);font-weight:600')}>✦</span> {c.summary}
-                    </div>
+            {d.upcoming.map((t) => (
+              <div key={t.path} onClick={() => nav('/timed?sel=' + encodeURIComponent(t.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
+                <span style={sx('flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;' +
+                  (t.atRisk ? 'background:var(--reg-bg);color:var(--reg)' : 'background:var(--surface-2);color:var(--text-2)'))}>
+                  {t.state === 'pending' ? 'starts' : t.state === 'expiring' ? 'ends' : 'active'} {daysLabel(t.days)}
+                </span>
+                <div style={sx('flex:1;min-width:0')}>
+                  <div style={sx('display:flex;align-items:baseline;gap:8px')}>
+                    <span style={sx('font-weight:600;font-size:13px')}>{t.title || t.name}</span>
+                    <div style={sx('flex:1')} />
+                    <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{t.governing}</span>
+                  </div>
+                  <div style={sx('font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.5')}>
+                    {statusMeta(t.status).label || 'no status'}
+                    {t.deps.length ? ` · ${t.readyCount}/${t.deps.length} dependents ready` : ' · no dependents'}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ))}
+            {d.upcoming.length === 0 && (
+              <div style={sx('padding:14px 16px;font-size:12px;color:var(--text-3)')}>no open windows — everything on the timeline has expired</div>
+            )}
           </div>
           )}
 

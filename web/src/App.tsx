@@ -18,7 +18,7 @@ function Shell() {
   const { pathname } = useLocation();
   const narrow = useNarrow();
   const view = appPath(pathname);
-  const showTree = view.startsWith('/editor') || view.startsWith('/diff');
+  const showTree = view.startsWith('/editor');
   const [changesOpen, setChangesOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   useEffect(() => {
