@@ -27,6 +27,10 @@ async function resetFindings(request: APIRequestContext) {
       headers: H, data: { reopen: true },
     });
   }
+  // a previous run's report is a worktree save on ws — drop it too
+  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+    headers: H, data: { paths: ['reports/source-alignment.md'] },
+  });
 }
 
 test('scoped drift run verifies findings, files a work item and backlinks the doc', async ({ page, request }) => {
@@ -69,9 +73,24 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   expect(file.content).toContain('work-items:');
   expect(file.content).toContain(filed!.workItemUrl);
 
-  // self-heal: drop the uncommitted backlink save so re-runs start clean
+  // the run maintained its git-native report on the workspace branch (main
+  // is protected) and the card links to it. Findings can be visible (and
+  // fileable) while the run is still going — await completion before
+  // reading the report file.
+  await expect.poll(async () => {
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as { run?: { status: string } };
+    return d.run?.status;
+  }, { timeout: 30_000 }).not.toBe('running');
+  await expect(page.getByText('reports/source-alignment.md')).toBeVisible();
+  const report = (await (await request.get(
+    `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(report.content).toContain('# Source alignment report');
+  expect(report.content).toContain('## Run activity');
+  expect(report.content).toContain('timestamp precision drifted');
+
+  // self-heal: drop the uncommitted backlink + report saves
   await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
-    headers: H, data: { paths: [filed!.docPath] },
+    headers: H, data: { paths: [filed!.docPath, 'reports/source-alignment.md'] },
   });
 });
 
@@ -87,10 +106,13 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
   await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
 
   // re-run the same scope: the fingerprint is anchor-based, so the identical
-  // finding stays dismissed instead of resurrecting
+  // finding stays dismissed instead of resurrecting. Completion is awaited
+  // via the API — the mock finishes runs faster than the UI poll interval.
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await expect(page.getByText(/checking \d+\/\d+ docs/)).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/checking \d+\/\d+ docs/)).toBeHidden({ timeout: 30_000 });
+  await expect.poll(async () => {
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as { run?: { status: string } };
+    return d.run?.status;
+  }, { timeout: 30_000 }).toBe('ok');
   await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
   await expect(page.getByText(/1 dismissed/)).toBeVisible();
 });

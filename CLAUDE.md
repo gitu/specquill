@@ -125,7 +125,17 @@ from the code.
   suggestions" card) AI-proposes missing typed links per the configured
   link_types (tool-loop over the workspace, validated server-side: known
   field, both docs exist, not already linked); apply appends to the
-  from-doc's frontmatter as a worktree save. Findings are SQLite rows keyed by an ANCHOR-based
+  from-doc's frontmatter as a worktree save. **Live feedback + git-native
+  report**: every run narrates per-unit activity (`run.activity` in
+  GET /drift, shown in the card while running) and continuously rewrites
+  `reports/source-alignment.md` IN the repo (run summary + findings table +
+  activity log; on the caller's ws branch when the run branch is protected;
+  the report never audits itself). Because `CREATE TABLE IF NOT EXISTS`
+  never adds columns, `store.Open` drops drift tables whose shape is stale
+  (`dropStaleDriftTables` — safe, they hold derived state only). E2e gotcha:
+  findings from reopened state are visible/fileable while a run is still
+  going — await run completion via the API before asserting on the report
+  file. Findings are SQLite rows keyed by an ANCHOR-based
   fingerprint (docPath|source|kind|anchor — model titles are display-only, so
   dismissals stick across reruns) and evidence quotes are string-verified
   against the source snapshot (unverifiable findings are silently dropped,

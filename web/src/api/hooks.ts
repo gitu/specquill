@@ -182,6 +182,9 @@ export interface DriftRun {
   id: number; mode: DriftMode; status: 'running' | 'ok' | 'error' | 'cancelled'; error: string;
   scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
   headSha: string; startedAt: number; finishedAt: number;
+  activity: string[];             // live per-unit narration of the run
+  reportPath: string;             // git-native run report doc ('' = none)
+  reportBranch: string;
 }
 export interface DriftTarget { name: string; kind: string; project: string }
 export interface DriftResp {

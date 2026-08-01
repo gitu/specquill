@@ -20,6 +20,9 @@ type DriftRun struct {
 	DocsDone          int
 	DroppedUnverified int
 	HeadSHA           string
+	ActivityJSON      string // per-unit progress lines, live feedback + report material
+	ReportPath        string // in-repo report doc this run maintains ('' = none)
+	ReportBranch      string
 	StartedAt         int64
 	FinishedAt        int64
 }
@@ -54,19 +57,22 @@ func (s *Store) CreateDriftRun(run DriftRun) (int64, error) {
 		run.Mode = "drift"
 	}
 	res, err := s.exec(`INSERT INTO drift_runs
-		(repo_key, branch, mode, status, scope_json, docs_total, head_sha, started_at)
-		VALUES (?, ?, ?, 'running', ?, ?, ?, ?)`,
-		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA, time.Now().Unix())
+		(repo_key, branch, mode, status, scope_json, docs_total, head_sha,
+		 report_path, report_branch, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
+		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA,
+		run.ReportPath, run.ReportBranch, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// UpdateDriftRunProgress bumps the per-doc counters of a running drift run.
-func (s *Store) UpdateDriftRunProgress(id int64, docsDone, dropped int) error {
-	_, err := s.exec(`UPDATE drift_runs SET docs_done = ?, dropped_unverified = ? WHERE id = ?`,
-		docsDone, dropped, id)
+// UpdateDriftRunProgress bumps the per-unit counters and the live activity
+// feed of a running drift run.
+func (s *Store) UpdateDriftRunProgress(id int64, docsDone, dropped int, activityJSON string) error {
+	_, err := s.exec(`UPDATE drift_runs SET docs_done = ?, dropped_unverified = ?, activity_json = ? WHERE id = ?`,
+		docsDone, dropped, activityJSON, id)
 	return err
 }
 
@@ -81,11 +87,13 @@ func (s *Store) FinishDriftRun(id int64, status, errMsg string) error {
 func (s *Store) LatestDriftRun(repoKey, branch string) (*DriftRun, error) {
 	r := &DriftRun{}
 	err := s.queryRow(`SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
-			docs_done, dropped_unverified, head_sha, started_at, finished_at
+			docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
+			started_at, finished_at
 		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT 1`,
 		repoKey, branch).
 		Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON, &r.DocsTotal,
-			&r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.StartedAt, &r.FinishedAt)
+			&r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON, &r.ReportPath,
+			&r.ReportBranch, &r.StartedAt, &r.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

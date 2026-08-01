@@ -104,6 +104,11 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
           <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
             <div style={sx(`width:${data.run!.docsTotal ? Math.round((100 * data.run!.docsDone) / data.run!.docsTotal) : 0}%;height:100%;background:var(--ai)`)} />
           </div>
+          {(data.run!.activity?.length ?? 0) > 0 && (
+            <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);margin-top:8px;line-height:1.6")}>
+              {data.run!.activity.slice(-3).map((line, i) => <div key={i} style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{line}</div>)}
+            </div>
+          )}
         </div>
       ) : (
         <div style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
@@ -142,6 +147,14 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
       )}
       {data.run?.status === 'error' && data.run.error && !err && (
         <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{data.run.error}</div>
+      )}
+
+      {data.run && data.run.reportPath !== '' && (
+        <div onClick={() => navigate(projectPath(repo, '/editor/' + data.run!.reportPath, data.run!.reportBranch || branch))}
+          style={sx("display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);cursor:pointer")}>
+          ⎙ {data.run.reportPath}
+          <span style={sx('color:var(--text-3)')}>— {running ? 'updating live' : 'run report in the repo'}{data.run.reportBranch && data.run.reportBranch !== branch ? ` on ${data.run.reportBranch}` : ''}</span>
+        </div>
       )}
 
       {findings.map((f) => {

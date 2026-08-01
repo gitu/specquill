@@ -32,6 +32,12 @@ import (
 	"specquill/server/internal/tracker"
 )
 
+// driftReportPath is the git-native run report: a markdown document the
+// worker rewrites as the run progresses, so the state of the last alignment
+// run lives IN the specs repository (committed like any doc) instead of only
+// in the server's database. Never part of a run's own scope.
+const driftReportPath = "reports/source-alignment.md"
+
 // driftRegistry tracks the in-flight run per repo+branch: one at a time, and
 // the cancel endpoint needs a handle on the worker's context.
 type driftRegistry struct {
@@ -177,7 +183,8 @@ func resolveDriftScope(files map[string]string, requested, configured []string) 
 	}
 	candidate := func(p string) bool {
 		return strings.HasSuffix(p, ".md") && !strings.HasPrefix(p, ".") &&
-			!strings.HasPrefix(p, "uploads/") && !okf.Reserved(base(p))
+			!strings.HasPrefix(p, "uploads/") && !okf.Reserved(base(p)) &&
+			p != driftReportPath // the run report never audits itself
 	}
 	seen := map[string]bool{}
 	var docs []string
@@ -263,12 +270,14 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 }
 
 func driftRunWire(run *store.DriftRun) map[string]any {
-	var scope []string
+	var scope, activity []string
 	_ = json.Unmarshal([]byte(run.ScopeJSON), &scope)
+	_ = json.Unmarshal([]byte(run.ActivityJSON), &activity)
 	return map[string]any{
 		"id": run.ID, "mode": run.Mode, "status": run.Status, "error": run.Error, "scope": scope,
 		"docsTotal": run.DocsTotal, "docsDone": run.DocsDone,
 		"droppedUnverified": run.DroppedUnverified, "headSha": run.HeadSHA,
+		"activity": activity, "reportPath": run.ReportPath, "reportBranch": run.ReportBranch,
 		"startedAt": run.StartedAt, "finishedAt": run.FinishedAt,
 	}
 }
@@ -351,11 +360,28 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusConflict, "a drift run is already in progress for this branch")
 		return
 	}
+	// the in-repo report is written to the run branch, or the caller's
+	// workspace branch when that one is protected. Best-effort: a run whose
+	// report cannot land anywhere still runs (findings stay in the store).
+	reportBranch := branch
+	if repo.Repo.Cfg.IsProtected(branch) {
+		if ws, err := s.claimWorkspace(r, repo); err == nil {
+			reportBranch = ws
+		} else {
+			log.Printf("drift [%s@%s]: no report branch: %v", repo.ID, branch, err)
+			reportBranch = ""
+		}
+	}
+	reportPath := driftReportPath
+	if reportBranch == "" {
+		reportPath = ""
+	}
 	scopeJSON, _ := json.Marshal(units)
 	headSHA, _ := repo.Repo.Head(branch)
 	runID, err := s.store.CreateDriftRun(store.DriftRun{
 		RepoKey: repo.Key(), Branch: branch, Mode: body.Mode, ScopeJSON: string(scopeJSON),
 		DocsTotal: len(units), HeadSHA: headSHA,
+		ReportPath: reportPath, ReportBranch: reportBranch,
 	})
 	if err != nil {
 		s.drift.release(key)
@@ -441,7 +467,17 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 
 	dropped := 0
 	var docErrs []string
+	var activity []string
 	status := "ok"
+	label := func(unit string) string {
+		if mode == "gaps" {
+			return "~" + unit
+		}
+		return unit
+	}
+	note := func(line string) {
+		activity = append(activity, time.Now().Format("15:04:05")+" "+line)
+	}
 	for i, unit := range units {
 		if ctx.Err() != nil {
 			status = "cancelled"
@@ -463,25 +499,41 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			}
 			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, unit, err)
 			docErrs = append(docErrs, unit+": "+err.Error())
-			continue
-		}
-		keep := make([]string, 0, len(findings))
-		for _, f := range findings {
-			keep = append(keep, f.Fingerprint)
-			if err := s.store.UpsertDriftFinding(f); err != nil {
-				log.Printf("drift [%s@%s]: persist %s: %v", repo.ID, branch, f.Fingerprint, err)
+			note("✗ " + label(unit) + " — " + err.Error())
+		} else {
+			keep := make([]string, 0, len(findings))
+			for _, f := range findings {
+				keep = append(keep, f.Fingerprint)
+				if err := s.store.UpsertDriftFinding(f); err != nil {
+					log.Printf("drift [%s@%s]: persist %s: %v", repo.ID, branch, f.Fingerprint, err)
+				}
+			}
+			// scope-aware reconciliation: only THIS unit's stale findings resolve
+			if mode == "gaps" {
+				err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep)
+			} else {
+				err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep)
+			}
+			if err != nil {
+				log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, unit, err)
+			}
+			word := "finding"
+			if mode == "gaps" {
+				word = "gap"
+			}
+			if n := len(findings); n == 0 {
+				note("✓ " + label(unit) + " — clean")
+			} else {
+				note(fmt.Sprintf("✓ %s — %d %s%s", label(unit), n, word, plural(n)))
+			}
+			if droppedDoc > 0 {
+				note(fmt.Sprintf("  %d unverified finding%s dropped", droppedDoc, plural(droppedDoc)))
 			}
 		}
-		// scope-aware reconciliation: only THIS unit's stale findings resolve
-		if mode == "gaps" {
-			err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep)
-		} else {
-			err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep)
-		}
-		if err != nil {
-			log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, unit, err)
-		}
-		_ = s.store.UpdateDriftRunProgress(runID, i+1, dropped)
+		actJSON, _ := json.Marshal(activity)
+		_ = s.store.UpdateDriftRunProgress(runID, i+1, dropped, string(actJSON))
+		// the in-repo report follows along — every completed unit updates it
+		s.writeDriftReport(runID, repo, branch)
 		s.publish("drift", repo.Key(), branch)
 	}
 	errMsg := ""
@@ -497,7 +549,130 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	if err := s.store.FinishDriftRun(runID, status, errMsg); err != nil {
 		log.Printf("drift [%s@%s]: finish run: %v", repo.ID, branch, err)
 	}
+	if rb := s.writeDriftReport(runID, repo, branch); rb != "" {
+		s.publish("save", repo.Key(), rb)
+	}
 	s.publish("drift", repo.Key(), branch)
+}
+
+// writeDriftReport regenerates the in-repo run report from the current store
+// state and saves it on the run's report branch as an uncommitted draft.
+// Best-effort: report trouble never disturbs the run. Returns the branch
+// written to ("" when the run has no report target).
+func (s *Server) writeDriftReport(runID int64, repo *project.Project, branch string) string {
+	run, err := s.store.LatestDriftRun(repo.Key(), branch)
+	if err != nil || run.ID != runID || run.ReportBranch == "" {
+		return ""
+	}
+	findings, err := s.store.DriftFindings(repo.Key(), branch)
+	if err != nil {
+		return ""
+	}
+	content := driftReportMarkdown(run, findings)
+	_, sha, _ := repo.File(run.ReportBranch, run.ReportPath)
+	if _, err := repo.SaveFile(run.ReportBranch, run.ReportPath, content, sha); err != nil {
+		log.Printf("drift [%s@%s]: report: %v", repo.ID, branch, err)
+		return ""
+	}
+	return run.ReportBranch
+}
+
+// driftReportMarkdown renders the report document: run summary, the live
+// findings, and the activity log. Regenerated wholesale on every update —
+// git history (the user commits it with their work) is the archive.
+func driftReportMarkdown(run *store.DriftRun, findings []store.DriftFinding) string {
+	var scope, activity []string
+	_ = json.Unmarshal([]byte(run.ScopeJSON), &scope)
+	_ = json.Unmarshal([]byte(run.ActivityJSON), &activity)
+
+	var b strings.Builder
+	b.WriteString("---\ntitle: Source alignment report\ntype: report\ngenerated_by: specquill drift engine\nupdated: " +
+		time.Now().Format("2006-01-02") + "\n---\n\n")
+	b.WriteString("# Source alignment report\n\n")
+	b.WriteString("_Maintained automatically by the drift engine — updated live during every run. " +
+		"Commit it with your work; git history is the archive._\n\n")
+
+	mode := "drift check (documents verified against the reference sources)"
+	unitNoun := "documents"
+	if run.Mode == "gaps" {
+		mode = "gap analysis (reference sources swept for uncovered capabilities)"
+		unitNoun = "sources"
+	}
+	status := run.Status
+	if status == "running" {
+		status = fmt.Sprintf("running — %d/%d %s checked", run.DocsDone, run.DocsTotal, unitNoun)
+	}
+	b.WriteString("## Last run\n\n")
+	fmt.Fprintf(&b, "- Mode: %s\n", mode)
+	fmt.Fprintf(&b, "- Branch: `%s`", run.Branch)
+	if run.HeadSHA != "" {
+		fmt.Fprintf(&b, " @ `%.10s`", run.HeadSHA)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "- Started: %s\n", time.Unix(run.StartedAt, 0).Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "- Status: %s\n", status)
+	fmt.Fprintf(&b, "- Scope: %d %s\n", len(scope), unitNoun)
+	if run.DroppedUnverified > 0 {
+		fmt.Fprintf(&b, "- Dropped: %d finding(s) whose evidence did not verify\n", run.DroppedUnverified)
+	}
+	if run.Error != "" {
+		fmt.Fprintf(&b, "- Errors: %s\n", run.Error)
+	}
+
+	open, dismissed := []store.DriftFinding{}, 0
+	for _, f := range findings {
+		if f.Status == "dismissed" {
+			dismissed++
+			continue
+		}
+		open = append(open, f)
+	}
+	sort.SliceStable(open, func(i, j int) bool {
+		rank := map[string]int{"high": 0, "medium": 1, "low": 2}
+		return rank[open[i].Severity] < rank[open[j].Severity]
+	})
+	fmt.Fprintf(&b, "\n## Findings (%d open", len(open))
+	if dismissed > 0 {
+		fmt.Fprintf(&b, ", %d dismissed", dismissed)
+	}
+	b.WriteString(")\n\n")
+	if len(open) == 0 {
+		b.WriteString("Nothing open — the workspace and its reference sources agree.\n")
+	} else {
+		b.WriteString("| Severity | Kind | Where | Finding | Status |\n|---|---|---|---|---|\n")
+		for _, f := range open {
+			where := f.DocPath
+			if f.Anchor != "" && f.DocPath != "" {
+				where += " · " + f.Anchor
+			}
+			if f.DocPath == "" { // coverage gap: anchored on the source
+				where = "~" + f.Source + "/" + f.Anchor
+				if f.DraftPath != "" {
+					where += " → " + f.DraftPath
+				} else if f.SuggestedPath != "" {
+					where += " → (suggested) " + f.SuggestedPath
+				}
+			} else {
+				where += " vs ~" + f.Source
+			}
+			st := f.Status
+			if f.Status == "filed" && f.WorkItemURL != "" {
+				st = "filed: " + f.WorkItemURL
+			}
+			cell := func(v string) string { return strings.ReplaceAll(v, "|", "\\|") }
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
+				f.Severity, f.Kind, cell(where), cell(f.Title), cell(st))
+		}
+	}
+
+	if len(activity) > 0 {
+		b.WriteString("\n## Run activity\n\n```\n")
+		for _, line := range activity {
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("```\n")
+	}
+	return b.String()
 }
 
 // driftCheckDoc runs one document through the audit loop and returns its

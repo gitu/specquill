@@ -272,6 +272,25 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	if run["droppedUnverified"].(float64) != 1 {
 		t.Fatalf("hallucinated evidence must be dropped: %v", run)
 	}
+	// live feedback: the activity feed narrates each checked unit
+	activity, _ := run["activity"].([]any)
+	if len(activity) == 0 || !strings.Contains(activity[0].(string), "specs/txn.md") {
+		t.Fatalf("activity feed missing: %v", activity)
+	}
+	// the git-native report landed in the repo (main is unprotected here)
+	if run["reportPath"] != "reports/source-alignment.md" || run["reportBranch"] != "main" {
+		t.Fatalf("report target wrong: %v", run)
+	}
+	code, report := doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/source-alignment.md?ref=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("report not written: %d", code)
+	}
+	rep := report["content"].(string)
+	for _, want := range []string{"# Source alignment report", "first title", "## Run activity", "1 finding(s) whose evidence did not verify"} {
+		if !strings.Contains(rep, want) {
+			t.Fatalf("report missing %q:\n%s", want, rep)
+		}
+	}
 	list := drift["findings"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("want 1 verified finding, got %v", list)

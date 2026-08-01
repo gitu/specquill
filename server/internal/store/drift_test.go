@@ -8,7 +8,7 @@ func TestDriftRunLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDriftRunProgress(id, 1, 2); err != nil {
+	if err := s.UpdateDriftRunProgress(id, 1, 2, `["12:00:00 ✓ a.md — clean"]`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishDriftRun(id, "ok", ""); err != nil {
@@ -20,6 +20,9 @@ func TestDriftRunLifecycle(t *testing.T) {
 	}
 	if run.Status != "ok" || run.DocsDone != 1 || run.DroppedUnverified != 2 || run.FinishedAt == 0 {
 		t.Fatalf("unexpected run: %+v", run)
+	}
+	if run.ActivityJSON != `["12:00:00 ✓ a.md — clean"]` {
+		t.Fatalf("activity not persisted: %q", run.ActivityJSON)
 	}
 	if _, err := s.LatestDriftRun("r", "other"); err != ErrNotFound {
 		t.Fatalf("want ErrNotFound, got %v", err)

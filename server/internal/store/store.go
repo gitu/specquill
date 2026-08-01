@@ -66,11 +66,60 @@ func Open(path string) (*Store, error) {
 	// every store method drains and closes before returning.
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(0)
+	// drift tables hold DERIVED state only (a re-run rebuilds them), so a
+	// shape mismatch from an older build is resolved by dropping them —
+	// CREATE TABLE IF NOT EXISTS never adds columns to an existing table.
+	if err := dropStaleDriftTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// dropStaleDriftTables removes drift tables whose columns predate the current
+// schema, letting the subsequent schema application recreate them fresh.
+func dropStaleDriftTables(db *sql.DB) error {
+	stale := func(table, sentinel string) (bool, error) {
+		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		exists, found := false, false
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, pk int
+			var dflt any
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return false, err
+			}
+			exists = true
+			if name == sentinel {
+				found = true
+			}
+		}
+		return exists && !found, rows.Err()
+	}
+	for table, sentinel := range map[string]string{
+		"drift_runs":     "report_path",
+		"drift_findings": "draft_path",
+	} {
+		isStale, err := stale(table, sentinel)
+		if err != nil {
+			return err
+		}
+		if isStale {
+			if _, err := db.Exec("DROP TABLE " + table); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
