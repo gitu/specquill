@@ -19,13 +19,20 @@ const q = (b: string) => encodeURIComponent(b);
 const rows = (page: import('@playwright/test').Page, kind?: string) =>
   page.locator(kind ? `[data-drift-finding="${kind}"]` : '[data-drift-finding]');
 
-// findings appear per document while the run is still going — wait for the
-// run to finish before counting them
-async function runFinished(request: APIRequestContext, branch: string) {
+// the id of the latest run, captured BEFORE starting a new one
+async function runId(request: APIRequestContext, branch: string) {
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { run?: { id: number } };
+  return d.run?.id ?? 0;
+}
+
+// findings appear per document while a run is going, and a PREVIOUS run may
+// still be the latest one — wait for a run newer than `after` to finish
+async function runFinished(request: APIRequestContext, branch: string, after = 0) {
   await expect.poll(async () => {
-    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { run?: { status: string } };
-    return d.run?.status;
-  }, { timeout: 30_000 }).not.toBe('running');
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { run?: { id: number; status: string } };
+    if (!d.run || d.run.id <= after) return 'pending';
+    return d.run.status;
+  }, { timeout: 30_000 }).toMatch(/^(ok|error|cancelled)$/);
 }
 
 // the standing report is the PROJECT's (drift.report:) — ask, never assume
@@ -61,7 +68,8 @@ async function resetFindings(request: APIRequestContext) {
   // since a pointer cleared without its file would otherwise 409 the next
   // draft/remedy ("already exists")
   for (const p of ['requirements/REQ-gdpr-retention.md', 'work-items/WI-timestamp-precision.md',
-    'changes/2026-08-timestamp-precision.md', await standingReport(request, branch)]) {
+    'changes/2026-08-timestamp-precision.md', 'reports/extracted-regulations.md',
+    await standingReport(request, branch)]) {
     await request.delete(`/api/repos/${REPO}/files/${p}?branch=${q(branch)}`, { headers: H });
   }
   // a previous run's report (and any remedy link written into a doc) are
@@ -142,8 +150,9 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
   const ws = { branch: await wsBranch(request) };
   await page.goto(`/p/${REPO}/alignment`);
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const prev = await runId(request, ws.branch);
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await runFinished(request, ws.branch);
+  await runFinished(request, ws.branch, prev);
   await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
   const before = await rows(page).count();
   expect(before).toBeGreaterThan(1);
@@ -154,8 +163,9 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
   // re-run the same scope: the fingerprint is anchor-based, so the identical
   // finding stays dismissed instead of resurrecting. Completion is awaited
   // via the API — the mock finishes runs faster than the UI poll interval.
+  const prev2 = await runId(request, ws.branch);
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await runFinished(request, ws.branch);
+  await runFinished(request, ws.branch, prev2);
   await expect(rows(page)).toHaveCount(before - 1);
   await expect(page.getByText(/1 dismissed/)).toBeVisible();
 });
@@ -254,8 +264,9 @@ test('the run narrates its work and proposes new requirements', async ({ page, r
   const ws = { branch: await wsBranch(request) };
   await page.goto(`/p/${REPO}/alignment`);
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const prev = await runId(request, ws.branch);
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await runFinished(request, ws.branch);
+  await runFinished(request, ws.branch, prev);
 
   // the activity feed shows what the run actually did — including the tool
   // calls the model made against the reference source
@@ -280,4 +291,50 @@ test('the run narrates its work and proposes new requirements', async ({ page, r
   await expect(row.getByText(/suggests requirements\/REQ-amendment-tracking\.md/)).toBeVisible();
   // and such a finding is draftable, exactly like a coverage gap
   await expect(row.getByRole('button', { name: 'Draft requirement' })).toBeVisible();
+});
+
+test('extract analyzes the app into a persisted requirement inventory', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
+
+  await page.getByText('Extract', { exact: true }).click();
+  await expect(page.getByText(/analyzes 1 reference source/)).toBeVisible();
+  const prev = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Analyze app' }).click();
+  await runFinished(request, ws.branch, prev);
+
+  // the inventory is a real document in the repo, grouped by capability,
+  // with verbatim evidence and coverage mapping
+  const doc = (await (await request.get(
+    `/api/repos/${REPO}/files/reports/extracted-regulations.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(doc.content).toContain('type: extraction');
+  expect(doc.content).toContain('<!-- specquill:extraction:begin');
+  expect(doc.content).toContain('## Transaction reporting');
+  expect(doc.content).toContain('SHALL be captured to microsecond precision');
+  expect(doc.content).toContain('requirements/REQ-042.md');   // covered
+  expect(doc.content).toContain('— *not covered*');           // and not
+  expect(doc.content).not.toContain('Hallucinated');          // evidence verified
+
+  // the card links it, and the run says what it did
+  await expect(page.getByText('reports/extracted-regulations.md').first()).toBeVisible();
+  const feed = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { activity: string[] }; extractions: { source: string; path: string }[];
+  };
+  expect(feed.run.activity.join('\n')).toMatch(/✓ 3 requirements in 2 groups → reports\/extracted-regulations\.md/);
+  expect(feed.extractions).toContainEqual({ source: 'regulations', path: 'reports/extracted-regulations.md' });
+
+  // a following drift run starts FROM the extraction
+  await page.getByText('Drift', { exact: true }).click();
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const prev2 = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, prev2);
+  const after = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { activity: string[] };
+  };
+  expect(after.run.activity.join('\n')).toContain('using extracted requirements as the baseline');
+
+  await request.delete(`/api/repos/${REPO}/files/reports/extracted-regulations.md?branch=${q(ws.branch)}`, { headers: H });
 });

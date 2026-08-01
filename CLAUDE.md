@@ -106,6 +106,19 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
+- **Extraction is the baseline** (mode `extract`): before comparing, the
+  engine ANALYZES each reference source into a grouped requirement
+  inventory — capability groups, atomic RFC-2119 statements, verbatim
+  evidence, and the workspace doc that covers each (or none). It persists
+  as its own living document BESIDE the alignment report
+  (`<report folder>/extracted-<source>.md`, `specquill:extraction:begin/end`
+  markers, `type: extraction`); the run records what it wrote in
+  `drift_runs.extractions_json`, which is what GET /drift lists (the docs
+  may live on the caller's ws branch, not the queried one). Later drift and
+  gap runs feed that block into their prompts as the analyzed baseline
+  (`extractionContext`, narrated as "using extracted requirements as the
+  baseline"). Engine-marked docs — reports AND extractions — never enter a
+  run scope.
 - **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
   `views/AlignmentView.tsx`, rail icon — hosting the full card, last-run
   panel, activity log and the linker; the Overview keeps only the compact

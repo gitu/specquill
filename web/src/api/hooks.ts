@@ -168,7 +168,7 @@ export function useForgeRequest(repo: string | undefined, branch: string | undef
 // ---------------------------------------------------------------- source drift
 
 export interface DriftEvidence { path: string; quote: string }
-export type DriftMode = 'drift' | 'gaps';
+export type DriftMode = 'drift' | 'gaps' | 'extract';
 export interface DriftFinding {
   fingerprint: string; docPath: string; anchor: string; source: string;
   // coverage gaps (docPath '') carry where the missing doc should live and
@@ -194,6 +194,8 @@ export interface DriftResp {
   sources: string[]; // the references a gaps run would sweep
   reports: string[]; // existing report docs a run can continue (incl. the default)
   defaultReport: string; // the project's standing report (its drift.report:)
+  // the analyzed application inventories persisted beside the report
+  extractions: { source: string; path: string }[];
 }
 
 /** Latest source-drift run + live findings; polls while a run is in flight. */

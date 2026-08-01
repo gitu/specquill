@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   activity_json      TEXT NOT NULL DEFAULT '[]',  -- per-unit progress lines (live feedback)
   report_path        TEXT NOT NULL DEFAULT '',    -- the in-repo report doc this run maintains
   report_branch      TEXT NOT NULL DEFAULT '',
+  extractions_json   TEXT NOT NULL DEFAULT '[]',  -- persisted application inventories [{source,path}]
   started_at         BIGINT NOT NULL,
   finished_at        BIGINT NOT NULL DEFAULT 0
 );

@@ -49,7 +49,19 @@ const (
 	builtinDriftReportPath = "reports/source-alignment.md"
 	reportBegin            = "<!-- specquill:alignment:begin — engine-maintained, edit OUTSIDE this block -->"
 	reportEnd              = "<!-- specquill:alignment:end -->"
+	// the extraction inventory: what the application itself requires, grouped
+	// by capability. Persisted BESIDE the alignment report, same living-document
+	// contract — the engine owns only the marked block.
+	extractionBegin = "<!-- specquill:extraction:begin — engine-maintained, edit OUTSIDE this block -->"
+	extractionEnd   = "<!-- specquill:extraction:end -->"
 )
+
+// extractionPath is where a source's extracted requirements live: beside the
+// project's alignment report, named after the source.
+func extractionPath(reportPath, source string) string {
+	folder := reportPath[:strings.LastIndex(reportPath, "/")+1]
+	return folder + "extracted-" + source + ".md"
+}
 
 // toolNote renders one model tool call as an activity line — the run's
 // "what is it actually doing" signal (which sources it read, what it
@@ -245,8 +257,9 @@ func resolveDriftScope(files map[string]string, requested, configured []string) 
 	candidate := func(p string) bool {
 		return strings.HasSuffix(p, ".md") && !strings.HasPrefix(p, ".") &&
 			!strings.HasPrefix(p, "uploads/") && !okf.Reserved(base(p)) &&
-			// alignment reports (any of them) never audit themselves
-			!strings.Contains(files[p], reportBegin)
+			// engine-owned documents (reports, extractions) are never audited
+			!strings.Contains(files[p], reportBegin) &&
+			!strings.Contains(files[p], extractionBegin)
 	}
 	seen := map[string]bool{}
 	var docs []string
@@ -350,8 +363,33 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 		}
 		sort.Strings(list)
 		out["reports"] = list
+		// the analyzed application inventories: what the last run recorded
+		// (it knows the branch it wrote them to — possibly the caller's
+		// workspace) plus any already present on this branch
+		extractions := []map[string]any{}
+		seen := map[string]bool{}
+		if run, err := s.store.LatestDriftRun(repo.Key(), branch); err == nil && run.ExtractionsJSON != "" {
+			var rec []struct{ Source, Path string }
+			if json.Unmarshal([]byte(run.ExtractionsJSON), &rec) == nil {
+				for _, e := range rec {
+					if e.Path != "" && !seen[e.Path] {
+						seen[e.Path] = true
+						extractions = append(extractions, map[string]any{"source": e.Source, "path": e.Path})
+					}
+				}
+			}
+		}
+		for _, name := range names {
+			path := extractionPath(standing, name)
+			if _, ok := files[path]; ok && !seen[path] {
+				seen[path] = true
+				extractions = append(extractions, map[string]any{"source": name, "path": path})
+			}
+		}
+		out["extractions"] = extractions
 	} else {
 		out["reports"] = []string{driftReportPath(driftCfg)}
+		out["extractions"] = []map[string]any{}
 	}
 	jsonOK(w, out)
 }
@@ -400,8 +438,8 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	if body.Mode == "" {
 		body.Mode = "drift"
 	}
-	if body.Mode != "drift" && body.Mode != "gaps" {
-		jsonError(w, http.StatusBadRequest, "mode must be drift or gaps")
+	if body.Mode != "drift" && body.Mode != "gaps" && body.Mode != "extract" {
+		jsonError(w, http.StatusBadRequest, "mode must be drift, gaps or extract")
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
@@ -429,7 +467,7 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	}
 	// units: the docs to verify (drift) or the sources to sweep (gaps)
 	var units []string
-	if body.Mode == "gaps" {
+	if body.Mode == "gaps" || body.Mode == "extract" {
 		for _, src := range sources {
 			units = append(units, src.Name)
 		}
@@ -496,7 +534,8 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	// the link graph rides along: each doc is audited WITH its linked
 	// documents inlined, so the check sees the chain around it
 	idx := buildLinkIndex(files, linkFieldNames(files))
-	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx, driftCfg.Instructions)
+	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx,
+		driftCfg.Instructions, body.Report)
 	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode})
 }
 
@@ -568,13 +607,14 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 // run continues; only cancellation stops it early.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
 	mode string, repo *project.Project, branch string, units []string, files map[string]string,
-	sources []ai.GroundingSource, idx *linkIndex, instructions string) {
+	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath string) {
 	defer cancel()
 	defer s.drift.release(key)
 
 	dropped := 0
 	var docErrs []string
 	var activity []string
+	var extracted []map[string]string
 	status := "ok"
 	label := func(unit string) string {
 		if mode == "gaps" {
@@ -609,7 +649,10 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		srcNames = append(srcNames, "~"+src.Name)
 	}
 	sort.Strings(srcNames)
-	if mode == "gaps" {
+	if mode == "extract" {
+		note(fmt.Sprintf("▸ analyzing %d application source%s into extracted requirements",
+			len(units), plural(len(units))))
+	} else if mode == "gaps" {
 		note(fmt.Sprintf("▸ gap analysis over %d source%s", len(units), plural(len(units))))
 	} else {
 		note(fmt.Sprintf("▸ drift check of %d document%s against %s",
@@ -628,10 +671,37 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		persist(i)
 		s.publish("drift", repo.Key(), branch)
 		started := time.Now()
-		if mode == "gaps" {
-			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, liveNote(i))
-		} else {
-			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, liveNote(i))
+		switch mode {
+		case "extract":
+			var groups []extractedGroup
+			groups, droppedDoc, err = s.driftCheckExtract(ctx, repo, branch, unit, files, sources, instructions, liveNote(i))
+			if err == nil {
+				reqs := 0
+				for _, g := range groups {
+					reqs += len(g.Requirements)
+				}
+				run, rerr := s.store.LatestDriftRun(repo.Key(), branch)
+				if rerr == nil && run.ReportBranch != "" {
+					path, werr := s.writeExtraction(repo, run.ReportBranch, run.ReportPath, unit, run.HeadSHA, groups)
+					if werr != nil {
+						err = werr
+					} else {
+						note(fmt.Sprintf("  ✓ %d requirement%s in %d group%s → %s",
+							reqs, plural(reqs), len(groups), plural(len(groups)), path))
+						extracted = append(extracted, map[string]string{"source": unit, "path": path})
+						exJSON, _ := json.Marshal(extracted)
+						_ = s.store.SetDriftRunExtractions(runID, string(exJSON))
+						s.publish("save", repo.Key(), run.ReportBranch)
+					}
+				} else {
+					note(fmt.Sprintf("  ✓ %d requirement%s in %d group%s (no report branch — not persisted)",
+						reqs, plural(reqs), len(groups), plural(len(groups))))
+				}
+			}
+		case "gaps":
+			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, reportPath, liveNote(i))
+		default:
+			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, reportPath, liveNote(i))
 		}
 		dropped += droppedDoc
 		if err != nil {
@@ -642,6 +712,11 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, unit, err)
 			docErrs = append(docErrs, unit+": "+err.Error())
 			note("  ✗ " + err.Error())
+		} else if mode == "extract" {
+			if droppedDoc > 0 {
+				note(fmt.Sprintf("    ✗ %d requirement%s dropped — evidence not found in the source",
+					droppedDoc, plural(droppedDoc)))
+			}
 		} else {
 			keep := make([]string, 0, len(findings))
 			for _, f := range findings {
@@ -922,6 +997,15 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 		}
 	}
 
+	if len(run.ExtractionsJSON) > 0 && run.ExtractionsJSON != "[]" {
+		var ex []struct{ Source, Path string }
+		if json.Unmarshal([]byte(run.ExtractionsJSON), &ex) == nil && len(ex) > 0 {
+			b.WriteString("\n## Extracted requirements\n\n")
+			for _, e := range ex {
+				fmt.Fprintf(&b, "- `~%s` → %s\n", e.Source, e.Path)
+			}
+		}
+	}
 	if len(activity) > 0 {
 		b.WriteString("\n## Run activity\n\n```\n")
 		for _, line := range activity {
@@ -942,7 +1026,7 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 // verified findings plus the count dropped by evidence verification. The
 // doc's linked documents ride along as context (idx may be nil).
 func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branch, doc string,
-	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions string,
+	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath string,
 	note func(string)) ([]store.DriftFinding, int, error) {
 	content, ok := files[doc]
 	if !ok {
@@ -966,7 +1050,16 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 	if idx != nil {
 		linked = idx.linkedBlock(files, doc)
 	}
-	msgs := ai.DriftPrompt(doc, content, linked, instructions, names)
+	extracted := ""
+	for _, n := range names { // the analyzed baseline, when the app was extracted
+		if b := extractionContext(files, reportPath, n); b != "" {
+			extracted += "\n## ~" + n + "\n" + b + "\n"
+		}
+	}
+	if extracted != "" {
+		note("    · using extracted requirements as the baseline")
+	}
+	msgs := ai.DriftPrompt(doc, content, linked, extracted, instructions, names)
 
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
@@ -1013,7 +1106,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 // carry no doc_path — reverse engineering (postDriftDraft) creates the
 // missing document from them.
 func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions string,
+	files map[string]string, sources []ai.GroundingSource, instructions, reportPath string,
 	note func(string)) ([]store.DriftFinding, int, error) {
 	var src *ai.GroundingSource
 	for i := range sources {
@@ -1034,7 +1127,11 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 		}
 	}
 	docs := resolveDriftScope(files, nil, nil)
-	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), instructions)
+	extracted := extractionContext(files, reportPath, sourceName)
+	if extracted != "" {
+		note("    · using extracted requirements as the baseline")
+	}
+	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, instructions)
 
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
@@ -1074,6 +1171,195 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 		})
 	}
 	return findings, droppedCount, nil
+}
+
+// ---------------------------------------------------------------- extraction
+
+// extractionContext returns the engine block of the source's persisted
+// extraction — the app's analyzed requirement inventory — so drift and gap
+// runs compare against THAT rather than re-deriving it from raw source text
+// every time. "" when the source has never been extracted.
+func extractionContext(files map[string]string, reportPath, source string) string {
+	content, ok := files[extractionPath(reportPath, source)]
+	if !ok {
+		return ""
+	}
+	start := strings.Index(content, extractionBegin)
+	end := strings.Index(content, extractionEnd)
+	if start < 0 || end <= start {
+		return ""
+	}
+	block := strings.TrimSpace(content[start+len(extractionBegin) : end])
+	if len(block) > 12*1024 {
+		block = block[:12*1024] + "\n… (truncated)"
+	}
+	return block
+}
+
+// extractedRequirement is one atomic requirement the application itself
+// imposes, as read out of a reference source.
+type extractedRequirement struct {
+	Title     string          `json:"title"`
+	Statement string          `json:"statement"`
+	CoveredBy string          `json:"coveredBy"`
+	Evidence  []driftEvidence `json:"evidence"`
+}
+
+// extractedGroup bundles requirements by capability.
+type extractedGroup struct {
+	Name         string                 `json:"name"`
+	Summary      string                 `json:"summary"`
+	Requirements []extractedRequirement `json:"requirements"`
+}
+
+// driftCheckExtract analyzes ONE application source and returns its grouped
+// requirement inventory. Evidence is verified exactly like a finding's:
+// a requirement whose quotes are not in the source is dropped.
+func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, branch, sourceName string,
+	files map[string]string, sources []ai.GroundingSource, instructions string,
+	note func(string)) ([]extractedGroup, int, error) {
+	var src *ai.GroundingSource
+	for i := range sources {
+		if sources[i].Name == sourceName {
+			src = &sources[i]
+			break
+		}
+	}
+	if src == nil {
+		return nil, 0, fmt.Errorf("unknown source")
+	}
+	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
+		files: files, publish: func() {}}
+	var specs []ai.ToolSpec
+	for _, spec := range tb.specs(files) {
+		if spec.Name != "ask_user" {
+			specs = append(specs, spec)
+		}
+	}
+	docs := resolveDriftScope(files, nil, nil)
+	msgs := ai.ExtractPrompt(sourceName, strings.Join(docs, "\n"), instructions)
+
+	var reply strings.Builder
+	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+		func(delta string) error { reply.WriteString(delta); return nil },
+		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
+	if err != nil {
+		return nil, 0, err
+	}
+	var out struct {
+		Groups []extractedGroup `json:"groups"`
+	}
+	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
+		return nil, 0, fmt.Errorf("model reply was not extraction JSON: %w", err)
+	}
+	dropped := 0
+	var groups []extractedGroup
+	for _, g := range out.Groups {
+		kept := make([]extractedRequirement, 0, len(g.Requirements))
+		for _, r := range g.Requirements {
+			if strings.TrimSpace(r.Statement) == "" ||
+				!verifyEvidence(modelFinding{Source: sourceName, Evidence: r.Evidence}, sources) {
+				dropped++
+				continue
+			}
+			// only a real workspace document counts as coverage
+			if r.CoveredBy != "" {
+				if _, ok := files[cleanDocPath(r.CoveredBy)]; !ok {
+					r.CoveredBy = ""
+				} else {
+					r.CoveredBy = cleanDocPath(r.CoveredBy)
+				}
+			}
+			kept = append(kept, r)
+		}
+		if name := strings.TrimSpace(g.Name); name != "" && len(kept) > 0 {
+			groups = append(groups, extractedGroup{Name: name, Summary: strings.TrimSpace(g.Summary), Requirements: kept})
+		}
+	}
+	return groups, dropped, nil
+}
+
+// writeExtraction persists a source's inventory beside the alignment report,
+// preserving whatever the human wrote outside the engine block.
+func (s *Server) writeExtraction(repo *project.Project, reportBranch, reportPath, source, headSHA string,
+	groups []extractedGroup) (string, error) {
+	path := extractionPath(reportPath, source)
+	existing, sha, _ := repo.File(reportBranch, path)
+	content := mergeExtraction(existing, extractionBlock(source, headSHA, groups), source)
+	content, err := mdfm.Touch(content, existing == "", time.Now())
+	if err != nil {
+		return "", err
+	}
+	if _, err := repo.SaveFile(reportBranch, path, content, sha); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// extractionBlock renders the engine-owned section: a summary, then one table
+// per capability group with each requirement, its evidence and the document
+// that covers it (or a gap marker).
+func extractionBlock(source, headSHA string, groups []extractedGroup) string {
+	total, covered := 0, 0
+	for _, g := range groups {
+		for _, r := range g.Requirements {
+			total++
+			if r.CoveredBy != "" {
+				covered++
+			}
+		}
+	}
+	var b strings.Builder
+	b.WriteString("## Summary\n\n")
+	fmt.Fprintf(&b, "- Source: `~%s`", source)
+	if headSHA != "" {
+		fmt.Fprintf(&b, " @ `%.10s`", headSHA)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "- Extracted: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "- %d requirement(s) in %d group(s) — %d covered by a document, %d not\n",
+		total, len(groups), covered, total-covered)
+
+	cell := func(v string) string { return strings.ReplaceAll(strings.ReplaceAll(v, "|", "\\|"), "\n", " ") }
+	for _, g := range groups {
+		fmt.Fprintf(&b, "\n## %s\n\n", g.Name)
+		if g.Summary != "" {
+			b.WriteString(g.Summary + "\n\n")
+		}
+		b.WriteString("| Requirement | Evidence | Covered by |\n|---|---|---|\n")
+		for _, r := range g.Requirements {
+			ev := make([]string, 0, len(r.Evidence))
+			for _, e := range r.Evidence {
+				ev = append(ev, "`"+cell(e.Path)+"`: \u201c"+cell(e.Quote)+"\u201d")
+			}
+			cov := r.CoveredBy
+			if cov == "" {
+				cov = "— *not covered*"
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", cell(r.Statement), strings.Join(ev, "<br>"), cell(cov))
+		}
+	}
+	return b.String()
+}
+
+// mergeExtraction splices the engine block into the extraction document —
+// same living-document contract as the alignment report.
+func mergeExtraction(existing, block, source string) string {
+	wrapped := extractionBegin + "\n\n" + block + "\n" + extractionEnd
+	if existing != "" {
+		start := strings.Index(existing, extractionBegin)
+		end := strings.Index(existing, extractionEnd)
+		if start >= 0 && end > start {
+			return existing[:start] + wrapped + existing[end+len(extractionEnd):]
+		}
+		return strings.TrimRight(existing, "\n") + "\n\n" + wrapped + "\n"
+	}
+	title := "Extracted requirements — " + source
+	return "---\ntitle: " + title + "\ntype: extraction\nsource: " + source +
+		"\ngenerated_by: specquill drift engine\n---\n\n# " + title + "\n\n" +
+		"_What the application itself requires, read out of `~" + source + "` and grouped by " +
+		"capability. The block below is engine-maintained and rewritten on every extraction run; " +
+		"everything outside it is yours._\n\n" + wrapped + "\n"
 }
 
 // ---------------------------------------------------------------- reverse engineering

@@ -142,6 +142,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
           <div style={sx('display:flex;gap:2px;background:var(--surface-2);border-radius:7px;padding:2px;width:fit-content')}>
             <ModeSeg label="Drift" title="verify each document against the reference sources" active={mode === 'drift'} onClick={() => setMode('drift')} />
             <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => setMode('gaps')} />
+            <ModeSeg label="Extract" title="analyze the application sources into a grouped requirement inventory, persisted beside the report" active={mode === 'extract'} onClick={() => setMode('extract')} />
           </div>
           {mode === 'drift' ? (
             <div style={sx('display:flex;flex-wrap:wrap;gap:5px;margin-top:9px')}>
@@ -153,7 +154,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
             </div>
           ) : (
             <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:9px')}>
-              sweeps {sources.length} reference source{sources.length === 1 ? '' : 's'}
+              {mode === 'extract' ? 'analyzes' : 'sweeps'} {sources.length} reference source{sources.length === 1 ? '' : 's'}
               {sources.length > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-3)")}> — {sources.map((s) => '~' + s).join(', ')}</span>}
             </div>
           )}
@@ -175,11 +176,13 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
           </div>
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
-              {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope` : 'reports uncovered capabilities as gaps'}
+              {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope`
+                : mode === 'extract' ? 'writes a grouped requirement inventory per source'
+                  : 'reports uncovered capabilities as gaps'}
             </span>
             <button onClick={start} disabled={run.isPending || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
               style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
-              {mode === 'drift' ? 'Check drift' : 'Find gaps'}
+              {mode === 'drift' ? 'Check drift' : mode === 'extract' ? 'Analyze app' : 'Find gaps'}
             </button>
           </div>
         </div>
@@ -192,6 +195,12 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
         <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{data.run.error}</div>
       )}
 
+      {(data.extractions ?? []).map((e) => (
+        <div key={e.path} onClick={() => navigate(projectPath(repo, '/editor/' + e.path, data.run?.reportBranch || branch))}
+          style={sx("display:flex;align-items:center;gap:6px;padding:6px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);cursor:pointer")}>
+          ⌗ {e.path}<span style={sx('color:var(--text-3)')}>— extracted requirements of ~{e.source}</span>
+        </div>
+      ))}
       {data.run && data.run.reportPath !== '' && (
         <div onClick={() => navigate(projectPath(repo, '/editor/' + data.run!.reportPath, data.run!.reportBranch || branch))}
           style={sx("display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);cursor:pointer")}>

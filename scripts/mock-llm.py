@@ -50,7 +50,53 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'remediation author' in system:
+        if 'requirements extractor' in system:
+            # extraction: a grouped inventory of what the app requires, with
+            # evidence quoted VERBATIM from the demo regulations source
+            reply = json.dumps({'groups': [
+                {
+                    'name': 'Transaction reporting',
+                    'summary': '(mock) Submitting executed trades to the competent authority.',
+                    'requirements': [
+                        {
+                            'title': 'Reporting deadline',
+                            'statement': 'Executed transactions SHALL be reported no later than the '
+                                         'close of the following working day.',
+                            'evidence': [{'path': 'regulations/mifid-ii.md',
+                                          'quote': 'no later than the close of the following working day'}],
+                            'coveredBy': 'requirements/REQ-042.md',
+                        },
+                        {
+                            'title': 'Timestamp precision',
+                            'statement': 'Execution timestamps SHALL be captured to microsecond precision.',
+                            'evidence': [{'path': 'regulations/mifid-ii.md',
+                                          'quote': 'reported to **microsecond** precision'}],
+                            'coveredBy': '',
+                        },
+                        {
+                            'title': 'Hallucinated rule',
+                            'statement': 'This one SHALL be dropped by evidence verification.',
+                            'evidence': [{'path': 'regulations/mifid-ii.md', 'quote': 'NOT IN THE SOURCE'}],
+                            'coveredBy': '',
+                        },
+                    ],
+                },
+                {
+                    'name': 'Data protection',
+                    'summary': '(mock) Retention limits on reported personal data.',
+                    'requirements': [
+                        {
+                            'title': 'Storage limitation',
+                            'statement': 'Report data SHALL be kept no longer than necessary for the '
+                                         'reporting purpose.',
+                            'evidence': [{'path': 'regulations/gdpr.md',
+                                          'quote': 'kept for no longer than is necessary'}],
+                            'coveredBy': '',
+                        },
+                    ],
+                },
+            ]})
+        elif 'remediation author' in system:
             # remedy: draft the change record / work item that tracks the fix.
             # The server adds the typed link and enforces the folder.
             if 'work item document' in system:

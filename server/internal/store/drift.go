@@ -23,6 +23,7 @@ type DriftRun struct {
 	ActivityJSON      string // per-unit progress lines, live feedback + report material
 	ReportPath        string // in-repo report doc this run maintains ('' = none)
 	ReportBranch      string
+	ExtractionsJSON   string // persisted application inventories [{source,path}]
 	StartedAt         int64
 	FinishedAt        int64
 }
@@ -78,6 +79,12 @@ func (s *Store) UpdateDriftRunProgress(id int64, docsDone, dropped int, activity
 	return err
 }
 
+// SetDriftRunExtractions records the application inventories a run persisted.
+func (s *Store) SetDriftRunExtractions(id int64, extractionsJSON string) error {
+	_, err := s.exec(`UPDATE drift_runs SET extractions_json = ? WHERE id = ?`, extractionsJSON, id)
+	return err
+}
+
 // FinishDriftRun records the terminal state of a run.
 func (s *Store) FinishDriftRun(id int64, status, errMsg string) error {
 	_, err := s.exec(`UPDATE drift_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?`,
@@ -90,12 +97,12 @@ func (s *Store) LatestDriftRun(repoKey, branch string) (*DriftRun, error) {
 	r := &DriftRun{}
 	err := s.queryRow(`SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
 			docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
-			started_at, finished_at
+			extractions_json, started_at, finished_at
 		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT 1`,
 		repoKey, branch).
 		Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON, &r.DocsTotal,
 			&r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON, &r.ReportPath,
-			&r.ReportBranch, &r.StartedAt, &r.FinishedAt)
+			&r.ReportBranch, &r.ExtractionsJSON, &r.StartedAt, &r.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

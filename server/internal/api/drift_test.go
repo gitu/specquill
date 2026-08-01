@@ -808,3 +808,81 @@ func TestGapRunAndReverseEngineering(t *testing.T) {
 		t.Fatalf("draft of doc-backed finding must 400, got %d", code)
 	}
 }
+
+func TestExtractAnalyzesTheAppAndPersistsTheInventory(t *testing.T) {
+	extraction := `{"groups":[
+		{"name":"Reporting","summary":"submitting trades",
+		 "requirements":[
+		   {"title":"Precision","statement":"Timestamps SHALL be microsecond precise.",
+		    "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}],
+		    "coveredBy":"specs/txn.md"},
+		   {"title":"Ghost","statement":"Dropped by verification.",
+		    "evidence":[{"path":"rules.md","quote":"NOT IN THE FILE"}],"coveredBy":""},
+		   {"title":"Uncovered","statement":"Reports SHALL name the venue.",
+		    "evidence":[{"path":"rules.md","quote":"RTS 22 requires"}],
+		    "coveredBy":"docs/does-not-exist.md"}
+		 ]},
+		{"name":"Empty group","requirements":[]}
+	]}`
+	h, _, _, _, prompts := testDriftServer(t, []string{extraction, `{"findings": []}`})
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{"mode": "extract"})
+	if code != http.StatusOK || out["mode"] != "extract" {
+		t.Fatalf("extract run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" {
+		t.Fatalf("run = %v", run)
+	}
+	// the hallucinated requirement is dropped, exactly like a finding's evidence
+	if run["droppedUnverified"].(float64) != 1 {
+		t.Fatalf("dropped = %v, want 1", run["droppedUnverified"])
+	}
+	ex, _ := drift["extractions"].([]any)
+	if len(ex) != 1 || ex[0].(map[string]any)["path"] != "reports/extracted-reg.md" {
+		t.Fatalf("extractions = %v", ex)
+	}
+
+	code, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/extracted-reg.md?ref=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("inventory not persisted: %d", code)
+	}
+	doc := file["content"].(string)
+	for _, want := range []string{
+		"type: extraction",                           // a real workspace document
+		"<!-- specquill:extraction:begin",            // living-document contract
+		"2 requirement(s) in 1 group(s) — 1 covered", // grouped + coverage summary
+		"## Reporting",                               // the capability group
+		"Timestamps SHALL be microsecond precise.",   // the requirement
+		"“microsecond timestamps”",                   // its verbatim evidence
+		"specs/txn.md",                               // mapped onto the covering doc
+		"— *not covered*",                            // a bogus coveredBy is dropped
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("inventory missing %q:\n%s", want, doc)
+		}
+	}
+	if strings.Contains(doc, "Empty group") || strings.Contains(doc, "Dropped by verification") {
+		t.Fatalf("empty group / unverified requirement leaked:\n%s", doc)
+	}
+
+	// the inventory is engine-owned: it never becomes an audited document
+	files := map[string]string{"reports/extracted-reg.md": doc, "specs/a.md": "x"}
+	if got := resolveDriftScope(files, nil, nil); fmt.Sprint(got) != "[specs/a.md]" {
+		t.Fatalf("extraction must stay out of run scopes, got %v", got)
+	}
+
+	// …and a later drift run starts FROM it rather than re-deriving it
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"paths": []string{"specs/txn.md"}}); code != http.StatusOK {
+		t.Fatalf("drift run: %d %v", code, out)
+	}
+	waitDrift(t, h, cookie)
+	last := (*prompts)[len(*prompts)-1]
+	if !strings.Contains(last, "What the application requires (extracted earlier") ||
+		!strings.Contains(last, "Timestamps SHALL be microsecond precise.") {
+		t.Fatalf("drift prompt did not carry the extracted baseline:\n%s", last)
+	}
+}
