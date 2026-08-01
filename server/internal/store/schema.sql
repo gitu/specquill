@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS drift_findings (
   draft_path       TEXT NOT NULL DEFAULT '',
   remedy_path      TEXT NOT NULL DEFAULT '',   -- in-repo change/work-item doc created to remedy it
   remedy_kind      TEXT NOT NULL DEFAULT '',   -- change | work_item
+  documents_json   TEXT NOT NULL DEFAULT '[]', -- every document created for it [{kind,path}]
   anchor           TEXT NOT NULL DEFAULT '',
   source           TEXT NOT NULL DEFAULT '',
   kind             TEXT NOT NULL DEFAULT '',

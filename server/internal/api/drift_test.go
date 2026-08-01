@@ -968,3 +968,79 @@ func TestFocusProposalsFilterUnknownSources(t *testing.T) {
 		t.Fatalf("unknown source must be filtered out: %v", a["sources"])
 	}
 }
+
+func TestPlanProposesASetAndCreateWiresItTogether(t *testing.T) {
+	// the plan: one change above two requirements that cite it
+	plan := `{"rationale":"a driver with two requirements",
+		"documents":[
+			{"kind":"change","title":"RTS 22 precision","path":"changes/2026-08-rts22.md",
+			 "purpose":"records the amendment"},
+			{"kind":"requirement","title":"Microsecond timestamps","path":"requirements/REQ-precision.md",
+			 "purpose":"states the precision","linksTo":[0]},
+			{"kind":"requirement","title":"Timestamp validation","path":"REQ-validation.md",
+			 "purpose":"states the validation","linksTo":[0]},
+			{"kind":"unicorn","title":"unknown family","path":"unicorns/x.md"},
+			{"kind":"change","title":"","path":"changes/nameless.md"}
+		]}`
+	doc := func(title string) string {
+		return `{"path":"ignored-by-the-server.md","content":"---\ntitle: ` + title +
+			`\ntype: Doc\nstatus: draft\n---\n\n# ` + title + `\n\nbody\n"}`
+	}
+	h, st, _, _, _ := testDriftServer(t, []string{plan, doc("Change"), doc("Req one"), doc("Req two")})
+	cookie := login(t, h)
+
+	f := store.DriftFinding{RepoKey: "w", Branch: "main", Fingerprint: "fp", RunID: 1,
+		DocPath: "specs/txn.md", Anchor: "REQ-1", Source: "reg", Kind: "outdated-requirement",
+		Severity: "high", Title: "precision drift", EvidenceJSON: `[{"path":"rules.md","quote":"microsecond timestamps"}]`}
+	if err := st.UpsertDriftFinding(f); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp/plan?branch=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("plan: %d %v", code, out)
+	}
+	planned, _ := out["documents"].([]any)
+	if len(planned) != 3 { // unknown family and untitled entry are dropped
+		t.Fatalf("plan should keep 3 documents, got %v", planned)
+	}
+	// the family's folder is authoritative even when the model forgets it
+	third := planned[2].(map[string]any)
+	if third["path"] != "requirements/REQ-validation.md" {
+		t.Fatalf("path not forced into the family folder: %v", third["path"])
+	}
+	// requirements carry `drivers:` UP to the change; the change carries nothing
+	if first := planned[0].(map[string]any); first["field"] != nil && first["field"] != "" {
+		t.Fatalf("a change should not link down: %v", first)
+	}
+	if third["field"] != "drivers" {
+		t.Fatalf("requirement should link with drivers, got %v", third["field"])
+	}
+
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp/create?branch=main",
+		map[string]any{"documents": out["documents"]})
+	if code != http.StatusOK {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	created, _ := out["created"].([]any)
+	if len(created) != 3 {
+		t.Fatalf("want 3 documents created, got %v (failures %v)", created, out["failures"])
+	}
+	// the set is wired: both requirements point at the change
+	for _, p := range []string{"requirements/REQ-precision.md", "requirements/REQ-validation.md"} {
+		_, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/"+p+"?ref=main", nil)
+		content, _ := file["content"].(string)
+		if !strings.Contains(content, "drivers:") || !strings.Contains(content, "changes/2026-08-rts22.md") {
+			t.Fatalf("%s not linked to the change:\n%s", p, content)
+		}
+	}
+	// …and the finding records the whole set, not just one document
+	got, _ := st.DriftFinding("w", "main", "fp")
+	var docs []map[string]string
+	if err := json.Unmarshal([]byte(got.DocumentsJSON), &docs); err != nil || len(docs) != 3 {
+		t.Fatalf("finding should record 3 documents: %s", got.DocumentsJSON)
+	}
+	if got.DraftPath != "requirements/REQ-precision.md" || got.RemedyPath != "changes/2026-08-rts22.md" {
+		t.Fatalf("single-document pointers not kept meaningful: %+v", got)
+	}
+}

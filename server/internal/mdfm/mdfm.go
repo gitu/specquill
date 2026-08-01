@@ -92,6 +92,33 @@ func Touch(content string, isNew bool, now time.Time) (string, error) {
 	return Join(strings.TrimSuffix(b.String(), "\n"), body), nil
 }
 
+// SetScalar sets (or adds) a scalar frontmatter key, preserving key order and
+// comments. Returns the content unchanged when there is no frontmatter block.
+func SetScalar(content, key, value string) (string, error) {
+	fm, body, has := Split(content)
+	if !has {
+		return content, nil
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(fm), &doc); err != nil {
+		return "", fmt.Errorf("frontmatter does not parse as YAML: %w", err)
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return content, nil
+	}
+	setKey(doc.Content[0], key, value, true)
+	var b strings.Builder
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return Join(strings.TrimSuffix(b.String(), "\n"), body), nil
+}
+
 // AppendListItem adds value to the list under key in the frontmatter,
 // creating the key when absent and converting a scalar value into a list.
 // Returns added=false (content unchanged) when the value is already present

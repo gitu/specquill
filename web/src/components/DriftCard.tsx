@@ -6,7 +6,8 @@ import { projectPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import {
   DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
-  FocusArea, useFileFinding, useFocusAreas, useRemedyFinding, useRunDrift, useTree,
+  FocusArea, PlannedDoc, useCreateDocuments, useFileFinding, useFocusAreas, usePlanDocuments,
+  useRemedyFinding, useRunDrift, useTree,
 } from '../api/hooks';
 
 const SEV: Record<string, { label: string; fg: string; bg: string; rank: number }> = {
@@ -240,7 +241,11 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
   const file = useFileFinding(repo, branch);
   const draft = useDraftRequirement(repo, branch);
   const remedy = useRemedyFinding(repo, branch);
+  const plan = usePlanDocuments(repo, branch);
+  const create = useCreateDocuments(repo, branch);
   const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
+  const [plans, setPlans] = useState<Record<string, { rationale: string; documents: PlannedDoc[] }>>({});
+  const [drop, setDrop] = useState<Record<string, boolean>>({}); // planned docs the user unchecked
   const [err, setErr] = useState('');
 
   const data = drift.data;
@@ -265,6 +270,25 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
     remedy.mutate({ fingerprint: f.fingerprint, kind }, {
       onError: (e) => setErr(String((e as Error).message ?? e)),
       onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
+    });
+  };
+  const doPlan = (f: DriftFinding) => {
+    setErr('');
+    plan.mutate(f.fingerprint, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (p) => setPlans((m) => ({ ...m, [f.fingerprint]: p })),
+    });
+  };
+  const doCreate = (f: DriftFinding) => {
+    setErr('');
+    const chosen = (plans[f.fingerprint]?.documents ?? []).filter((d) => !drop[f.fingerprint + d.path]);
+    if (!chosen.length) { setErr('nothing selected to create'); return; }
+    create.mutate({ fingerprint: f.fingerprint, documents: chosen }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (resp) => {
+        setPlans((m) => { const n = { ...m }; delete n[f.fingerprint]; return n; });
+        if (resp.failures.length) setErr(resp.failures.join('; '));
+      },
     });
   };
   const doDraft = (f: DriftFinding) => {
@@ -332,13 +356,26 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                   {draft.isPending ? 'Drafting…' : 'Draft requirement'}
                 </button>
               )}
-              {f.remedyPath ? (
+              {(f.documents?.length ?? 0) > 0 ? (
+                f.documents.map((d) => (
+                  <span key={d.path} onClick={() => nav('/editor/' + d.path)}
+                    title={'open ' + d.path}
+                    style={sx('font-size:11px;font-weight:600;color:var(--data);cursor:pointer;flex:none')}>
+                    ✓ {d.kind.replace('_', ' ')}: {d.path.split('/').pop()}
+                  </span>
+                ))
+              ) : f.remedyPath ? (
                 <span onClick={() => nav('/editor/' + f.remedyPath)}
                   style={sx('font-size:11px;font-weight:600;color:var(--data);cursor:pointer')}>
                   ✓ {f.remedyKind.replace('_', ' ')}: {f.remedyPath.split('/').pop()}
                 </span>
               ) : (
                 <>
+                  <button onClick={() => doPlan(f)} disabled={plan.isPending}
+                    title="Propose which documents to create for this finding — the families this workspace has, linked as its model prescribes"
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                    {plan.isPending ? 'Planning…' : 'Plan documents'}
+                  </button>
                   <button onClick={() => doRemedy(f, 'change')} disabled={remedy.isPending}
                     title="Draft a change record (WHY) in the workspace that drives updating the requirements"
                     style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
@@ -379,6 +416,37 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                 Dismiss
               </button>
             </div>
+
+            {plans[f.fingerprint] && (
+              <div data-drift-plan style={sx('margin-top:8px;padding:9px 11px;border:1px solid var(--ai-line, var(--border));border-radius:8px;background:var(--ai-bg)')}>
+                <div style={sx('font-size:11.5px;color:var(--text-2)')}>{plans[f.fingerprint].rationale}</div>
+                {plans[f.fingerprint].documents.map((d) => {
+                  const off = drop[f.fingerprint + d.path];
+                  return (
+                    <div key={d.path} style={sx('display:flex;align-items:baseline;gap:8px;margin-top:6px;' + (off ? 'opacity:.45' : ''))}>
+                      <input type="checkbox" checked={!off}
+                        onChange={() => setDrop((m) => ({ ...m, [f.fingerprint + d.path]: !off }))}
+                        style={{ flex: 'none', cursor: 'pointer' }} />
+                      <span style={sx('flex:none;padding:1px 7px;border-radius:5px;font-size:10px;font-weight:700;background:var(--surface);color:var(--ai)')}>{d.kind.replace('_', ' ')}</span>
+                      <span style={sx('font-size:11.5px;font-weight:600;flex:none')}>{d.title}</span>
+                      <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>
+                        {d.path}{d.field && d.linkTargets?.length ? ` · ${d.field} → ${d.linkTargets.join(', ')}` : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div style={sx('display:flex;align-items:center;gap:7px;margin-top:8px')}>
+                  <button onClick={() => doCreate(f)} disabled={create.isPending}
+                    style={sx('height:24px;padding:0 11px;border:none;border-radius:6px;background:var(--ai);color:#fff;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer')}>
+                    {create.isPending ? 'Creating…' : `Create ${plans[f.fingerprint].documents.filter((d) => !drop[f.fingerprint + d.path]).length} document(s)`}
+                  </button>
+                  <button onClick={() => setPlans((m) => { const n = { ...m }; delete n[f.fingerprint]; return n; })}
+                    style={sx('height:24px;padding:0 9px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer')}>
+                    discard plan
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

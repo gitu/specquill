@@ -39,6 +39,7 @@ type DriftFinding struct {
 	DraftPath      string // gaps: the reverse-engineered draft, once created
 	RemedyPath     string // the change/work-item doc created to remedy the finding
 	RemedyKind     string // change | work_item
+	DocumentsJSON  string // every document created for this finding [{kind,path}]
 	Anchor         string
 	Source         string
 	Kind           string
@@ -205,11 +206,26 @@ func (s *Store) SetDriftFindingRemedy(repoKey, branch, fingerprint, path, kind s
 	return nil
 }
 
+// SetDriftFindingDocuments records every document created for a finding.
+func (s *Store) SetDriftFindingDocuments(repoKey, branch, fingerprint, documentsJSON string) error {
+	res, err := s.exec(`UPDATE drift_findings SET documents_json = ?, updated_at = ?
+		WHERE repo_key = ? AND branch = ? AND fingerprint = ?`,
+		documentsJSON, time.Now().Unix(), repoKey, branch, fingerprint)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DriftFindings returns the live (unresolved) findings for a repo+branch.
 func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
 	rows, err := s.query(`SELECT repo_key, branch, fingerprint, run_id, doc_path, suggested_path,
-			draft_path, remedy_path, remedy_kind, anchor, source, kind, severity, title, detail,
-			evidence_json, status, work_item_url, work_item_target, created_at, updated_at, resolved_at
+			draft_path, remedy_path, remedy_kind, documents_json, anchor, source, kind, severity,
+			title, detail, evidence_json, status, work_item_url, work_item_target,
+			created_at, updated_at, resolved_at
 		FROM drift_findings
 		WHERE repo_key = ? AND branch = ? AND resolved_at = 0
 		ORDER BY doc_path, anchor, source, kind`, repoKey, branch)
@@ -221,9 +237,10 @@ func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
 	for rows.Next() {
 		var f DriftFinding
 		if err := rows.Scan(&f.RepoKey, &f.Branch, &f.Fingerprint, &f.RunID, &f.DocPath,
-			&f.SuggestedPath, &f.DraftPath, &f.RemedyPath, &f.RemedyKind, &f.Anchor, &f.Source,
-			&f.Kind, &f.Severity, &f.Title, &f.Detail, &f.EvidenceJSON, &f.Status,
-			&f.WorkItemURL, &f.WorkItemTarget, &f.CreatedAt, &f.UpdatedAt, &f.ResolvedAt); err != nil {
+			&f.SuggestedPath, &f.DraftPath, &f.RemedyPath, &f.RemedyKind, &f.DocumentsJSON,
+			&f.Anchor, &f.Source, &f.Kind, &f.Severity, &f.Title, &f.Detail, &f.EvidenceJSON,
+			&f.Status, &f.WorkItemURL, &f.WorkItemTarget, &f.CreatedAt, &f.UpdatedAt,
+			&f.ResolvedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -235,14 +252,15 @@ func (s *Store) DriftFindings(repoKey, branch string) ([]DriftFinding, error) {
 func (s *Store) DriftFinding(repoKey, branch, fingerprint string) (*DriftFinding, error) {
 	f := &DriftFinding{}
 	err := s.queryRow(`SELECT repo_key, branch, fingerprint, run_id, doc_path, suggested_path,
-			draft_path, remedy_path, remedy_kind, anchor, source, kind, severity, title, detail,
-			evidence_json, status, work_item_url, work_item_target, created_at, updated_at, resolved_at
+			draft_path, remedy_path, remedy_kind, documents_json, anchor, source, kind, severity,
+			title, detail, evidence_json, status, work_item_url, work_item_target,
+			created_at, updated_at, resolved_at
 		FROM drift_findings WHERE repo_key = ? AND branch = ? AND fingerprint = ?`,
 		repoKey, branch, fingerprint).
 		Scan(&f.RepoKey, &f.Branch, &f.Fingerprint, &f.RunID, &f.DocPath, &f.SuggestedPath,
-			&f.DraftPath, &f.RemedyPath, &f.RemedyKind, &f.Anchor, &f.Source, &f.Kind, &f.Severity,
-			&f.Title, &f.Detail, &f.EvidenceJSON, &f.Status, &f.WorkItemURL, &f.WorkItemTarget,
-			&f.CreatedAt, &f.UpdatedAt, &f.ResolvedAt)
+			&f.DraftPath, &f.RemedyPath, &f.RemedyKind, &f.DocumentsJSON, &f.Anchor, &f.Source,
+			&f.Kind, &f.Severity, &f.Title, &f.Detail, &f.EvidenceJSON, &f.Status, &f.WorkItemURL,
+			&f.WorkItemTarget, &f.CreatedAt, &f.UpdatedAt, &f.ResolvedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

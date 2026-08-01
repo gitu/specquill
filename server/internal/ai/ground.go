@@ -686,6 +686,61 @@ func LinkerPrompt(docIndex, guidance string) []Message {
 	}
 }
 
+const planSystem = `You are the specquill remediation planner. Given a
+confirmed source-alignment finding, you propose WHICH workspace documents
+should be created to resolve it — and how they link together.
+
+Reply with ONLY a JSON object, no prose:
+
+{
+  "rationale": "The amendment is a product-driven change realized by two requirements.",
+  "documents": [
+    {"kind": "change", "title": "RTS 22 microsecond timestamps",
+     "path": "changes/2026-08-rts22-precision.md",
+     "purpose": "Records the amendment and why the specs must follow."},
+    {"kind": "requirement", "title": "Microsecond execution timestamps",
+     "path": "requirements/REQ-exec-timestamp-precision.md",
+     "purpose": "States the precision the system must capture.", "linksTo": [0]},
+    {"kind": "requirement", "title": "Timestamp validation on ingest",
+     "path": "requirements/REQ-timestamp-validation.md",
+     "purpose": "States what happens when precision is missing.", "linksTo": [0]}
+  ]
+}
+
+Rules:
+- "kind" MUST be one of the workspace's document families listed below, and
+  "path" MUST live in that family's folder, following the naming of the
+  documents already there.
+- Propose the SMALLEST set that resolves the finding — often one document.
+  Propose several only when the finding genuinely carries more than one
+  requirement, or when a driver (a change/regulation) is needed above them.
+- "linksTo" holds indices of OTHER documents in this same list that the
+  document should point at, following the workspace's link types (the lower
+  level points UP). Use "linksToDocument": true instead to point at the
+  document the finding is about. Omit both when nothing applies — the server
+  validates every link and drops the ones the model does not allow.
+- "purpose" is one sentence saying what that document will state; the drafting
+  pass uses it.
+- Order the list so drivers come before the documents that cite them.`
+
+// PlanPrompt asks which documents should be created for a finding, given the
+// workspace's OWN families and link types.
+func PlanPrompt(findingJSON, target, families, linkTypes, docIndex, guidance string) []Message {
+	var b strings.Builder
+	b.WriteString("# Finding to resolve\n```json\n" + findingJSON + "\n```\n")
+	if target != "" {
+		b.WriteString("\n# The document it is about\n" + target + "\n")
+	}
+	b.WriteString("\n# Document families available in this workspace\n" + families + "\n")
+	b.WriteString("\n# Link types (the LOWER level carries the link UP)\n" + linkTypes + "\n")
+	b.WriteString("\n# Existing documents\n" + docIndex + "\n")
+	b.WriteString("\nPropose the documents to create, as JSON.")
+	return []Message{
+		{Role: "system", Content: planSystem + guidance},
+		{Role: "user", Content: b.String()},
+	}
+}
+
 const remedySystem = `You are the specquill remediation author. From a
 confirmed source-alignment finding you draft the workspace document that
 tracks fixing it — a change record (the WHY that drives the requirement

@@ -176,6 +176,7 @@ export interface DriftFinding {
   suggestedPath: string; draftPath: string;
   // the in-repo change/work-item document created to remedy it
   remedyPath: string; remedyKind: string;
+  documents: { kind: string; path: string }[]; // every document created for it
   kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string;
   evidence: DriftEvidence[]; status: 'open' | 'dismissed' | 'filed';
   workItemUrl: string; workItemTarget: string; updatedAt: number;
@@ -219,6 +220,38 @@ export function useRunDrift(repo: string | undefined, branch: string) {
         { method: 'POST', body: JSON.stringify(body) }),
     // prefix key: a run started on a freshly switched branch must refresh too
     onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo] }),
+  });
+}
+
+export interface PlannedDoc {
+  kind: string; title: string; path: string; purpose: string;
+  field?: string; linkTargets?: string[];
+}
+
+/** Propose WHICH documents to create for a finding (read-only). */
+export function usePlanDocuments(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (fingerprint: string) =>
+      api<{ rationale: string; documents: PlannedDoc[] }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/plan?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+  });
+}
+
+/** Draft and write a planned SET of documents, wired together. */
+export function useCreateDocuments(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, documents }: { fingerprint: string; documents: PlannedDoc[] }) =>
+      api<{ created: { kind: string; path: string }[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/create?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ documents }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
   });
 }
 

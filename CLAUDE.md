@@ -159,8 +159,21 @@ from the code.
   the AI drafts the doc from the finding's evidence files, it lands as an
   uncommitted worktree save (ws-branch on protected mains) and
   `draft_path` links finding → doc. Reopening a finding
-  (`dismiss {reopen:true}`) clears stale draft AND remedy pointers — the
-  e2e self-heal depends on that. Every finding also spawns its own
+  (`dismiss {reopen:true}`) clears EVERY pointer to a document the finding
+  produced (draft, remedy, the planned set) — the e2e self-heal depends on
+  that, and a leftover pointer hides the create actions in the UI. A
+  finding can also be PLANNED (`POST .../findings/{fp}/plan` → which
+  documents to create, from the workspace's OWN families and link types;
+  read-only) and the plan APPLIED (`.../create`) as a linked SET — e.g. one
+  change with two requirements carrying `drivers:` up to it. `validatePlan`
+  is the gate: unknown families and untitled entries are dropped, paths are
+  forced into the family's folder, and only links `linkBetween` permits (on
+  the document that may carry them) survive. On create the server also
+  applies the family's `type:` label read from a sibling document
+  (`familyType` — the label is workspace prose, observable but not
+  derivable), so the model drafts content, never placement or
+  classification. Every created document is recorded in
+  `drift_findings.documents_json`. Every finding also spawns its own
   **remedy document** (`POST .../findings/{fp}/remedy {kind:
   change|work_item}`, `ai.RemedyPrompt`): the AI drafts the WHY/WHEN doc
   in the family folder, learning conventions from an EXISTING doc of that

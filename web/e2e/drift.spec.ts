@@ -69,7 +69,8 @@ async function resetFindings(request: APIRequestContext) {
   // draft/remedy ("already exists")
   for (const p of ['requirements/REQ-gdpr-retention.md', 'work-items/WI-timestamp-precision.md',
     'changes/2026-08-timestamp-precision.md', 'reports/extracted-regulations.md',
-    await standingReport(request, branch)]) {
+    'changes/2026-08-rts22-precision.md', 'requirements/REQ-exec-precision.md',
+    'requirements/REQ-timestamp-validation.md', await standingReport(request, branch)]) {
     await request.delete(`/api/repos/${REPO}/files/${p}?branch=${q(branch)}`, { headers: H });
   }
   // a previous run's report (and any remedy link written into a doc) are
@@ -379,4 +380,43 @@ test('gap sweeps can be aimed: suggested areas, a focus and chosen sources', asy
   };
   expect(d.run.scope).toEqual(['regulations']);
   expect(d.run.activity.join('\n')).toContain('focus: Data retention');
+});
+
+test('a finding plans a linked SET of documents from the configured families', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const prev = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, prev);
+
+  // the plan proposes documents of the workspace's OWN families, wired the
+  // way its link types prescribe
+  await page.getByRole('button', { name: 'Plan documents' }).first().click();
+  const plan = page.locator('[data-drift-plan]').first();
+  await expect(plan).toBeVisible({ timeout: 30_000 });
+  await expect(plan.getByText(/change realized by two requirements/)).toBeVisible();
+  await expect(plan.getByText('changes/2026-08-rts22-precision.md').first()).toBeVisible();
+  await expect(plan.getByText(/drivers → changes\/2026-08-rts22-precision\.md/).first()).toBeVisible();
+
+  await plan.getByRole('button', { name: /^Create 3 document/ }).click();
+  await expect(page.getByText(/✓ change: 2026-08-rts22-precision\.md/)).toBeVisible({ timeout: 30_000 });
+
+  // one driver, two requirements — each carrying its family's type and the
+  // typed link up to the change
+  const read = async (p: string) => ((await (await request.get(
+    `/api/repos/${REPO}/files/${p}?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string }).content;
+  expect(await read('changes/2026-08-rts22-precision.md')).toContain('type: Change Record');
+  for (const p of ['requirements/REQ-exec-precision.md', 'requirements/REQ-timestamp-validation.md']) {
+    const doc = await read(p);
+    expect(doc).toContain('type: Requirement');
+    expect(doc).toContain('drivers:');
+    expect(doc).toContain('changes/2026-08-rts22-precision.md');
+  }
+  // the finding records the whole set
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    findings: { documents: { kind: string; path: string }[] }[];
+  };
+  expect(d.findings.some((f) => f.documents?.length === 3)).toBe(true);
 });

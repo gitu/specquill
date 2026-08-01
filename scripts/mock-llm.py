@@ -50,7 +50,23 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'focus adviser' in system:
+        if 'remediation planner' in system:
+            # a driver with two requirements citing it — the set case
+            reply = json.dumps({
+                'rationale': '(mock) the amendment is a change realized by two requirements.',
+                'documents': [
+                    {'kind': 'change', 'title': 'RTS 22 microsecond timestamps',
+                     'path': 'changes/2026-08-rts22-precision.md',
+                     'purpose': 'Records the amendment and why the specs must follow.'},
+                    {'kind': 'requirement', 'title': 'Microsecond execution timestamps',
+                     'path': 'requirements/REQ-exec-precision.md',
+                     'purpose': 'States the precision the system must capture.', 'linksTo': [0]},
+                    {'kind': 'requirement', 'title': 'Timestamp validation on ingest',
+                     'path': 'requirements/REQ-timestamp-validation.md',
+                     'purpose': 'States what happens when precision is missing.', 'linksTo': [0]},
+                ],
+            })
+        elif 'focus adviser' in system:
             # propose where a gap sweep would pay off
             reply = json.dumps({'areas': [
                 {'name': 'Data retention',
@@ -121,8 +137,9 @@ class Handler(BaseHTTPRequestHandler):
                     out.append({'index': i, 'coverage': 'none', 'document': '', 'note': ''})
             reply = json.dumps({'matches': out})
         elif 'remediation author' in system:
-            # remedy: draft the change record / work item that tracks the fix.
-            # The server adds the typed link and enforces the folder.
+            # remedy/create: draft the document of the family being asked for.
+            # The server enforces the folder, the family's `type:` and the
+            # typed links; the mock only supplies plausible content.
             if 'work item document' in system:
                 reply = json.dumps({
                     'path': 'work-items/WI-timestamp-precision.md',
@@ -131,6 +148,15 @@ class Handler(BaseHTTPRequestHandler):
                                 '# Raise execution-timestamp precision\n\n'
                                 '(mock) Emit microsecond execution timestamps end to end.\n\n'
                                 '- [ ] update the OMS transform\n- [ ] re-validate the mapping\n'),
+                })
+            elif 'requirement document' in system:
+                m = re.search(r'Write this document: ([^.]+)\.', system)
+                title = m.group(1).strip() if m else 'Extracted requirement'
+                reply = json.dumps({
+                    'path': 'requirements/REQ-mock.md',
+                    'content': ('---\ntitle: ' + title + '\ntype: Requirement\nstatus: draft\n'
+                                'priority: should\n---\n\n# ' + title + '\n\n'
+                                '> (mock) The system SHALL satisfy "' + title + '".\n'),
                 })
             else:
                 reply = json.dumps({

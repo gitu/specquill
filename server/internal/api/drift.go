@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
@@ -421,6 +423,14 @@ func driftFindingWire(f store.DriftFinding) map[string]any {
 		"fingerprint": f.Fingerprint, "docPath": f.DocPath, "anchor": f.Anchor,
 		"suggestedPath": f.SuggestedPath, "draftPath": f.DraftPath,
 		"remedyPath": f.RemedyPath, "remedyKind": f.RemedyKind,
+		"documents": func() []map[string]string {
+			var d []map[string]string
+			_ = json.Unmarshal([]byte(f.DocumentsJSON), &d)
+			if d == nil {
+				d = []map[string]string{}
+			}
+			return d
+		}(),
 		"source": f.Source, "kind": f.Kind, "severity": f.Severity,
 		"title": f.Title, "detail": f.Detail, "evidence": evidence,
 		"status": f.Status, "workItemUrl": f.WorkItemURL, "workItemTarget": f.WorkItemTarget,
@@ -593,11 +603,12 @@ func (s *Server) postDriftDismiss(w http.ResponseWriter, r *http.Request, repo *
 	status := "dismissed"
 	if body.Reopen {
 		status = "open"
-		// reopening treats the finding as fresh again — stale draft/remedy
-		// pointers (their documents may have been discarded) are dropped
-		// with the dismissal
+		// reopening treats the finding as fresh again — every pointer to a
+		// document it produced (draft, remedy, the planned set) is dropped
+		// with the dismissal, since those documents may have been discarded
 		_ = s.store.SetDriftFindingDraft(repo.Key(), branch, r.PathValue("fp"), "")
 		_ = s.store.SetDriftFindingRemedy(repo.Key(), branch, r.PathValue("fp"), "", "")
+		_ = s.store.SetDriftFindingDocuments(repo.Key(), branch, r.PathValue("fp"), "[]")
 	}
 	err := s.store.SetDriftFindingStatus(repo.Key(), branch, r.PathValue("fp"), status)
 	if err == store.ErrNotFound {
@@ -1027,7 +1038,15 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 			if f.Status == "filed" && f.WorkItemURL != "" {
 				st = "filed: " + f.WorkItemURL
 			}
-			if f.RemedyPath != "" {
+			var docs []map[string]string
+			_ = json.Unmarshal([]byte(f.DocumentsJSON), &docs)
+			if len(docs) > 0 {
+				parts := make([]string, 0, len(docs))
+				for _, d := range docs {
+					parts = append(parts, strings.ReplaceAll(d["kind"], "_", " ")+": "+d["path"])
+				}
+				st += " · " + strings.Join(parts, ", ")
+			} else if f.RemedyPath != "" {
 				st += " · " + strings.ReplaceAll(f.RemedyKind, "_", " ") + ": " + f.RemedyPath
 			}
 			cell := func(v string) string { return strings.ReplaceAll(v, "|", "\\|") }
@@ -1946,6 +1965,351 @@ func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *p
 	s.publish("save", repo.Key(), writeBranch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, map[string]any{"path": path, "kind": body.Kind, "branch": writeBranch, "linked": linked})
+}
+
+// ---------------------------------------------------------------- planning
+
+// plannedDoc is one document a plan proposes: a family, a path, and what it
+// should link to (indices into the plan, or the finding's own document).
+type plannedDoc struct {
+	Kind            string `json:"kind"`
+	Title           string `json:"title"`
+	Path            string `json:"path"`
+	Purpose         string `json:"purpose"`
+	LinksTo         []int  `json:"linksTo"`
+	LinksToDocument bool   `json:"linksToDocument"`
+	// filled in by the server
+	Field       string   `json:"field,omitempty"`       // the typed link that will be written
+	LinkTargets []string `json:"linkTargets,omitempty"` // resolved, for display
+}
+
+// familyType reads the frontmatter `type:` a family's existing documents use.
+// The label is workspace prose ("Change Record", "Specification"), so it can
+// only be observed, never derived — "" when the family has no document yet.
+func familyType(files map[string]string, folder string) string {
+	for _, p := range sortedKeys(files) {
+		if !strings.HasPrefix(p, folder) || !strings.HasSuffix(p, ".md") || okf.Reserved(base(p)) {
+			continue
+		}
+		fm, _, _ := mdfm.Split(files[p])
+		var meta struct {
+			Type string `yaml:"type"`
+		}
+		if yaml.Unmarshal([]byte(fm), &meta) == nil && strings.TrimSpace(meta.Type) != "" {
+			return strings.TrimSpace(meta.Type)
+		}
+	}
+	return ""
+}
+
+// planContext gathers what both planning and creating need from the branch.
+func (s *Server) planContext(r *http.Request, repo *project.Project, branch string) (
+	files map[string]string, entities map[string]workspaceEntity, links []workspaceLink,
+	guidance string, err error) {
+	files, err = repo.Snapshot(branch)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	entities, links = workspaceModel(files)
+	instructions := ""
+	if cfg := inRepoConfig(repo, branch); cfg != nil {
+		instructions = cfg.Speccy.Instructions
+	}
+	guidance = modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
+	return files, entities, links, guidance, nil
+}
+
+// validatePlan keeps a proposed plan inside what the workspace allows: known
+// families, paths in their folders, and only links its link_types permit.
+func validatePlan(docs []plannedDoc, targetPath, targetKind string,
+	entities map[string]workspaceEntity, links []workspaceLink) []plannedDoc {
+	out := make([]plannedDoc, 0, len(docs))
+	kept := map[int]int{} // original index → index in out
+	for i, d := range docs {
+		e, ok := entities[strings.TrimSpace(d.Kind)]
+		if !ok || strings.TrimSpace(d.Title) == "" {
+			continue // a family this workspace does not have
+		}
+		path := cleanDocPath(d.Path)
+		if path == "" || okf.Reserved(base(path)) {
+			continue
+		}
+		if !strings.HasPrefix(path, e.Folder) { // the family's folder is authoritative
+			path = e.Folder + base(path)
+		}
+		kept[i] = len(out)
+		out = append(out, plannedDoc{Kind: e.Kind, Title: strings.TrimSpace(d.Title), Path: path,
+			Purpose: strings.TrimSpace(d.Purpose), LinksTo: d.LinksTo, LinksToDocument: d.LinksToDocument})
+	}
+	// resolve links now that the surviving set is known
+	for i := range out {
+		var targets []string
+		seen := map[string]bool{}
+		add := func(p, kind string) {
+			if p == "" || p == out[i].Path || seen[p] {
+				return
+			}
+			field, onFrom := linkBetween(links, out[i].Kind, kind)
+			if field == "" || !onFrom { // only links this document may carry itself
+				return
+			}
+			seen[p] = true
+			out[i].Field = field
+			targets = append(targets, p)
+		}
+		for _, orig := range docs[i].LinksTo {
+			if j, ok := kept[orig]; ok {
+				add(out[j].Path, out[j].Kind)
+			}
+		}
+		if docs[i].LinksToDocument && targetPath != "" {
+			add(targetPath, targetKind)
+		}
+		out[i].LinkTargets = targets
+	}
+	return out
+}
+
+// POST /api/repos/{repo}/drift/findings/{fp}/plan — propose WHICH documents
+// to create for a finding, from the families this workspace actually has.
+// Read-only: it writes nothing.
+func (s *Server) postDriftPlan(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	finding, err := s.store.DriftFinding(repo.Key(), branch, r.PathValue("fp"))
+	if err == store.ErrNotFound {
+		jsonError(w, http.StatusNotFound, "unknown finding")
+		return
+	}
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	files, entities, links, guidance, err := s.planContext(r, repo, branch)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+
+	// the families this workspace has, and how they may link
+	var fam strings.Builder
+	kinds := make([]string, 0, len(entities))
+	for k := range entities {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	for _, k := range kinds {
+		e := entities[k]
+		n := 0
+		for p := range files {
+			if strings.HasPrefix(p, e.Folder) && strings.HasSuffix(p, ".md") {
+				n++
+			}
+		}
+		fmt.Fprintf(&fam, "- %s → %s (%s level, %d existing document(s))\n", e.Kind, e.Folder, e.Group, n)
+	}
+	var lt strings.Builder
+	for _, l := range links {
+		fmt.Fprintf(&lt, "- `%s:` on %s → %s\n", l.Name, strings.Join(l.From, ", "), strings.Join(l.To, ", "))
+	}
+
+	targetPath := finding.DraftPath
+	if targetPath == "" {
+		targetPath = finding.DocPath
+	}
+	target, targetKind := "", ""
+	if targetPath != "" {
+		if content, ok := files[targetPath]; ok {
+			targetKind = docKind(targetPath, content, entities)
+			if len(content) > 4*1024 {
+				content = content[:4*1024] + "\n… (truncated)"
+			}
+			target = "## " + targetPath + " (" + targetKind + ")\n```\n" + content + "\n```\n"
+		}
+	}
+	var evidence []driftEvidence
+	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &evidence)
+	findingJSON, _ := json.Marshal(map[string]any{
+		"kind": finding.Kind, "severity": finding.Severity, "title": finding.Title,
+		"detail": finding.Detail, "document": finding.DocPath, "anchor": finding.Anchor,
+		"source": "~" + finding.Source, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
+	})
+	reply, err := s.ai.Complete(r.Context(), ai.PlanPrompt(string(findingJSON), target,
+		fam.String(), lt.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), guidance))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var plan struct {
+		Rationale string       `json:"rationale"`
+		Documents []plannedDoc `json:"documents"`
+	}
+	if err := ai.ExtractJSON(reply, &plan); err != nil {
+		jsonError(w, http.StatusBadGateway, "model reply was not plan JSON: "+err.Error())
+		return
+	}
+	docs := validatePlan(plan.Documents, targetPath, targetKind, entities, links)
+	if len(docs) == 0 {
+		jsonError(w, http.StatusBadGateway, "the plan proposed no document this workspace can create")
+		return
+	}
+	jsonOK(w, map[string]any{"rationale": strings.TrimSpace(plan.Rationale), "documents": docs})
+}
+
+// POST /api/repos/{repo}/drift/findings/{fp}/create {documents} — draft and
+// write a planned SET of documents, wiring the typed links between them and
+// to the finding's document. Partial success is reported, never rolled back:
+// every document that landed is a real worktree draft.
+func (s *Server) postDriftCreate(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	var body struct {
+		Documents []plannedDoc `json:"documents"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Documents) == 0 {
+		jsonError(w, http.StatusBadRequest, "documents required")
+		return
+	}
+	finding, err := s.store.DriftFinding(repo.Key(), branch, r.PathValue("fp"))
+	if err == store.ErrNotFound {
+		jsonError(w, http.StatusNotFound, "unknown finding")
+		return
+	}
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	files, entities, links, guidance, err := s.planContext(r, repo, branch)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+	writeBranch := branch
+	if repo.Repo.Cfg.IsProtected(branch) {
+		if writeBranch, err = s.claimWorkspace(r, repo); err != nil {
+			gitFail(w, err)
+			return
+		}
+	}
+	targetPath := finding.DraftPath
+	if targetPath == "" {
+		targetPath = finding.DocPath
+	}
+	targetKind := ""
+	if targetPath != "" {
+		if content, ok := files[targetPath]; ok {
+			targetKind = docKind(targetPath, content, entities)
+		}
+	}
+	docs := validatePlan(body.Documents, targetPath, targetKind, entities, links)
+	if len(docs) == 0 {
+		jsonError(w, http.StatusUnprocessableEntity, "no document in the plan is valid for this workspace")
+		return
+	}
+
+	var evidence []driftEvidence
+	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &evidence)
+	findingJSON, _ := json.Marshal(map[string]any{
+		"kind": finding.Kind, "severity": finding.Severity, "title": finding.Title,
+		"detail": finding.Detail, "document": finding.DocPath, "anchor": finding.Anchor,
+		"source": "~" + finding.Source, "evidence": evidence,
+	})
+	created := []map[string]string{}
+	failures := []string{}
+	for _, d := range docs {
+		if _, _, err := repo.File(writeBranch, d.Path); err == nil {
+			failures = append(failures, d.Path+": already exists")
+			continue
+		}
+		example := ""
+		for _, p := range sortedKeys(files) {
+			if strings.HasPrefix(p, entities[d.Kind].Folder) && strings.HasSuffix(p, ".md") && !okf.Reserved(base(p)) {
+				c := files[p]
+				if len(c) > 4*1024 {
+					c = c[:4*1024] + "\n… (truncated)"
+				}
+				example = "## " + p + "\n```\n" + c + "\n```\n"
+				break
+			}
+		}
+		note := "Write this document: " + d.Title + ". " + d.Purpose
+		if d.Field != "" && len(d.LinkTargets) > 0 {
+			note += "\nThe server adds `" + d.Field + ": [" + strings.Join(d.LinkTargets, ", ") +
+				"]` — do not write link fields yourself."
+		}
+		kindLabel := strings.ReplaceAll(d.Kind, "_", " ")
+		reply, err := s.ai.Complete(r.Context(), ai.RemedyPrompt(kindLabel, entities[d.Kind].Folder,
+			note, string(findingJSON), "", example, guidance))
+		if err != nil {
+			failures = append(failures, d.Path+": "+err.Error())
+			continue
+		}
+		var draft struct{ Path, Content string }
+		if err := ai.ExtractJSON(reply, &draft); err != nil {
+			failures = append(failures, d.Path+": model reply was not draft JSON")
+			continue
+		}
+		if err := mdfm.Validate(draft.Content); err != nil {
+			failures = append(failures, d.Path+": "+err.Error())
+			continue
+		}
+		content, err := mdfm.Touch(draft.Content, true, time.Now())
+		if err != nil {
+			failures = append(failures, d.Path+": "+err.Error())
+			continue
+		}
+		// the plan's path AND the family's type win: the model drafts content,
+		// not placement or classification
+		if t := familyType(files, entities[d.Kind].Folder); t != "" {
+			if fixed, err := mdfm.SetScalar(content, "type", t); err == nil {
+				content = fixed
+			}
+		}
+		for _, t := range d.LinkTargets {
+			if next, added, err := mdfm.AppendListItem(content, d.Field, t); err == nil && added {
+				content = next
+			}
+		}
+		if _, err := repo.SaveFile(writeBranch, d.Path, content, ""); err != nil {
+			failures = append(failures, d.Path+": "+err.Error())
+			continue
+		}
+		files[d.Path] = content
+		created = append(created, map[string]string{"kind": d.Kind, "path": d.Path})
+	}
+	if len(created) == 0 {
+		jsonError(w, http.StatusBadGateway, "nothing could be created: "+strings.Join(failures, "; "))
+		return
+	}
+	// record every document this finding produced (the set, not just one)
+	var have []map[string]string
+	_ = json.Unmarshal([]byte(finding.DocumentsJSON), &have)
+	have = append(have, created...)
+	docsJSON, _ := json.Marshal(have)
+	_ = s.store.SetDriftFindingDocuments(repo.Key(), branch, finding.Fingerprint, string(docsJSON))
+	// keep the single-document pointers meaningful for the existing actions
+	for _, c := range created {
+		if c["kind"] == "requirement" && finding.DraftPath == "" {
+			_ = s.store.SetDriftFindingDraft(repo.Key(), branch, finding.Fingerprint, c["path"])
+			break
+		}
+	}
+	for _, c := range created {
+		if c["kind"] != "requirement" && finding.RemedyPath == "" {
+			_ = s.store.SetDriftFindingRemedy(repo.Key(), branch, finding.Fingerprint, c["path"], c["kind"])
+			break
+		}
+	}
+	s.refreshDriftReport(repo, branch)
+	s.publish("save", repo.Key(), writeBranch)
+	s.publish("drift", repo.Key(), branch)
+	jsonOK(w, map[string]any{"created": created, "failures": failures, "branch": writeBranch})
 }
 
 // ---------------------------------------------------------------- targets
