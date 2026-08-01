@@ -174,6 +174,8 @@ export interface DriftFinding {
   // coverage gaps (docPath '') carry where the missing doc should live and
   // the reverse-engineered draft once one was created
   suggestedPath: string; draftPath: string;
+  // the in-repo change/work-item document created to remedy it
+  remedyPath: string; remedyKind: string;
   kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string;
   evidence: DriftEvidence[]; status: 'open' | 'dismissed' | 'filed';
   workItemUrl: string; workItemTarget: string; updatedAt: number;
@@ -211,6 +213,25 @@ export function useRunDrift(repo: string | undefined, branch: string) {
         `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+/** Create the in-repo change record / work item that tracks fixing a finding. */
+export function useRemedyFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, kind }: { fingerprint: string; kind: 'change' | 'work_item' }) =>
+      api<{ path: string; kind: string; branch: string; linked?: string; existing?: boolean }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/remedy?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ kind }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the remedy doc (and possibly the affected doc) are worktree saves
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
   });
 }
 

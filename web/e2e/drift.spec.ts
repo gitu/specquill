@@ -17,19 +17,20 @@ test.beforeEach(async ({ request }) => {
 async function resetFindings(request: APIRequestContext) {
   const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
   const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
-    findings?: { fingerprint: string; draftPath: string }[];
+    findings?: { fingerprint: string; draftPath: string; remedyPath: string }[];
   };
   for (const f of drift.findings ?? []) {
-    if (f.draftPath) {
-      await request.delete(`/api/repos/${REPO}/files/${f.draftPath}?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
+    for (const p of [f.draftPath, f.remedyPath]) {
+      if (p) await request.delete(`/api/repos/${REPO}/files/${p}?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
     }
     await request.post(`/api/repos/${REPO}/drift/findings/${f.fingerprint}/dismiss?branch=main`, {
       headers: H, data: { reopen: true },
     });
   }
-  // a previous run's report is a worktree save on ws — drop it too
+  // a previous run's report (and any remedy link written into a doc) are
+  // worktree saves on ws — drop them too
   await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
-    headers: H, data: { paths: ['reports/source-alignment.md'] },
+    headers: H, data: { paths: ['reports/source-alignment.md', 'specs/txn-report.md', 'specs/venue.md'] },
   });
 }
 
@@ -180,4 +181,32 @@ test('linker proposes and applies a missing typed link', async ({ page, request 
   await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
     headers: H, data: { paths: ['specs/venue.md'] },
   });
+});
+
+test('a finding spawns a linked work item in the workspace', async ({ page, request }) => {
+  await resetFindings(request);
+  await page.goto(`/p/${REPO}/alignment`);
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
+
+  // "+ Work item" drafts the WHEN document and opens it in the editor
+  await page.getByRole('button', { name: '+ Work item' }).first().click();
+  await expect(page).toHaveURL(/editor\/work-items\/WI-timestamp-precision\.md/, { timeout: 20_000 });
+  await expect(page.getByText('Raise execution-timestamp precision').first()).toBeVisible({ timeout: 10_000 });
+
+  // it carries the configured typed link (delivers) back to the drifted spec
+  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  const file = (await (await request.get(
+    `/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(file.content).toContain('delivers:');
+  expect(file.content).toMatch(/specs\/(txn-report|venue)\.md/);
+
+  // and the finding now carries the remedy instead of the create buttons
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+    findings: { remedyPath: string; remedyKind: string }[];
+  };
+  expect(drift.findings.some((f) => f.remedyPath === 'work-items/WI-timestamp-precision.md' && f.remedyKind === 'work_item')).toBe(true);
+
+  await request.delete(`/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
 });

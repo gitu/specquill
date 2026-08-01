@@ -130,6 +130,8 @@ CREATE TABLE IF NOT EXISTS drift_findings (
   doc_path         TEXT NOT NULL,
   suggested_path   TEXT NOT NULL DEFAULT '',
   draft_path       TEXT NOT NULL DEFAULT '',
+  remedy_path      TEXT NOT NULL DEFAULT '',   -- in-repo change/work-item doc created to remedy it
+  remedy_kind      TEXT NOT NULL DEFAULT '',   -- change | work_item
   anchor           TEXT NOT NULL DEFAULT '',
   source           TEXT NOT NULL DEFAULT '',
   kind             TEXT NOT NULL DEFAULT '',

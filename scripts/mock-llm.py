@@ -50,7 +50,28 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'specquill linker' in system:
+        if 'remediation author' in system:
+            # remedy: draft the change record / work item that tracks the fix.
+            # The server adds the typed link and enforces the folder.
+            if 'work item document' in system:
+                reply = json.dumps({
+                    'path': 'work-items/WI-timestamp-precision.md',
+                    'content': ('---\ntitle: Raise execution-timestamp precision\n'
+                                'type: Work Item\nstatus: backlog\n---\n\n'
+                                '# Raise execution-timestamp precision\n\n'
+                                '(mock) Emit microsecond execution timestamps end to end.\n\n'
+                                '- [ ] update the OMS transform\n- [ ] re-validate the mapping\n'),
+                })
+            else:
+                reply = json.dumps({
+                    'path': 'changes/2026-08-timestamp-precision.md',
+                    'content': ('---\ntitle: RTS 22 microsecond timestamps\n'
+                                'type: Change Record\nstatus: triage\nsource: regulatory\n---\n\n'
+                                '# RTS 22 microsecond timestamps\n\n'
+                                '(mock) The amendment tightens execution-timestamp precision to '
+                                'microseconds; the affected documents must follow.\n'),
+                })
+        elif 'specquill linker' in system:
             # linker: one canned missing link that holds in the demo fixture
             # (venue.md implements REQ-051/070 but not REQ-063)
             reply = json.dumps({'proposals': [{

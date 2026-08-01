@@ -22,23 +22,176 @@ import (
 	"specquill/server/internal/project"
 )
 
-// linkFieldNames returns the workspace's link-type field names: the declared
-// link_types section of .specquill/config.yml, or the built-in defaults
-// (mirrors modelRules / web DEFAULT_LINK_TYPES).
-func linkFieldNames(files map[string]string) []string {
+// workspaceEntity is one document family's effective configuration.
+type workspaceEntity struct {
+	Kind   string // regulation | change | requirement | spec | work_item | …
+	Folder string // "changes/" — the default location for new documents
+	Group  string // why | what | how | when
+}
+
+// workspaceLink is one configured link type: the field the LOWER document
+// carries to point UP at the level it exists for.
+type workspaceLink struct {
+	Name     string
+	From, To []string
+}
+
+// workspaceModel resolves the workspace's effective document model from
+// .specquill/config.yml over the built-in defaults (mirrors
+// web/src/lib/config.ts). The single parse behind modelRules, the linker and
+// the remedy actions.
+func workspaceModel(files map[string]string) (map[string]workspaceEntity, []workspaceLink) {
+	entities := map[string]workspaceEntity{
+		"regulation":   {"regulation", "regulations/", "why"},
+		"change":       {"change", "changes/", "why"},
+		"requirement":  {"requirement", "requirements/", "what"},
+		"spec":         {"spec", "specs/", "how"},
+		"data_mapping": {"data_mapping", "data-mappings/", "how"},
+		"diagram":      {"diagram", "diagrams/", "how"},
+		"work_item":    {"work_item", "work-items/", "when"},
+	}
+	links := []workspaceLink{
+		{"drivers", []string{"requirement"}, []string{"regulation", "change"}},
+		{"implements", []string{"spec", "data_mapping"}, []string{"requirement"}},
+		{"delivers", []string{"work_item"}, []string{"spec", "requirement"}},
+	}
+
 	var cfg struct {
-		LinkTypes map[string]any `yaml:"link_types"`
+		Entities map[string]struct {
+			Folder string `yaml:"folder"`
+			Group  string `yaml:"group"`
+			Hidden bool   `yaml:"hidden"`
+		} `yaml:"entities"`
+		LinkTypes map[string]struct {
+			From any `yaml:"from"`
+			To   any `yaml:"to"`
+		} `yaml:"link_types"`
 	}
 	_ = yaml.Unmarshal([]byte(files[".specquill/config.yml"]), &cfg)
-	if len(cfg.LinkTypes) > 0 {
+	for kind, e := range cfg.Entities {
+		if e.Hidden {
+			delete(entities, kind)
+			continue
+		}
+		cur, ok := entities[kind]
+		if !ok {
+			cur = workspaceEntity{Kind: kind}
+		}
+		if e.Folder != "" {
+			cur.Folder = strings.TrimSuffix(e.Folder, "/") + "/"
+		} else if cur.Folder == "" {
+			cur.Folder = kind + "s/"
+		}
+		if e.Group != "" {
+			cur.Group = e.Group
+		}
+		entities[kind] = cur
+	}
+	if len(cfg.LinkTypes) > 0 { // a declared section replaces the defaults wholesale
+		kinds := func(v any) []string {
+			switch t := v.(type) {
+			case string:
+				var out []string
+				for _, k := range strings.Split(t, ",") {
+					if k = strings.TrimSpace(k); k != "" {
+						out = append(out, k)
+					}
+				}
+				return out
+			case []any:
+				var out []string
+				for _, k := range t {
+					if s, ok := k.(string); ok {
+						out = append(out, strings.TrimSpace(s))
+					}
+				}
+				return out
+			}
+			return nil
+		}
+		links = links[:0]
 		names := make([]string, 0, len(cfg.LinkTypes))
 		for name := range cfg.LinkTypes {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		return names
+		for _, name := range names {
+			l := cfg.LinkTypes[name]
+			links = append(links, workspaceLink{name, kinds(l.From), kinds(l.To)})
+		}
 	}
-	return []string{"drivers", "implements", "delivers", "maps_to", "verifies"}
+	return entities, links
+}
+
+// docKind classifies a workspace document into its family: by folder first
+// (the reliable signal), then by frontmatter `type:` matched loosely against
+// the kind name. "" when it belongs to no known family.
+func docKind(path, content string, entities map[string]workspaceEntity) string {
+	for _, e := range entities {
+		if e.Folder != "" && strings.HasPrefix(path, e.Folder) {
+			return e.Kind
+		}
+	}
+	fm, _, _ := mdfm.Split(content)
+	var meta struct {
+		Type string `yaml:"type"`
+	}
+	_ = yaml.Unmarshal([]byte(fm), &meta)
+	norm := func(s string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), " ", ""), "_", "")
+	}
+	t := norm(meta.Type)
+	if t == "" {
+		return ""
+	}
+	for _, e := range entities {
+		if k := norm(e.Kind); k == t || strings.HasPrefix(t, k) {
+			return e.Kind
+		}
+	}
+	return ""
+}
+
+// linkBetween finds the typed link connecting two families. It returns the
+// field name and which document carries it — the model's rule is that the
+// LOWER document points UP, so either direction may be the right one.
+func linkBetween(links []workspaceLink, fromKind, toKind string) (field string, onFrom bool) {
+	has := func(ks []string, k string) bool {
+		for _, v := range ks {
+			if v == k {
+				return true
+			}
+		}
+		return false
+	}
+	for _, l := range links {
+		if has(l.From, fromKind) && has(l.To, toKind) {
+			return l.Name, true
+		}
+	}
+	for _, l := range links {
+		if has(l.From, toKind) && has(l.To, fromKind) {
+			return l.Name, false
+		}
+	}
+	return "", false
+}
+
+// linkFieldNames returns the workspace's link-type field names: the declared
+// link_types section of .specquill/config.yml, or the built-in defaults
+// (mirrors web DEFAULT_LINK_TYPES).
+func linkFieldNames(files map[string]string) []string {
+	_, links := workspaceModel(files)
+	names := make([]string, 0, len(links))
+	for _, l := range links {
+		names = append(names, l.Name)
+	}
+	// the built-in set carries two more fields that documents may still use
+	if len(links) == 3 && links[0].Name == "drivers" {
+		names = append(names, "maps_to", "verifies")
+	}
+	sort.Strings(names)
+	return names
 }
 
 // docLinks parses one document's frontmatter and returns its typed links per

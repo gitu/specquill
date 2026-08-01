@@ -107,7 +107,7 @@ func dropStaleDriftTables(db *sql.DB) error {
 	}
 	for table, sentinel := range map[string]string{
 		"drift_runs":     "report_path",
-		"drift_findings": "draft_path",
+		"drift_findings": "remedy_path",
 	} {
 		isStale, err := stale(table, sentinel)
 		if err != nil {

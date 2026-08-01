@@ -463,6 +463,55 @@ func LinkerPrompt(docIndex, guidance string) []Message {
 	}
 }
 
+const remedySystem = `You are the specquill remediation author. From a
+confirmed source-alignment finding you draft the workspace document that
+tracks fixing it — a change record (the WHY that drives the requirement
+update) or a work item (the WHEN that schedules the work), as asked.
+
+Reply with ONLY a JSON object, no prose:
+
+{
+  "path": "changes/2026-08-timestamp-precision.md",
+  "content": "---\ntitle: ...\ntype: ...\nstatus: ...\n---\n\n# ...\n"
+}
+
+Rules:
+- "path" MUST live in the family folder named below and follow the naming of
+  the example document when one is given.
+- Match the example's frontmatter shape (its 'type:' value, id scheme and
+  fields) — those are this workspace's conventions, not yours to invent. The
+  typed link back to the affected document is added by the server: do not
+  invent link fields it did not ask for.
+- The body states what must change and why, grounded in the finding's
+  evidence: reference the affected document and the reference source, and
+  keep acceptance criteria checkable. Never invent facts beyond the evidence.
+- Write it ready for a human to refine, not as a placeholder.`
+
+// RemedyPrompt builds the draft-the-remediation-document conversation.
+// kindLabel/folder name the family to write into, linkNote explains the
+// typed link the server will add, example is a same-family document (may be
+// empty), guidance the workspace conventions.
+func RemedyPrompt(kindLabel, folder, linkNote, findingJSON, target, example, guidance string) []Message {
+	system := remedySystem +
+		"\n\nWrite a " + kindLabel + " document in `" + folder + "`."
+	if linkNote != "" {
+		system += "\n" + linkNote
+	}
+	var b strings.Builder
+	b.WriteString("# Finding to remediate\n```json\n" + findingJSON + "\n```\n")
+	if target != "" {
+		b.WriteString("\n# Affected document\n" + target + "\n")
+	}
+	if example != "" {
+		b.WriteString("\n# Example " + kindLabel + " from this workspace (follow its conventions)\n" + example + "\n")
+	}
+	b.WriteString("\nDraft the " + kindLabel + " document as JSON.")
+	return []Message{
+		{Role: "system", Content: system + guidance},
+		{Role: "user", Content: b.String()},
+	}
+}
+
 const reverseSystem = `You are the specquill requirements reverse-engineer.
 From a confirmed coverage gap (a capability a reference source implements that
 no workspace document covers) you draft the MISSING requirement document.

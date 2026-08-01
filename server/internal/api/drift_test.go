@@ -335,6 +335,105 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	}
 }
 
+func TestDriftRemedyCreatesLinkedWorkItemAndChange(t *testing.T) {
+	workItem := `{"path":"work-items/WI-timestamps.md","content":"---\ntitle: Fix timestamp precision\ntype: Work Item\nstatus: backlog\n---\n\n# Fix timestamp precision\n\nRaise the reported precision to microseconds.\n"}`
+	change := `{"path":"changes/2026-08-timestamps.md","content":"---\ntitle: RTS 22 precision amendment\ntype: Change Record\nstatus: triage\n---\n\n# RTS 22 precision amendment\n\nThe regulation now demands microsecond timestamps.\n"}`
+	h, st, _, _, _ := testDriftServer(t, []string{workItem, change})
+	cookie := login(t, h)
+
+	f := store.DriftFinding{
+		RepoKey: "w", Branch: "main", Fingerprint: "fp-remedy", RunID: 1,
+		DocPath: "specs/txn.md", Anchor: "REQ-1", Source: "reg", Kind: "contradiction",
+		Severity: "high", Title: "Timestamp precision drift", Detail: "ms vs µs",
+		EvidenceJSON: `[{"path":"rules.md","quote":"microsecond timestamps"}]`,
+	}
+	if err := st.UpsertDriftFinding(f); err != nil {
+		t.Fatal(err)
+	}
+
+	// work item: the NEW document carries `delivers:` → the drifted spec
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp-remedy/remedy?branch=main",
+		map[string]string{"kind": "work_item"})
+	if code != http.StatusOK {
+		t.Fatalf("remedy: %d %v", code, out)
+	}
+	if out["path"] != "work-items/WI-timestamps.md" || out["kind"] != "work_item" {
+		t.Fatalf("unexpected remedy: %v", out)
+	}
+	_, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/work-items/WI-timestamps.md?ref=main", nil)
+	content := file["content"].(string)
+	if !strings.Contains(content, "delivers:") || !strings.Contains(content, "specs/txn.md") {
+		t.Fatalf("work item missing typed link:\n%s", content)
+	}
+	if !strings.Contains(content, "created:") {
+		t.Fatalf("dates not maintained:\n%s", content)
+	}
+	got, _ := st.DriftFinding("w", "main", "fp-remedy")
+	if got.RemedyPath != "work-items/WI-timestamps.md" || got.RemedyKind != "work_item" {
+		t.Fatalf("remedy not recorded: %+v", got)
+	}
+	// idempotent: the existing doc comes back instead of a second draft
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp-remedy/remedy?branch=main",
+		map[string]string{"kind": "work_item"})
+	if code != http.StatusOK || out["existing"] != true {
+		t.Fatalf("re-remedy must return the existing doc: %d %v", code, out)
+	}
+
+	// a change record for a REQUIREMENT: no change→requirement link exists in
+	// that direction, so the requirement points UP at the change instead
+	req := "---\nid: REQ-9\ntitle: Reporting\ntype: Requirement\nstatus: approved\n---\n\n# Reporting\n"
+	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/requirements/REQ-9.md?branch=main",
+		map[string]string{"content": req, "baseSha": ""}); code != http.StatusOK {
+		t.Fatalf("put requirement: %d %v", code, out)
+	}
+	f2 := f
+	f2.Fingerprint, f2.DocPath = "fp-change", "requirements/REQ-9.md"
+	if err := st.UpsertDriftFinding(f2); err != nil {
+		t.Fatal(err)
+	}
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp-change/remedy?branch=main",
+		map[string]string{"kind": "change"})
+	if code != http.StatusOK {
+		t.Fatalf("change remedy: %d %v", code, out)
+	}
+	if out["path"] != "changes/2026-08-timestamps.md" {
+		t.Fatalf("unexpected change path: %v", out)
+	}
+	_, file = doJSON(t, h, cookie, "GET", "/api/repos/w/files/requirements/REQ-9.md?ref=main", nil)
+	if content := file["content"].(string); !strings.Contains(content, "drivers:") ||
+		!strings.Contains(content, "changes/2026-08-timestamps.md") {
+		t.Fatalf("requirement should point up at the change:\n%s", content)
+	}
+
+	// the report's findings table carries the remedy documents
+	live, err := st.DriftFindings("w", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := driftReportBlock(&store.DriftRun{Mode: "drift", Status: "ok", ScopeJSON: "[]"}, live, nil)
+	if !strings.Contains(block, "work item: work-items/WI-timestamps.md") ||
+		!strings.Contains(block, "change: changes/2026-08-timestamps.md") {
+		t.Fatalf("report must list remedies:\n%s", block)
+	}
+}
+
+func TestDriftRemedyRejectsUnknownKind(t *testing.T) {
+	h, st, _, _, _ := testDriftServer(t, nil)
+	cookie := login(t, h)
+	if err := st.UpsertDriftFinding(store.DriftFinding{RepoKey: "w", Branch: "main",
+		Fingerprint: "fp", RunID: 1, DocPath: "specs/txn.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/fp/remedy?branch=main",
+		map[string]string{"kind": "regulation"}); code != http.StatusBadRequest {
+		t.Fatalf("unknown kind must 400, got %d", code)
+	}
+	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/nope/remedy?branch=main",
+		map[string]string{"kind": "change"}); code != http.StatusNotFound {
+		t.Fatalf("unknown finding must 404")
+	}
+}
+
 func TestDriftReportContinueAndPreserveHumanEdits(t *testing.T) {
 	empty := `{"findings": []}`
 	h, _, _, _, _ := testDriftServer(t, []string{empty, empty})

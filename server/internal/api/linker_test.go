@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ func TestDocLinksAndFields(t *testing.T) {
 	if got := linkFieldNames(files); len(got) != 1 || got[0] != "needs" {
 		t.Fatalf("declared link_types must replace defaults, got %v", got)
 	}
-	if got := linkFieldNames(map[string]string{}); len(got) != 5 || got[0] != "drivers" {
+	if got := linkFieldNames(map[string]string{}); fmt.Sprint(got) != "[delivers drivers implements maps_to verifies]" {
 		t.Fatalf("default link fields wrong: %v", got)
 	}
 
@@ -22,6 +23,51 @@ func TestDocLinksAndFields(t *testing.T) {
 	}
 	if len(links["maps_to"]) != 1 || links["maps_to"][0] != "data/trade.md" {
 		t.Fatalf("scalar link values must parse: %v", links)
+	}
+}
+
+func TestWorkspaceModelAndLinkBetween(t *testing.T) {
+	entities, links := workspaceModel(map[string]string{})
+	if entities["work_item"].Folder != "work-items/" || entities["change"].Group != "why" {
+		t.Fatalf("default entities wrong: %+v", entities)
+	}
+	// work_item delivers → spec: the NEW document carries the link
+	if field, onFrom := linkBetween(links, "work_item", "spec"); field != "delivers" || !onFrom {
+		t.Fatalf("work_item→spec = (%q,%v), want (delivers,true)", field, onFrom)
+	}
+	// a change is pointed AT by requirements — the target carries the link
+	if field, onFrom := linkBetween(links, "change", "requirement"); field != "drivers" || onFrom {
+		t.Fatalf("change→requirement = (%q,%v), want (drivers,false)", field, onFrom)
+	}
+	// no link type joins a change and a spec directly
+	if field, _ := linkBetween(links, "change", "spec"); field != "" {
+		t.Fatalf("change→spec should have no link, got %q", field)
+	}
+
+	// config overrides folders and replaces link types wholesale
+	cfg := map[string]string{".specquill/config.yml": "entities:\n  work_item: {folder: tasks/}\n" +
+		"link_types:\n  handles: {from: work_item, to: spec}\n"}
+	entities, links = workspaceModel(cfg)
+	if entities["work_item"].Folder != "tasks/" {
+		t.Fatalf("configured folder ignored: %+v", entities["work_item"])
+	}
+	if field, onFrom := linkBetween(links, "work_item", "spec"); field != "handles" || !onFrom {
+		t.Fatalf("configured link ignored: (%q,%v)", field, onFrom)
+	}
+}
+
+func TestDocKind(t *testing.T) {
+	entities, _ := workspaceModel(map[string]string{})
+	// folder wins
+	if k := docKind("specs/txn.md", "---\ntype: Whatever\n---\n", entities); k != "spec" {
+		t.Fatalf("folder classification = %q", k)
+	}
+	// frontmatter type is the fallback, matched loosely ("Change Record")
+	if k := docKind("misc/x.md", "---\ntype: Change Record\n---\n", entities); k != "change" {
+		t.Fatalf("frontmatter classification = %q", k)
+	}
+	if k := docKind("misc/x.md", "no frontmatter", entities); k != "" {
+		t.Fatalf("unclassifiable doc = %q", k)
 	}
 }
 

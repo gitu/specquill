@@ -315,6 +315,7 @@ func driftFindingWire(f store.DriftFinding) map[string]any {
 	return map[string]any{
 		"fingerprint": f.Fingerprint, "docPath": f.DocPath, "anchor": f.Anchor,
 		"suggestedPath": f.SuggestedPath, "draftPath": f.DraftPath,
+		"remedyPath": f.RemedyPath, "remedyKind": f.RemedyKind,
 		"source": f.Source, "kind": f.Kind, "severity": f.Severity,
 		"title": f.Title, "detail": f.Detail, "evidence": evidence,
 		"status": f.Status, "workItemUrl": f.WorkItemURL, "workItemTarget": f.WorkItemTarget,
@@ -459,9 +460,11 @@ func (s *Server) postDriftDismiss(w http.ResponseWriter, r *http.Request, repo *
 	status := "dismissed"
 	if body.Reopen {
 		status = "open"
-		// reopening treats the finding as fresh again — a stale draft pointer
-		// (the draft may have been discarded) is dropped with the dismissal
+		// reopening treats the finding as fresh again — stale draft/remedy
+		// pointers (their documents may have been discarded) are dropped
+		// with the dismissal
 		_ = s.store.SetDriftFindingDraft(repo.Key(), branch, r.PathValue("fp"), "")
+		_ = s.store.SetDriftFindingRemedy(repo.Key(), branch, r.PathValue("fp"), "", "")
 	}
 	err := s.store.SetDriftFindingStatus(repo.Key(), branch, r.PathValue("fp"), status)
 	if err == store.ErrNotFound {
@@ -792,6 +795,9 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 			if f.Status == "filed" && f.WorkItemURL != "" {
 				st = "filed: " + f.WorkItemURL
 			}
+			if f.RemedyPath != "" {
+				st += " · " + strings.ReplaceAll(f.RemedyKind, "_", " ") + ": " + f.RemedyPath
+			}
 			cell := func(v string) string { return strings.ReplaceAll(v, "|", "\\|") }
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
 				f.Severity, f.Kind, cell(where), cell(f.Title), cell(st))
@@ -1086,6 +1092,189 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 	jsonOK(w, map[string]any{"path": path, "branch": writeBranch})
 }
 
+// POST /api/repos/{repo}/drift/findings/{fp}/remedy {kind} — create the
+// in-repo document that tracks fixing a finding: a change record (WHY) or a
+// work item (WHEN), drafted by the AI in the workspace's own conventions,
+// linked to the affected document with the configured typed link, and saved
+// as an uncommitted worktree draft.
+func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	if s.ai == nil {
+		jsonError(w, http.StatusNotImplemented, "Speccy is not configured (ai: in specquill.yml)")
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	var body struct {
+		Kind string `json:"kind"` // change | work_item
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Kind == "" {
+		body.Kind = "work_item"
+	}
+	if body.Kind != "change" && body.Kind != "work_item" {
+		jsonError(w, http.StatusBadRequest, "kind must be change or work_item")
+		return
+	}
+	finding, err := s.store.DriftFinding(repo.Key(), branch, r.PathValue("fp"))
+	if err == store.ErrNotFound {
+		jsonError(w, http.StatusNotFound, "unknown finding")
+		return
+	}
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	files, err := repo.Snapshot(branch)
+	if err != nil {
+		gitFail(w, err)
+		return
+	}
+	entities, links := workspaceModel(files)
+	entity, ok := entities[body.Kind]
+	if !ok {
+		jsonError(w, http.StatusUnprocessableEntity,
+			"this workspace has no "+body.Kind+" family configured (.specquill/config.yml entities:)")
+		return
+	}
+
+	// idempotent: an existing remedy doc is returned rather than re-drafted
+	writeBranch := branch
+	if repo.Repo.Cfg.IsProtected(branch) {
+		if writeBranch, err = s.claimWorkspace(r, repo); err != nil {
+			gitFail(w, err)
+			return
+		}
+	}
+	if finding.RemedyPath != "" {
+		if _, _, err := repo.File(writeBranch, finding.RemedyPath); err == nil {
+			jsonOK(w, map[string]any{"path": finding.RemedyPath, "kind": finding.RemedyKind,
+				"branch": writeBranch, "existing": true})
+			return
+		}
+	}
+
+	// the affected document: the drifted doc, or a gap's reverse-engineered
+	// draft when one exists (a bare gap has no document yet)
+	targetPath := finding.DocPath
+	if targetPath == "" {
+		targetPath = finding.DraftPath
+	}
+	targetKind, targetExcerpt := "", ""
+	if targetPath != "" {
+		if content, _, err := repo.File(writeBranch, targetPath); err == nil {
+			targetKind = docKind(targetPath, content, entities)
+			if len(content) > 6*1024 {
+				content = content[:6*1024] + "\n… (truncated)"
+			}
+			targetExcerpt = "## " + targetPath + "\n```\n" + content + "\n```\n"
+		}
+	}
+	// the typed link connecting the new document and the affected one — the
+	// model's own rule decides which side carries it
+	linkField, linkOnRemedy := "", false
+	if targetKind != "" {
+		linkField, linkOnRemedy = linkBetween(links, body.Kind, targetKind)
+	}
+	linkNote := ""
+	switch {
+	case linkField != "" && linkOnRemedy:
+		linkNote = "The server adds `" + linkField + ": [" + targetPath + "]` to the new document — do not write it yourself."
+	case linkField != "":
+		linkNote = "The server adds `" + linkField + ": [<this document>]` to " + targetPath + " — do not write link fields yourself."
+	}
+	// an existing document of the same family teaches the real conventions
+	example := ""
+	for _, p := range sortedKeys(files) {
+		if p != targetPath && strings.HasPrefix(p, entity.Folder) && strings.HasSuffix(p, ".md") &&
+			!okf.Reserved(base(p)) {
+			content := files[p]
+			if len(content) > 4*1024 {
+				content = content[:4*1024] + "\n… (truncated)"
+			}
+			example = "## " + p + "\n```\n" + content + "\n```\n"
+			break
+		}
+	}
+
+	var evidence []driftEvidence
+	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &evidence)
+	findingJSON, _ := json.Marshal(map[string]any{
+		"kind": finding.Kind, "severity": finding.Severity, "title": finding.Title,
+		"detail": finding.Detail, "document": finding.DocPath, "anchor": finding.Anchor,
+		"source": "~" + finding.Source, "evidence": evidence,
+	})
+	instructions := ""
+	if cfg := inRepoConfig(repo, branch); cfg != nil {
+		instructions = cfg.Speccy.Instructions
+	}
+	kindLabel := strings.ReplaceAll(body.Kind, "_", " ")
+	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
+	reply, err := s.ai.Complete(r.Context(), ai.RemedyPrompt(kindLabel, entity.Folder, linkNote,
+		string(findingJSON), targetExcerpt, example, guidance))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var draft struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := ai.ExtractJSON(reply, &draft); err != nil {
+		jsonError(w, http.StatusBadGateway, "model reply was not draft JSON: "+err.Error())
+		return
+	}
+	path := cleanDocPath(draft.Path)
+	if path == "" || okf.Reserved(base(path)) {
+		jsonError(w, http.StatusBadGateway, "model suggested an invalid document path: "+draft.Path)
+		return
+	}
+	if !strings.HasPrefix(path, entity.Folder) { // keep the family's folder authoritative
+		path = entity.Folder + base(path)
+	}
+	if err := mdfm.Validate(draft.Content); err != nil {
+		jsonError(w, http.StatusBadGateway, "model draft has broken frontmatter: "+err.Error())
+		return
+	}
+	content, err := mdfm.Touch(draft.Content, true, time.Now())
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if _, _, err := repo.File(writeBranch, path); err == nil {
+		jsonError(w, http.StatusConflict, path+" already exists on "+writeBranch)
+		return
+	}
+	// the typed link is written server-side, never trusted to the model
+	linked := ""
+	if linkField != "" && linkOnRemedy {
+		if next, added, err := mdfm.AppendListItem(content, linkField, targetPath); err == nil && added {
+			content, linked = next, linkField+" → "+targetPath
+		}
+	}
+	if _, err := repo.SaveFile(writeBranch, path, content, ""); err != nil {
+		gitFail(w, err)
+		return
+	}
+	if linkField != "" && !linkOnRemedy { // the affected document points up at it
+		if tc, sha, err := repo.File(writeBranch, targetPath); err == nil {
+			if next, added, err := mdfm.AppendListItem(tc, linkField, path); err == nil && added {
+				if next, err := mdfm.Touch(next, false, time.Now()); err == nil {
+					if _, err := repo.SaveFile(writeBranch, targetPath, next, sha); err == nil {
+						linked = targetPath + " " + linkField + " → " + path
+					}
+				}
+			}
+		}
+	}
+	if err := s.store.SetDriftFindingRemedy(repo.Key(), branch, finding.Fingerprint, path, body.Kind); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.refreshDriftReport(repo, branch)
+	s.publish("save", repo.Key(), writeBranch)
+	s.publish("drift", repo.Key(), branch)
+	jsonOK(w, map[string]any{"path": path, "kind": body.Kind, "branch": writeBranch, "linked": linked})
+}
+
 // ---------------------------------------------------------------- targets
 
 // driftTarget is one resolved work-item destination.
@@ -1311,6 +1500,9 @@ func (s *Server) driftIssueBody(repo *project.Project, f *store.DriftFinding, ma
 		} else if f.SuggestedPath != "" {
 			fmt.Fprintf(&b, "- Suggested document: %s\n", f.SuggestedPath)
 		}
+	}
+	if f.RemedyPath != "" {
+		fmt.Fprintf(&b, "- %s: %s\n", strings.ReplaceAll(f.RemedyKind, "_", " "), link(f.RemedyPath))
 	}
 	fmt.Fprintf(&b, "- Reference source: ~%s\n", f.Source)
 	fmt.Fprintf(&b, "- Kind: %s · Severity: %s\n", f.Kind, f.Severity)

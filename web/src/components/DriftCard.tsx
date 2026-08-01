@@ -4,7 +4,7 @@ import { sx } from '../lib/sx';
 import { projectPath, useNav } from '../state/nav';
 import {
   DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
-  useFileFinding, useRunDrift, useTree,
+  useFileFinding, useRemedyFinding, useRunDrift, useTree,
 } from '../api/hooks';
 
 const SEV: Record<string, { label: string; fg: string; bg: string; rank: number }> = {
@@ -32,6 +32,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const dismiss = useDismissFinding(repo, branch);
   const file = useFileFinding(repo, branch);
   const draft = useDraftRequirement(repo, branch);
+  const remedy = useRemedyFinding(repo, branch);
   const [mode, setMode] = useState<DriftMode>('drift');
   const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
   const [report, setReport] = useState(''); // '' = follow the last run / default
@@ -73,6 +74,14 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
     file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath || f.draftPath }, {
       onError: (e) => setErr(String((e as Error).message ?? e)),
       onSuccess: (resp) => { if (resp.backlinkError) setErr('work item created; backlink failed: ' + resp.backlinkError); },
+    });
+  };
+  const doRemedy = (f: DriftFinding, kind: 'change' | 'work_item') => {
+    setErr('');
+    remedy.mutate({ fingerprint: f.fingerprint, kind }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      // open the created change/work item on the branch it landed on
+      onSuccess: (resp) => navigate(projectPath(repo, '/editor/' + resp.path, resp.branch)),
     });
   };
   const doDraft = (f: DriftFinding) => {
@@ -219,6 +228,25 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
                   style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
                   {draft.isPending ? 'Drafting…' : 'Draft requirement'}
                 </button>
+              )}
+              {f.remedyPath ? (
+                <span onClick={() => nav('/editor/' + f.remedyPath)}
+                  style={sx('font-size:11px;font-weight:600;color:var(--data);cursor:pointer')}>
+                  ✓ {f.remedyKind.replace('_', ' ')}: {f.remedyPath.split('/').pop()}
+                </span>
+              ) : (
+                <>
+                  <button onClick={() => doRemedy(f, 'change')} disabled={remedy.isPending}
+                    title="Draft a change record (WHY) in the workspace that drives updating the requirements"
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                    + Change
+                  </button>
+                  <button onClick={() => doRemedy(f, 'work_item')} disabled={remedy.isPending}
+                    title="Draft a work item (WHEN) in the workspace, linked to the affected document"
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                    + Work item
+                  </button>
+                </>
               )}
               {f.status === 'filed' && f.workItemUrl ? (
                 <a href={f.workItemUrl} target="_blank" rel="noopener noreferrer"

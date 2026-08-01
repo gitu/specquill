@@ -119,8 +119,19 @@ from the code.
   the AI drafts the doc from the finding's evidence files, it lands as an
   uncommitted worktree save (ws-branch on protected mains) and
   `draft_path` links finding → doc. Reopening a finding
-  (`dismiss {reopen:true}`) clears a stale draft pointer — the e2e
-  self-heal depends on that. Each drift check inlines the doc's LINKED
+  (`dismiss {reopen:true}`) clears stale draft AND remedy pointers — the
+  e2e self-heal depends on that. Every finding also spawns its own
+  **remedy document** (`POST .../findings/{fp}/remedy {kind:
+  change|work_item}`, `ai.RemedyPrompt`): the AI drafts the WHY/WHEN doc
+  in the family folder, learning conventions from an EXISTING doc of that
+  family (the fixture's `type: Change Record` is prose no default could
+  guess), and the server — never the model — writes the typed link,
+  choosing the direction from the workspace's own link_types via
+  `linkBetween` (work_item carries `delivers:` → the spec; a change is
+  instead pointed AT by the requirement's `drivers:`; change↔spec has no
+  link type, so none is written). `workspaceModel`/`docKind` in
+  `api/linker.go` are the ONE parse of entities+link_types (modelRules
+  reuses them). Each drift check inlines the doc's LINKED
   documents (frontmatter link graph, both directions — `api/linker.go`
   buildLinkIndex) as context. Large scopes are NOT refused: the worker just
   loops (sequential, cancellable); an EXPLICIT `drift.max_docs` remains a
