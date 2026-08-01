@@ -20,6 +20,11 @@ from the code.
   (`internal/api/devproxy.go`, override via `SPECQUILL_VITE_ADDR`), so browse
   **:8643** — HMR works there, tailnet included; it falls back to the embedded
   build when vite is down. E2E still needs the embedded build (`make build`).
+  **Working in a git worktree**: the proxy finds ANY vite on :5643, including
+  one started from another checkout — the server then serves that checkout's
+  SPA and your routes/components silently do not exist. Symptom: a new route
+  redirects to the default view. Run with `SPECQUILL_VITE_ADDR=127.0.0.1:5699`
+  (any dead port) to force the embedded build.
 - **Secondary forge-mode dev server: `make dev-forge`** — :8644,
   `specquill.dev-forge.yml`: real `auth.forge` GitHub PAT login (`repo` scope)
   against gitu/specquill, own store/clones under `data/runtime-forge/`. One
