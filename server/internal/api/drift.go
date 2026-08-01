@@ -37,13 +37,29 @@ import (
 // like any doc) instead of only in the server's database. Reports are LIVING
 // documents: the engine owns only the marker-delimited block — everything
 // outside it (the human's conclusions, decisions, sign-offs) is preserved —
-// and each run can target the standing default report, continue any existing
-// one, or start a fresh one (`report` on the run request).
+// and each run can target the project's standing report, continue any
+// existing one, or start a fresh one (`report` on the run request).
+//
+// Every report path is PROJECT-relative and declared by the project itself
+// (`drift.report:` in its .specquill/config.yml): in a monorepo each
+// project's alignment docs land under its own content_root, beside the
+// config that names them — never in a repo-wide location the server picked.
 const (
-	defaultDriftReportPath = "reports/source-alignment.md"
+	builtinDriftReportPath = "reports/source-alignment.md"
 	reportBegin            = "<!-- specquill:alignment:begin — engine-maintained, edit OUTSIDE this block -->"
 	reportEnd              = "<!-- specquill:alignment:end -->"
 )
+
+// driftReportPath is the project's standing alignment report: whatever its
+// own .specquill/config.yml declares (project-relative), else the built-in
+// default. An unusable configured value falls back rather than failing the
+// run — the report is a convenience, never a gate.
+func driftReportPath(cfg project.DriftConfig) string {
+	if p := cleanDocPath(cfg.Report); p != "" && !okf.Reserved(base(p)) {
+		return p
+	}
+	return builtinDriftReportPath
+}
 
 // driftRegistry tracks the in-flight run per repo+branch: one at a time, and
 // the cancel endpoint needs a handle on the worker's context.
@@ -277,10 +293,12 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 	// existing report docs (engine-marked or under reports/) — the run
 	// dialog offers them for continuation, plus the standing default
 	if files, err := repo.Snapshot(branch); err == nil {
-		reports := map[string]bool{defaultDriftReportPath: true}
+		standing := driftReportPath(driftCfg)
+		folder := standing[:strings.LastIndex(standing, "/")+1]
+		reports := map[string]bool{standing: true}
 		for p, content := range files {
-			if strings.HasSuffix(p, ".md") &&
-				(strings.Contains(content, reportBegin) || strings.HasPrefix(p, "reports/")) {
+			if strings.HasSuffix(p, ".md") && !okf.Reserved(base(p)) &&
+				(strings.Contains(content, reportBegin) || (folder != "" && strings.HasPrefix(p, folder))) {
 				reports[p] = true
 			}
 		}
@@ -291,7 +309,7 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 		sort.Strings(list)
 		out["reports"] = list
 	} else {
-		out["reports"] = []string{defaultDriftReportPath}
+		out["reports"] = []string{driftReportPath(driftCfg)}
 	}
 	jsonOK(w, out)
 }
@@ -344,13 +362,6 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusBadRequest, "mode must be drift or gaps")
 		return
 	}
-	if body.Report == "" {
-		body.Report = defaultDriftReportPath
-	}
-	if cleanDocPath(body.Report) != body.Report || okf.Reserved(base(body.Report)) {
-		jsonError(w, http.StatusBadRequest, "report must be a workspace-relative .md path")
-		return
-	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
 	files, err := repo.Snapshot(branch)
 	if err != nil {
@@ -360,6 +371,13 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	var driftCfg project.DriftConfig
 	if cfg := inRepoConfig(repo, branch); cfg != nil {
 		driftCfg = cfg.Drift
+	}
+	if body.Report == "" { // the project's own standing report
+		body.Report = driftReportPath(driftCfg)
+	}
+	if cleanDocPath(body.Report) != body.Report || okf.Reserved(base(body.Report)) {
+		jsonError(w, http.StatusBadRequest, "report must be a project-relative .md path")
+		return
 	}
 	sources := s.driftSources(r, repo, branch, driftCfg)
 	if len(sources) == 0 {

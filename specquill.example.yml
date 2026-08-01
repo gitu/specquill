@@ -85,6 +85,16 @@ projects:
 #     project: PLAT
 #     issue_type: Task
 #     token_env: SPECQUILL_JIRA_TOKEN       # "email:api_token" (Cloud) or a bare PAT (Server/DC)
+#
+# Which sources a project checks, what it scopes runs to, which of these
+# targets it may file to, and WHERE its alignment reports live are declared by
+# the project itself, in its own <content_root>/.specquill/config.yml:
+#
+#   drift:
+#     references: [regulations]
+#     paths: [specs/, requirements/]
+#     targets: [backend-board]
+#     report: reports/source-alignment.md   # project-relative
 
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by

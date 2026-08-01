@@ -16,6 +16,7 @@ import (
 	"specquill/server/internal/auth"
 	"specquill/server/internal/config"
 	"specquill/server/internal/gitx"
+	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
@@ -431,6 +432,161 @@ func TestDriftRemedyRejectsUnknownKind(t *testing.T) {
 	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/nope/remedy?branch=main",
 		map[string]string{"kind": "change"}); code != http.StatusNotFound {
 		t.Fatalf("unknown finding must 404")
+	}
+}
+
+func TestDriftReportPathComesFromProjectConfig(t *testing.T) {
+	if got := driftReportPath(project.DriftConfig{}); got != "reports/source-alignment.md" {
+		t.Fatalf("default = %q", got)
+	}
+	if got := driftReportPath(project.DriftConfig{Report: "docs/alignment/state.md"}); got != "docs/alignment/state.md" {
+		t.Fatalf("configured = %q", got)
+	}
+	// a leading slash is tolerated and normalized (paths are project-relative)
+	if got := driftReportPath(project.DriftConfig{Report: "/audits/state.md"}); got != "audits/state.md" {
+		t.Fatalf("leading slash = %q", got)
+	}
+	// junk configuration degrades to the default instead of failing runs
+	for _, bad := range []string{"../escape.md", "~src/x.md", "notmarkdown", "index.md"} {
+		if got := driftReportPath(project.DriftConfig{Report: bad}); got != "reports/source-alignment.md" {
+			t.Fatalf("%q should fall back, got %q", bad, got)
+		}
+	}
+}
+
+func TestDriftReportHonorsConfiguredLocation(t *testing.T) {
+	empty := `{"findings": []}`
+	h, _, _, _, _ := testDriftServer(t, []string{empty})
+	cookie := login(t, h)
+
+	// the project declares where its alignment docs live
+	cfgYML := "version: 2\nproject: w\nreferences:\n  - source: reg\n    grounding: true\n" +
+		"drift:\n  targets: [board]\n  report: audits/alignment-state.md\n"
+	_, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/.specquill/config.yml?ref=main", nil)
+	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/.specquill/config.yml?branch=main",
+		map[string]string{"content": cfgYML, "baseSha": file["sha"].(string)}); code != http.StatusOK {
+		t.Fatalf("put config: %d %v", code, out)
+	}
+
+	// GET offers the configured report as the standing one
+	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/drift?branch=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("get drift: %d %v", code, out)
+	}
+	reports, _ := out["reports"].([]any)
+	if len(reports) != 1 || reports[0] != "audits/alignment-state.md" {
+		t.Fatalf("reports = %v", reports)
+	}
+
+	// and a run with no explicit target writes exactly there
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	if drift["run"].(map[string]any)["reportPath"] != "audits/alignment-state.md" {
+		t.Fatalf("run = %v", drift["run"])
+	}
+	if code, _ := doJSON(t, h, cookie, "GET", "/api/repos/w/files/audits/alignment-state.md?ref=main", nil); code != http.StatusOK {
+		t.Fatalf("report not written at the configured path: %d", code)
+	}
+}
+
+// A monorepo project's alignment docs belong to THAT project: the report path
+// is project-relative, so it lands under the project's own content_root —
+// beside the .specquill/config.yml that declares it — never at the repo root.
+func TestDriftReportStaysInsideTheProjectContentRoot(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	gitRun(t, "init", "-b", "main", src)
+	write := func(rel, content string) {
+		abs := filepath.Join(src, filepath.FromSlash(rel))
+		_ = os.MkdirAll(filepath.Dir(abs), 0o755)
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("src/main.go", "package main\n")
+	write("docs/specs/.specquill/config.yml",
+		"version: 2\nproject: specs\nreferences:\n  - source: reg\n    grounding: true\ndrift:\n  report: audits/state.md\n")
+	write("docs/specs/requirements/REQ-001.md", "---\nid: REQ-001\ntype: Requirement\ntitle: Login\n---\n\nbody\n")
+	gitRun(t, "-C", src, "add", "-A")
+	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+	reg := filepath.Join(tmp, "reg-src")
+	gitRun(t, "init", "-b", "main", reg)
+	if err := os.WriteFile(filepath.Join(reg, "rules.md"), []byte("microsecond timestamps"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, "-C", reg, "add", "-A")
+	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "reg")
+
+	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
+			"delta": map[string]any{"content": `{"findings": []}`}}}})
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", raw)
+	}))
+	t.Cleanup(aiSrv.Close)
+
+	cfg := &config.Config{
+		DataDir: filepath.Join(tmp, "data"),
+		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
+		Session: config.SessionConfig{TTL: time.Hour, CookieSecure: false},
+		Auth:    config.AuthConfig{Local: config.LocalAuthConfig{Enabled: true}},
+		Projects: []config.ProjectConfig{{
+			ID: "specs", Remote: src, ContentRoot: "docs/specs", DefaultBranch: "main",
+			ProtectedBranches: []string{"_none"}, // path mapping is the subject here
+		}},
+		Sources: []config.SourceConfig{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main"}},
+	}
+	cfg.Normalize()
+	st := store.OpenTest(t)
+	if err := st.SyncProjects([]store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := auth.HashPassword("hunter2secret")
+	if err := st.AddLocalUser("flo", "Flo Test", "flo@test.local", hash); err != nil {
+		t.Fatal(err)
+	}
+	git, err := gitx.NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.Init(); err != nil {
+		t.Fatal(err)
+	}
+	h := New(cfg, git, Options{
+		Store: st, Sessions: auth.NewSessions(st, cfg),
+		AI:   ai.New(config.AIConfig{Enabled: true, BaseURL: aiSrv.URL, Model: "test-1"}),
+		Dist: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
+	})
+	cookie := login(t, h)
+
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/specs/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		_, out := doJSON(t, h, cookie, "GET", "/api/repos/specs/drift?branch=main", nil)
+		if run, _ := out["run"].(map[string]any); run != nil && run["status"] != "running" {
+			// the API speaks project-relative paths
+			if run["reportPath"] != "audits/state.md" {
+				t.Fatalf("report path = %v", run["reportPath"])
+			}
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	// …and on disk it sits under the project's content root, not the repo root
+	wt := filepath.Join(cfg.DataDir, "repos", "specs", "worktrees", "main")
+	if _, err := os.Stat(filepath.Join(wt, "docs", "specs", "audits", "state.md")); err != nil {
+		t.Fatalf("report not under the project content root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "audits")); err == nil {
+		t.Fatal("report leaked to the repository root")
 	}
 }
 

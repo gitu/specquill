@@ -145,9 +145,15 @@ from the code.
   card). **Live feedback + git-native
   report**: every run narrates per-unit activity (`run.activity` in
   GET /drift, shown in the card while running) and continuously rewrites a
-  report doc IN the repo (default `reports/source-alignment.md`; the run
-  request's `report:` field creates a new one or CONTINUES any existing one
-  — the card has a picker). Reports are LIVING documents: the engine owns
+  report doc IN the repo. WHERE it lives belongs to the PROJECT, not the
+  server: `drift.report:` in that project's own `.specquill/config.yml`
+  (fallback `reports/source-alignment.md`), and every report/draft/remedy
+  path is PROJECT-relative — `project.SaveFile` MapIns it, so a monorepo
+  project's alignment docs land under its own `content_root` beside the
+  config that names them, never at the repo root (see
+  TestDriftReportStaysInsideTheProjectContentRoot). The run request's
+  `report:` field still overrides per run — creating a new one or
+  CONTINUING any existing one (the card has a picker). Reports are LIVING documents: the engine owns
   only the `<!-- specquill:alignment:begin/end -->` block (run summary +
   findings table + activity + accumulated run log); everything outside it
   is the human's and survives every rewrite. Written on the caller's ws

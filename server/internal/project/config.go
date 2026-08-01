@@ -50,6 +50,11 @@ type DriftConfig struct {
 	// host, filed with the caller's own PAT.
 	Targets []string `yaml:"targets"`
 	MaxDocs int      `yaml:"max_docs"` // optional hard cap per run (0 = uncapped, large scopes just loop)
+	// Report is this project's standing alignment report document, written
+	// PROJECT-relative (a monorepo project's report lands under its own
+	// content_root, beside the .specquill/config.yml that declares it).
+	// Default: reports/source-alignment.md. A run may target another one.
+	Report string `yaml:"report"`
 }
 
 // ManifestEntry declares one workspace in a repository's ROOT

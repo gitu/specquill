@@ -64,3 +64,6 @@ drift:
   references: [regulations]
   paths: [specs/, requirements/, data-mappings/]
   targets: [dev-board]
+  # where THIS project keeps its alignment reports (project-relative: in a
+  # monorepo it lands under the project's own content_root, beside this file)
+  report: reports/source-alignment.md
