@@ -182,12 +182,16 @@ export interface DriftFinding {
   workItemUrl: string; workItemTarget: string; updatedAt: number;
 }
 export interface DriftRun {
-  id: number; mode: DriftMode; status: 'running' | 'ok' | 'error' | 'cancelled'; error: string;
+  // 'interrupted' = the server restarted mid-run; the units it had already
+  // checked stand, and `resumable` says the rest can be picked up
+  id: number; mode: DriftMode; status: 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted';
+  error: string;
   scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
   headSha: string; startedAt: number; finishedAt: number;
   activity: string[];             // live per-unit narration of the run
   reportPath: string;             // git-native run report doc ('' = none)
   reportBranch: string;
+  focus: string; resumedFrom: number; resumable: boolean;
 }
 export interface DriftTarget { name: string; kind: string; project: string }
 export interface DriftResp {
@@ -214,8 +218,8 @@ export function useRunDrift(repo: string | undefined, branch: string) {
   return useMutation({
     // `branch` overrides the hook's branch: the caller may have just been
     // moved onto their workspace branch and the run must target THAT one
-    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string }) =>
-      api<{ runId: number; docsTotal: number; mode: DriftMode }>(
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string; resume?: number }) =>
+      api<{ runId: number; docsTotal: number; mode: DriftMode; resumedFrom: number }>(
         `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),
     // prefix key: a run started on a freshly switched branch must refresh too

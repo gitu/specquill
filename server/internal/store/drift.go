@@ -13,7 +13,7 @@ type DriftRun struct {
 	RepoKey           string
 	Branch            string
 	Mode              string // drift (per-doc verify) | gaps (per-source coverage)
-	Status            string // running | ok | error | cancelled
+	Status            string // running | ok | error | cancelled | interrupted
 	Error             string
 	ScopeJSON         string // resolved doc list, frozen at start
 	DocsTotal         int
@@ -24,6 +24,9 @@ type DriftRun struct {
 	ReportPath        string // in-repo report doc this run maintains ('' = none)
 	ReportBranch      string
 	ExtractionsJSON   string // persisted application inventories [{source,path}]
+	SourcesJSON       string // reference names this run was restricted to (for resume)
+	Focus             string // gaps: the area this sweep was aimed at (for resume)
+	ResumedFrom       int64  // the run this one picked up where it stopped (0 = fresh)
 	StartedAt         int64
 	FinishedAt        int64
 }
@@ -60,12 +63,15 @@ func (s *Store) CreateDriftRun(run DriftRun) (int64, error) {
 	if run.Mode == "" {
 		run.Mode = "drift"
 	}
+	if run.SourcesJSON == "" {
+		run.SourcesJSON = "[]"
+	}
 	res, err := s.exec(`INSERT INTO drift_runs
 		(repo_key, branch, mode, status, scope_json, docs_total, head_sha,
-		 report_path, report_branch, started_at)
-		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
+		 report_path, report_branch, sources_json, focus, resumed_from, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA,
-		run.ReportPath, run.ReportBranch, time.Now().Unix())
+		run.ReportPath, run.ReportBranch, run.SourcesJSON, run.Focus, run.ResumedFrom, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -96,25 +102,63 @@ func (s *Store) FinishDriftRun(id int64, status, errMsg string) error {
 // LatestDriftRun returns the most recent run for a repo+branch, or ErrNotFound.
 func (s *Store) LatestDriftRun(repoKey, branch string) (*DriftRun, error) {
 	r := &DriftRun{}
-	err := s.queryRow(`SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
-			docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
-			extractions_json, started_at, finished_at
-		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT 1`,
-		repoKey, branch).
-		Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON, &r.DocsTotal,
-			&r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON, &r.ReportPath,
-			&r.ReportBranch, &r.ExtractionsJSON, &r.StartedAt, &r.FinishedAt)
+	err := s.scanDriftRun(s.queryRow(driftRunSelect+
+		` WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT 1`, repoKey, branch), r)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return r, err
 }
 
-// MarkInterruptedDriftRuns fails every `running` run at boot: their worker
-// goroutines died with the previous process, re-running the scope is the
-// resume mechanism.
+// DriftRunByID loads one run — the resume path, which must check the run it
+// picks up belongs to the repo+branch the caller asked about.
+func (s *Store) DriftRunByID(id int64) (*DriftRun, error) {
+	r := &DriftRun{}
+	err := s.scanDriftRun(s.queryRow(driftRunSelect+` WHERE id = ?`, id), r)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return r, err
+}
+
+// DriftRunResumedBy reports which run already picked up id (0 = none), so the
+// same remaining units are not run twice.
+func (s *Store) DriftRunResumedBy(id int64) (int64, error) {
+	var by int64
+	err := s.queryRow(`SELECT id FROM drift_runs WHERE resumed_from = ? ORDER BY id DESC LIMIT 1`, id).Scan(&by)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return by, err
+}
+
+const driftRunSelect = `SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
+		docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
+		extractions_json, sources_json, focus, resumed_from, started_at, finished_at
+	FROM drift_runs`
+
+func (s *Store) scanDriftRun(row *sql.Row, r *DriftRun) error {
+	return row.Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON,
+		&r.DocsTotal, &r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON,
+		&r.ReportPath, &r.ReportBranch, &r.ExtractionsJSON, &r.SourcesJSON, &r.Focus,
+		&r.ResumedFrom, &r.StartedAt, &r.FinishedAt)
+}
+
+// Resumable reports whether a run stopped with work left — the server
+// restarted under it, the user cancelled it, or it failed midway. Its
+// remaining units are scope[DocsDone:]: the worker is sequential, so
+// DocsDone is exactly how far it got.
+func (r *DriftRun) Resumable() bool {
+	return r.Status != "running" && r.Status != "ok" && r.DocsDone < r.DocsTotal
+}
+
+// MarkInterruptedDriftRuns closes every `running` run at boot: their worker
+// goroutines died with the previous process, so the row would otherwise poll
+// as running forever. `interrupted` is its OWN status, not an error — the
+// work up to DocsDone stands and the run can be resumed from there.
 func (s *Store) MarkInterruptedDriftRuns() (int64, error) {
-	res, err := s.exec(`UPDATE drift_runs SET status = 'error', error = 'interrupted',
+	res, err := s.exec(`UPDATE drift_runs SET status = 'interrupted',
+		error = 'the server restarted while this run was in progress',
 		finished_at = ? WHERE status = 'running'`, time.Now().Unix())
 	if err != nil {
 		return 0, err

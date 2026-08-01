@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   repo_key           TEXT NOT NULL,
   branch             TEXT NOT NULL,
   mode               TEXT NOT NULL DEFAULT 'drift', -- drift (per-doc verify) | gaps (per-source coverage)
-  status             TEXT NOT NULL,               -- running | ok | error | cancelled
+  status             TEXT NOT NULL,               -- running | ok | error | cancelled | interrupted
   error              TEXT NOT NULL DEFAULT '',
   scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list (gaps: source list)
   docs_total         INT NOT NULL DEFAULT 0,
@@ -113,6 +113,9 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   report_path        TEXT NOT NULL DEFAULT '',    -- the in-repo report doc this run maintains
   report_branch      TEXT NOT NULL DEFAULT '',
   extractions_json   TEXT NOT NULL DEFAULT '[]',  -- persisted application inventories [{source,path}]
+  sources_json       TEXT NOT NULL DEFAULT '[]',  -- reference names this run was restricted to (resume)
+  focus              TEXT NOT NULL DEFAULT '',    -- gaps: the area the sweep was aimed at (resume)
+  resumed_from       INT NOT NULL DEFAULT 0,      -- the run this one picked up where it stopped
   started_at         BIGINT NOT NULL,
   finished_at        BIGINT NOT NULL DEFAULT 0
 );

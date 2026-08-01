@@ -80,6 +80,15 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
       setTimeout(() => qc.invalidateQueries({ queryKey: ['drift', repo] }), 400);
     }).catch((e) => setErr(String((e as Error).message ?? e)));
   };
+  // pick up a run that stopped with units left: it keeps its own mode,
+  // sources, focus and report — the server has all of that
+  const resume = () => {
+    setErr('');
+    void ensureWritableBranch().then(async (on) => {
+      await run.mutateAsync({ branch: on, resume: data.run!.id });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['drift', repo] }), 400);
+    }).catch((e) => setErr(String((e as Error).message ?? e)));
+  };
   return (
     <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       <div style={sx('display:flex;align-items:center;gap:9px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)')}>
@@ -103,6 +112,12 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
           <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
             <div style={sx(`width:${data.run!.docsTotal ? Math.round((100 * data.run!.docsDone) / data.run!.docsTotal) : 0}%;height:100%;background:var(--ai)`)} />
           </div>
+          {/* the run is a server-side worker, not a browser task — say so, or
+              people sit and watch a page they do not need to watch */}
+          <div style={sx('font-size:11px;color:var(--text-3);margin-top:8px;line-height:1.5')}>
+            Runs on the server — you can close this page or work elsewhere. Findings and the
+            report are written as it goes, and this page picks the run back up when you return.
+          </div>
           {(data.run!.activity?.length ?? 0) > 0 && (
             <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);margin-top:8px;line-height:1.6")}>
               {data.run!.activity.slice(-3).map((line, i) => <div key={i} style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{line}</div>)}
@@ -111,6 +126,22 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
         </div>
       ) : (
         <div style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
+          {data.run?.resumable && (
+            <div data-drift-resume style={sx('display:flex;align-items:center;gap:9px;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2)')}>
+              <div style={sx('flex:1;min-width:0;font-size:11.5px;color:var(--text-2);line-height:1.5')}>
+                {data.run.status === 'interrupted'
+                  ? 'The server restarted during this run.'
+                  : data.run.status === 'cancelled' ? 'This run was stopped.' : 'This run failed part way.'}
+                {' '}
+                <strong>{data.run.docsDone} of {data.run.docsTotal}</strong> {data.run.mode === 'drift' ? 'documents' : 'sources'} were
+                checked — the rest can be picked up.
+              </div>
+              <button data-drift-resume-start onClick={resume} disabled={run.isPending}
+                style={sx('height:26px;padding:0 11px;border:1px solid var(--ai);border-radius:7px;background:var(--ai);color:#fff;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
+                {run.isPending ? 'Resuming…' : `Resume (${data.run.docsTotal - data.run.docsDone} left)`}
+              </button>
+            </div>
+          )}
           <div style={sx('display:flex;gap:2px;background:var(--surface-2);border-radius:7px;padding:2px;width:fit-content')}>
             <ModeSeg label="Drift" title="verify each document against the reference sources" active={mode === 'drift'} onClick={() => setMode('drift')} />
             <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => setMode('gaps')} />
@@ -355,6 +386,7 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                 ))}
               </details>
             )}
+            <KeepOpen show={draft.isPending || plan.isPending || remedy.isPending || create.isPending} />
             <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap')}>
               {proposes && !f.draftPath && (
                 <button onClick={() => doDraft(f)} disabled={draft.isPending}
@@ -490,5 +522,20 @@ function ScopeChip({ label, active, onClick }: { label: string; active: boolean;
       style={sx(`height:22px;padding:0 9px;border:1px solid ${active ? 'var(--text)' : 'var(--border-2)'};border-radius:99px;background:${active ? 'var(--text)' : 'var(--surface)'};color:${active ? 'var(--bg)' : 'var(--text-2)'};font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none`)}>
       {label}
     </button>
+  );
+}
+
+/**
+ * Unlike a run — which is a server-side worker that outlives the page — the
+ * per-finding AI actions are ONE request. Navigating away cancels it and the
+ * draft is lost, so say so while it is in flight.
+ */
+function KeepOpen({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div data-keep-open style={sx('font-size:11px;color:var(--text-3);margin-top:7px;line-height:1.5')}>
+      The AI is writing this now — keep this page open until it lands (unlike a run, this one is
+      not resumable).
+    </div>
   );
 }

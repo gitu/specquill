@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -91,7 +92,9 @@ func TestVerifyEvidence(t *testing.T) {
 // content — the fake wraps them as SSE for streaming calls and as a JSON
 // completion for one-shot calls; prompts sees each request's user message),
 // and a fake forge target.
-func testDriftServer(t *testing.T, aiResponses []string) (h http.Handler, st *store.Store, forgeSrv *httptest.Server, issuePosts *int, prompts *[]string) {
+// onAI (optional) runs at the start of every AI request — a seam for tests
+// that need to act WHILE the model call is in flight (cancellation).
+func testDriftServer(t *testing.T, aiResponses []string, onAI ...func()) (h http.Handler, st *store.Store, forgeSrv *httptest.Server, issuePosts *int, prompts *[]string) {
 	t.Helper()
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")
@@ -125,6 +128,9 @@ func testDriftServer(t *testing.T, aiResponses []string) (h http.Handler, st *st
 	aiCalls := 0
 	prompts = &[]string{}
 	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, fn := range onAI {
+			fn()
+		}
 		if aiCalls >= len(aiResponses) {
 			t.Errorf("unexpected AI request #%d", aiCalls+1)
 			return
@@ -1123,5 +1129,124 @@ func TestDriftRunGivesUpAfterOneReAsk(t *testing.T) {
 	}
 	if reasks != 1 {
 		t.Errorf("the re-ask must happen once, not in a loop (got %d)", reasks)
+	}
+}
+
+// A run that stopped with work left (the server restarted under it, or the
+// user cancelled) is picked up where it stopped — same configuration, only
+// the units it never reached.
+func TestDriftRunResumesWhereItStopped(t *testing.T) {
+	reply := `{"findings":[
+		{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high","title":"resumed finding",
+		 "detail":"d","evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]}
+	]}`
+	h, st, _, _, _ := testDriftServer(t, []string{reply, reply, reply})
+	cookie := login(t, h)
+
+	// a gaps run that reached 1 of 2 sources before it died
+	prior, err := st.CreateDriftRun(store.DriftRun{RepoKey: "w", Branch: "main", Mode: "gaps",
+		ScopeJSON: `["gone","reg"]`, DocsTotal: 2, ReportPath: "reports/a.md", ReportBranch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateDriftRunProgress(prior, 1, 0, "[]"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.MarkInterruptedDriftRuns(); err != nil || n != 1 {
+		t.Fatalf("mark interrupted: %d (%v)", n, err)
+	}
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"resume": prior})
+	if code != http.StatusOK {
+		t.Fatalf("resume: %d %v", code, out)
+	}
+	if out["mode"] != "gaps" {
+		t.Errorf("the resumed run must inherit its mode, got %v", out["mode"])
+	}
+	if out["docsTotal"].(float64) != 1 {
+		t.Errorf("want only the 1 unresolved unit, got %v", out["docsTotal"])
+	}
+	if out["resumedFrom"].(float64) != float64(prior) {
+		t.Errorf("resumedFrom = %v, want %d", out["resumedFrom"], prior)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" {
+		t.Fatalf("resumed run status = %v (%v)", run["status"], run["error"])
+	}
+	if scope := run["scope"].([]any); len(scope) != 1 || scope[0] != "reg" {
+		t.Errorf("resumed scope = %v, want the unchecked source", scope)
+	}
+	// and the finished run is not resumable again
+	if run["resumable"] != false {
+		t.Error("a completed run must not offer a resume")
+	}
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"resume": prior}); code != http.StatusConflict {
+		t.Errorf("resuming a run already picked up: %d %v", code, out)
+	}
+}
+
+func TestDriftResumeRejectsUnknownAndForeignRuns(t *testing.T) {
+	h, st, _, _, _ := testDriftServer(t, []string{`{"findings":[]}`})
+	cookie := login(t, h)
+
+	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"resume": 9999}); code != http.StatusNotFound {
+		t.Errorf("unknown run must 404, got %d", code)
+	}
+	// a run of another branch must not be picked up here
+	other, err := st.CreateDriftRun(store.DriftRun{RepoKey: "w", Branch: "ws/flo", Mode: "drift",
+		ScopeJSON: `["specs/txn.md","specs/other.md"]`, DocsTotal: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MarkInterruptedDriftRuns(); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"resume": other}); code != http.StatusBadRequest {
+		t.Errorf("a run from another branch must be refused, got %d", code)
+	}
+}
+
+// A cancelled run must report how far it actually got: reporting every unit
+// done would make its leftover work look finished and block the resume.
+func TestCancelledRunKeepsItsRealProgress(t *testing.T) {
+	inFlight, release := make(chan struct{}, 1), make(chan struct{})
+	h, _, _, _, _ := testDriftServer(t, []string{`{"findings":[]}`}, func() {
+		select {
+		case inFlight <- struct{}{}:
+		default:
+		}
+		<-release // hold the model call open until the run is cancelled
+	})
+	releaseOnce := sync.OnceFunc(func() { close(release) })
+	defer releaseOnce() // an early t.Fatal must not leave the fake AI blocked
+	cookie := login(t, h)
+
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	select {
+	case <-inFlight:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run never reached the model")
+	}
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/cancel?branch=main", nil); code != http.StatusOK {
+		t.Fatalf("cancel: %d %v", code, out)
+	}
+	releaseOnce()
+
+	run := waitDrift(t, h, cookie)["run"].(map[string]any)
+	if run["status"] != "cancelled" {
+		t.Fatalf("status = %v", run["status"])
+	}
+	if run["docsDone"].(float64) >= run["docsTotal"].(float64) {
+		t.Errorf("a cancelled run claims %v of %v units done", run["docsDone"], run["docsTotal"])
+	}
+	if run["resumable"] != true {
+		t.Error("a run stopped with units left must be resumable")
 	}
 }

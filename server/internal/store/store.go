@@ -106,7 +106,7 @@ func dropStaleDriftTables(db *sql.DB) error {
 		return exists && !found, rows.Err()
 	}
 	for table, sentinel := range map[string]string{
-		"drift_runs":     "extractions_json",
+		"drift_runs":     "resumed_from",
 		"drift_findings": "documents_json",
 	} {
 		isStale, err := stale(table, sentinel)

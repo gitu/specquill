@@ -31,7 +31,13 @@ func TestDriftRunLifecycle(t *testing.T) {
 
 func TestMarkInterruptedDriftRuns(t *testing.T) {
 	s := OpenTest(t)
-	if _, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main"}); err != nil {
+	// a run that got 2 of 5 units done before the process died
+	id, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", DocsTotal: 5,
+		ScopeJSON: `["a.md","b.md","c.md","d.md","e.md"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDriftRunProgress(id, 2, 0, "[]"); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.MarkInterruptedDriftRuns()
@@ -39,8 +45,33 @@ func TestMarkInterruptedDriftRuns(t *testing.T) {
 		t.Fatalf("want 1 interrupted, got %d (%v)", n, err)
 	}
 	run, _ := s.LatestDriftRun("r", "main")
-	if run.Status != "error" || run.Error != "interrupted" {
+	if run.Status != "interrupted" || run.Error == "" {
 		t.Fatalf("unexpected run: %+v", run)
+	}
+	if !run.Resumable() {
+		t.Error("a run with units left must be resumable")
+	}
+	byID, err := s.DriftRunByID(id)
+	if err != nil || byID.Status != "interrupted" {
+		t.Fatalf("DriftRunByID = %+v (%v)", byID, err)
+	}
+}
+
+func TestDriftRunResumable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		run  DriftRun
+		want bool
+	}{
+		"interrupted midway":  {DriftRun{Status: "interrupted", DocsTotal: 5, DocsDone: 2}, true},
+		"cancelled midway":    {DriftRun{Status: "cancelled", DocsTotal: 5, DocsDone: 2}, true},
+		"failed midway":       {DriftRun{Status: "error", DocsTotal: 5, DocsDone: 2}, true},
+		"still running":       {DriftRun{Status: "running", DocsTotal: 5, DocsDone: 2}, false},
+		"finished":            {DriftRun{Status: "ok", DocsTotal: 5, DocsDone: 5}, false},
+		"cancelled at theend": {DriftRun{Status: "cancelled", DocsTotal: 5, DocsDone: 5}, false},
+	} {
+		if got := tc.run.Resumable(); got != tc.want {
+			t.Errorf("%s: Resumable() = %v", name, got)
+		}
 	}
 }
 

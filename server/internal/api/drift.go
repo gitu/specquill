@@ -428,6 +428,7 @@ func driftRunWire(run *store.DriftRun) map[string]any {
 		"docsTotal": run.DocsTotal, "docsDone": run.DocsDone,
 		"droppedUnverified": run.DroppedUnverified, "headSha": run.HeadSHA,
 		"activity": activity, "reportPath": run.ReportPath, "reportBranch": run.ReportBranch,
+		"focus": run.Focus, "resumedFrom": run.ResumedFrom, "resumable": run.Resumable(),
 		"startedAt": run.StartedAt, "finishedAt": run.FinishedAt,
 	}
 }
@@ -470,8 +471,44 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		Sources []string `json:"sources"`
 		Focus   string   `json:"focus"`
 		Report  string   `json:"report"` // report doc to create/continue; default: the standing report
+		// Resume picks up a run that stopped with units left (the server
+		// restarted, the user cancelled it): everything it was configured
+		// with is inherited and only its unchecked units are run.
+		Resume int64 `json:"resume"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = default scope
+
+	branchQ := repo.ResolveRef(r.URL.Query().Get("branch"))
+	var prior *store.DriftRun
+	if body.Resume > 0 {
+		var err error
+		if prior, err = s.store.DriftRunByID(body.Resume); err != nil {
+			jsonError(w, http.StatusNotFound, "no such run")
+			return
+		}
+		if prior.RepoKey != repo.Key() || prior.Branch != branchQ {
+			jsonError(w, http.StatusBadRequest, "that run belongs to another project or branch")
+			return
+		}
+		if !prior.Resumable() {
+			jsonError(w, http.StatusConflict, "that run has nothing left to pick up")
+			return
+		}
+		if by, err := s.store.DriftRunResumedBy(prior.ID); err == nil && by > 0 {
+			jsonError(w, http.StatusConflict,
+				fmt.Sprintf("run %d already picked that one up — continue from run %d instead", by, by))
+			return
+		}
+		// the run is picked up AS IT WAS configured — mode, sources, focus and
+		// the report it was writing
+		body.Mode, body.Focus = prior.Mode, prior.Focus
+		if body.Report == "" {
+			body.Report = prior.ReportPath
+		}
+		if len(body.Sources) == 0 {
+			_ = json.Unmarshal([]byte(prior.SourcesJSON), &body.Sources)
+		}
+	}
 	if body.Mode == "" {
 		body.Mode = "drift"
 	}
@@ -479,7 +516,7 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusBadRequest, "mode must be drift, gaps or extract")
 		return
 	}
-	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	branch := branchQ
 	files, err := repo.Snapshot(branch)
 	if err != nil {
 		gitFail(w, err)
@@ -556,6 +593,36 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		}
 	}
 
+	// resume: only the units the prior run never reached. The worker is
+	// sequential, so scope[DocsDone:] is exactly what is left — minus anything
+	// that has since disappeared from the workspace or the selection.
+	var resumedFrom int64
+	if prior != nil {
+		var priorScope []string
+		_ = json.Unmarshal([]byte(prior.ScopeJSON), &priorScope)
+		if prior.DocsDone < len(priorScope) {
+			priorScope = priorScope[prior.DocsDone:]
+		} else {
+			priorScope = nil
+		}
+		still := map[string]bool{}
+		for _, u := range units {
+			still[u] = true
+		}
+		remaining := make([]string, 0, len(priorScope))
+		for _, u := range priorScope {
+			if still[u] {
+				remaining = append(remaining, u)
+			}
+		}
+		if len(remaining) == 0 {
+			jsonError(w, http.StatusUnprocessableEntity,
+				"nothing left to pick up — the remaining units are gone from this branch")
+			return
+		}
+		units, resumedFrom = remaining, prior.ID
+	}
+
 	key := driftKey(repo.Key(), branch)
 	ctx, cancel := context.WithCancel(context.Background())
 	if !s.drift.claim(key, cancel) {
@@ -581,10 +648,16 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	}
 	scopeJSON, _ := json.Marshal(units)
 	headSHA, _ := repo.Repo.Head(branch)
+	runSources := make([]string, 0, len(sources))
+	for _, src := range sources {
+		runSources = append(runSources, src.Name)
+	}
+	sourcesJSON, _ := json.Marshal(runSources)
 	runID, err := s.store.CreateDriftRun(store.DriftRun{
 		RepoKey: repo.Key(), Branch: branch, Mode: body.Mode, ScopeJSON: string(scopeJSON),
 		DocsTotal: len(units), HeadSHA: headSHA,
 		ReportPath: reportPath, ReportBranch: reportBranch,
+		SourcesJSON: string(sourcesJSON), Focus: body.Focus, ResumedFrom: resumedFrom,
 	})
 	if err != nil {
 		s.drift.release(key)
@@ -599,14 +672,15 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	for _, src := range sources {
 		srcNames = append(srcNames, "~"+src.Name)
 	}
-	log.Printf("drift [%s@%s]: run %d start — mode=%s units=%d sources=%s report=%s%s%s",
+	log.Printf("drift [%s@%s]: run %d start — mode=%s units=%d sources=%s report=%s%s%s%s",
 		repo.ID, branch, runID, body.Mode, len(units), strings.Join(srcNames, ","),
 		reportPath, map[bool]string{true: " on " + reportBranch, false: " (none)"}[reportBranch != ""],
-		map[bool]string{true: " focus=" + strconv.Quote(body.Focus), false: ""}[body.Focus != ""])
+		map[bool]string{true: " focus=" + strconv.Quote(body.Focus), false: ""}[body.Focus != ""],
+		map[bool]string{true: fmt.Sprintf(" resuming run %d", resumedFrom), false: ""}[resumedFrom > 0])
 	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx,
-		driftCfg.Instructions, body.Report, body.Focus)
+		driftCfg.Instructions, body.Report, body.Focus, resumedFrom)
 	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode,
-		"sources": len(sources), "focus": body.Focus})
+		"sources": len(sources), "focus": body.Focus, "resumedFrom": resumedFrom})
 }
 
 // POST /api/repos/{repo}/drift/cancel?branch=
@@ -679,7 +753,8 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 // run continues; only cancellation stops it early.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
 	mode string, repo *project.Project, branch string, units []string, files map[string]string,
-	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string) {
+	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string,
+	resumedFrom int64) {
 	defer cancel()
 	defer s.drift.release(key)
 
@@ -736,7 +811,14 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		note(fmt.Sprintf("▸ drift check of %d document%s against %s",
 			len(units), plural(len(units)), strings.Join(srcNames, ", ")))
 	}
+	if resumedFrom > 0 {
+		note(fmt.Sprintf("▸ picking up run %d where it stopped", resumedFrom))
+	}
 	persist(0)
+	// how far the run actually got: a cancelled or interrupted run must NOT
+	// report every unit done, or its remaining work looks finished and it
+	// cannot be picked up (store.DriftRun.Resumable)
+	done := 0
 	for i, unit := range units {
 		if ctx.Err() != nil {
 			status = "cancelled"
@@ -842,7 +924,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 					droppedDoc, plural(droppedDoc)))
 			}
 		}
-		persist(i + 1)
+		done = i + 1
+		persist(done)
 		// the in-repo report follows along — every completed unit updates it
 		s.writeDriftReport(runID, repo, branch, false)
 		s.publish("drift", repo.Key(), branch)
@@ -854,9 +937,13 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			live++
 		}
 	}
+	if done < len(units) {
+		note(fmt.Sprintf("▪ stopped after %d of %d — the rest can be picked up",
+			done, len(units)))
+	}
 	note(fmt.Sprintf("▪ %s — %d finding%s live%s", status, live, plural(live),
 		map[bool]string{true: fmt.Sprintf(", %d dropped", dropped), false: ""}[dropped > 0]))
-	persist(len(units))
+	persist(done)
 
 	errMsg := ""
 	if len(docErrs) > 0 {

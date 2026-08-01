@@ -327,6 +327,28 @@ from the code.
   PAT mode; `web/e2e/patlogin.spec.ts` self-skips unless the target server
   reports a `forge` provider.
 
+## Runs outlive the page; one-shot actions do not
+
+- A **run** is a server-side worker (goroutine + `drift_runs` row). Closing
+  the tab does not stop it, findings and the report are written per unit, and
+  the card picks it back up on return — the card SAYS so while running,
+  because nothing else would tell the user.
+- Boot closes what the previous process left behind: `MarkInterruptedDriftRuns`
+  (called from `api/router.go`) turns every `running` row into status
+  **`interrupted`** — its own status, not an error, since the units already
+  checked stand.
+- A run that stopped with units left (`interrupted`, `cancelled`, errored) is
+  **resumable**: `POST .../drift/run {resume: <runId>}` inherits its mode,
+  sources, focus and report and runs ONLY `scope[DocsDone:]`. The worker is
+  sequential, so `DocsDone` is exactly how far it got — which is why it now
+  persists REAL progress when it stops (it used to mark every unit done at
+  the end, making a cancelled run look complete and killing the resume).
+  `store.DriftRun.Resumable()` is the one gate; a run already picked up by
+  another 409s, so the same units never run twice.
+- The per-finding actions (draft, plan, remedy, create) and the linker are
+  ONE request each — navigating away cancels them. Both surface a
+  `data-keep-open` hint while in flight; do not promise resumability there.
+
 ## AI call resilience
 
 A long run makes hundreds of model calls, so a single blip must not sink a

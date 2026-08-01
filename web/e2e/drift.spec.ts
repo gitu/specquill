@@ -420,3 +420,65 @@ test('a finding plans a linked SET of documents from the configured families', a
   };
   expect(d.findings.some((f) => f.documents?.length === 3)).toBe(true);
 });
+
+// A run is a server-side worker: closing the page does not stop it, and a run
+// that stops with units left can be picked up where it stopped.
+test('a stopped run is picked up where it stopped', async ({ page, request }) => {
+  await resetFindings(request);
+  const branch = await wsBranch(request);
+  const before = await runId(request, branch);
+
+  // the same scope the other tests use — a wider one would leave findings
+  // behind for documents no other test resets. Stopped at once: the mock
+  // answers in milliseconds, so waiting for progress races the run to its end.
+  const started = (await (await request.post(`/api/repos/${REPO}/drift/run?branch=${q(branch)}`, {
+    headers: H, data: { mode: 'drift', paths: ['specs/'] },
+  })).json()) as { runId: number; docsTotal: number };
+  expect(started.docsTotal).toBeGreaterThan(1);
+  await request.post(`/api/repos/${REPO}/drift/cancel?branch=${q(branch)}`, { headers: H, data: {} });
+  await runFinished(request, branch, before);
+
+  const stopped = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as {
+    run: { id: number; status: string; docsDone: number; docsTotal: number; resumable: boolean };
+  };
+  expect(stopped.run.status).toBe('cancelled');
+  expect(stopped.run.resumable).toBe(true);
+  const left = stopped.run.docsTotal - stopped.run.docsDone;
+
+  // the page offers to pick it up, naming what is left. The run was set up
+  // through the API, so the branch has to be in the URL — the SPA only
+  // switches by itself when a run is started from the card.
+  await page.goto(`/p/${REPO}/b/${q(branch)}/alignment`);
+  const banner = page.locator('[data-drift-resume]');
+  await expect(banner).toContainText(`${stopped.run.docsDone} of ${stopped.run.docsTotal}`);
+  await page.locator('[data-drift-resume-start]').click();
+
+  // the resumed run covers ONLY what the stopped one never reached
+  await expect.poll(async () => {
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as {
+      run?: { id: number; docsTotal: number; resumedFrom: number };
+    };
+    return d.run && d.run.id > stopped.run.id ? `${d.run.docsTotal}/${d.run.resumedFrom}` : 'pending';
+  }, { timeout: 30_000 }).toBe(`${left}/${stopped.run.id}`);
+  await runFinished(request, branch, stopped.run.id);
+  await expect(page.locator('[data-drift-resume]')).toHaveCount(0);
+});
+
+// The mock finishes a run in about a second, far too fast to catch the live
+// card by navigating — hold the payload in `running` instead, which is what
+// this assertion is actually about: what a running card TELLS the user.
+test('a running check says it does not need the page open', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  await page.route(`**/api/repos/${REPO}/drift?*`, async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    body.run = { ...(body.run ?? {}), id: 1, mode: 'drift', status: 'running', error: '',
+      scope: ['specs/a.md', 'specs/b.md'], docsTotal: 2, docsDone: 1, droppedUnverified: 0,
+      headSha: '', activity: ['19:00:00 [1/2] specs/a.md'], reportPath: '', reportBranch: '',
+      focus: '', resumedFrom: 0, resumable: false, startedAt: 0, finishedAt: 0 };
+    await route.fulfill({ response: res, json: body });
+  });
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByText(/Runs on the server/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/picks the run back up when you return/)).toBeVisible();
+});
