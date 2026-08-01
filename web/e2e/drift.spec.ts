@@ -14,6 +14,12 @@ async function wsBranch(request: APIRequestContext) {
 }
 const q = (b: string) => encodeURIComponent(b);
 
+// the standing report is the PROJECT's (drift.report:) — ask, never assume
+async function standingReport(request: APIRequestContext, branch: string) {
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { defaultReport: string };
+  return d.defaultReport;
+}
+
 test.beforeEach(async ({ request }) => {
   const info = await request.get('/api/speccy/info');
   const body = (await info.json()) as { enabled: boolean; model?: string };
@@ -41,13 +47,13 @@ async function resetFindings(request: APIRequestContext) {
   // since a pointer cleared without its file would otherwise 409 the next
   // draft/remedy ("already exists")
   for (const p of ['requirements/REQ-gdpr-retention.md', 'work-items/WI-timestamp-precision.md',
-    'changes/2026-08-timestamp-precision.md']) {
+    'changes/2026-08-timestamp-precision.md', await standingReport(request, branch)]) {
     await request.delete(`/api/repos/${REPO}/files/${p}?branch=${q(branch)}`, { headers: H });
   }
   // a previous run's report (and any remedy link written into a doc) are
   // worktree saves on ws — drop them too
-  await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
-    headers: H, data: { paths: ['reports/source-alignment.md', 'specs/txn-report.md', 'specs/venue.md'] },
+  await request.post(`/api/repos/${REPO}/discard?branch=${q(branch)}`, {
+    headers: H, data: { paths: [await standingReport(request, branch), 'specs/txn-report.md', 'specs/venue.md'] },
   });
 }
 
@@ -59,6 +65,7 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   test.skip(!forgeUp, 'mock-forge not running (drift filing target)');
   await resetFindings(request);
 
+  const ws0 = { branch: await wsBranch(request) };
   await page.goto(`/p/${REPO}/alignment`);
   await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
 
@@ -67,7 +74,8 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   // report, which another session may have pointed elsewhere)
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
   await expect(page.getByText(/2 docs in scope/)).toBeVisible();
-  await page.locator('input[list="drift-report-docs"]').fill('reports/source-alignment.md');
+  const report = await standingReport(request, ws0.branch);
+  await page.locator('input[list="drift-report-docs"]').fill(report);
   await page.getByRole('button', { name: 'Check drift' }).click();
 
   // the mock reports one finding per doc, evidence quoting the regulations
@@ -102,17 +110,16 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
     const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as { run?: { status: string } };
     return d.run?.status;
   }, { timeout: 30_000 }).not.toBe('running');
-  await expect(page.getByText('reports/source-alignment.md').first()).toBeVisible();
-  const report = (await (await request.get(
-    `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
-  expect(report.content).toContain('# Source Alignment');
-  expect(report.content).toContain('<!-- specquill:alignment:begin');
-  expect(report.content).toContain('## Run activity');
-  expect(report.content).toContain('timestamp precision drifted');
+  await expect(page.getByText(report).first()).toBeVisible();
+  const reportDoc = (await (await request.get(
+    `/api/repos/${REPO}/files/${report}?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(reportDoc.content).toContain('<!-- specquill:alignment:begin');
+  expect(reportDoc.content).toContain('## Run activity');
+  expect(reportDoc.content).toContain('timestamp precision drifted');
 
   // self-heal: drop the uncommitted backlink + report saves
   await request.post(`/api/repos/${REPO}/discard?branch=${q(ws.branch)}`, {
-    headers: H, data: { paths: [filed!.docPath, 'reports/source-alignment.md'] },
+    headers: H, data: { paths: [filed!.docPath, report] },
   });
 });
 

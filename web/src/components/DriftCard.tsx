@@ -64,7 +64,9 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const sources = data.sources ?? [];
   const unitNoun = data.run?.mode === 'gaps' ? 'sources' : 'docs';
 
-  const reportTarget = report || data.run?.reportPath || 'reports/source-alignment.md';
+  // never hardcode a path here: the standing report is the PROJECT's
+  // (drift.report: in its .specquill/config.yml), reported by the server
+  const reportTarget = report || data.run?.reportPath || data.defaultReport || '';
   const reportExists = (data.reports ?? []).includes(reportTarget);
   const start = () => {
     setErr('');

@@ -477,6 +477,11 @@ func TestDriftReportHonorsConfiguredLocation(t *testing.T) {
 	if len(reports) != 1 || reports[0] != "audits/alignment-state.md" {
 		t.Fatalf("reports = %v", reports)
 	}
+	// stated explicitly: the client must not have to infer it from the list
+	// (sort order is no guarantee) nor fall back to a path of its own
+	if out["defaultReport"] != "audits/alignment-state.md" {
+		t.Fatalf("defaultReport = %v", out["defaultReport"])
+	}
 
 	// and a run with no explicit target writes exactly there
 	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {

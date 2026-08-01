@@ -193,6 +193,7 @@ export interface DriftResp {
   enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
   sources: string[]; // the references a gaps run would sweep
   reports: string[]; // existing report docs a run can continue (incl. the default)
+  defaultReport: string; // the project's standing report (its drift.report:)
 }
 
 /** Latest source-drift run + live findings; polls while a run is in flight. */

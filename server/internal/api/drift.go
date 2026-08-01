@@ -290,8 +290,12 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 	}
 	sort.Strings(names)
 	out["sources"] = names
-	// existing report docs (engine-marked or under reports/) — the run
-	// dialog offers them for continuation, plus the standing default
+	// the project's standing report — stated EXPLICITLY so the client never
+	// has to guess it (a hardcoded client fallback would override the
+	// project's own drift.report on a first run)
+	out["defaultReport"] = driftReportPath(driftCfg)
+	// existing report docs (engine-marked or under the standing report's
+	// folder) — the run dialog offers them for continuation
 	if files, err := repo.Snapshot(branch); err == nil {
 		standing := driftReportPath(driftCfg)
 		folder := standing[:strings.LastIndex(standing, "/")+1]
