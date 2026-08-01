@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -143,12 +144,24 @@ func TestSpeccyWriteGuards(t *testing.T) {
 	if _, _, err := tb.exec("delete_file", `{"path":"specs/a.md"}`); err == nil {
 		t.Fatal("delete on read-only conversation accepted")
 	}
-	if got := tb.specs(nil); len(got) != 4 {
-		t.Fatalf("read-only toolbox should expose read tools only, got %d", len(got))
+	// by name, not by count: the read set must never gain a writing tool
+	names := func() []string {
+		var out []string
+		for _, sp := range tb.specs(nil) {
+			out = append(out, sp.Name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	readOnly := []string{"ask_user", "history", "list_files", "read_file", "search", "timeline"}
+	if got := names(); strings.Join(got, ",") != strings.Join(readOnly, ",") {
+		t.Fatalf("read-only toolbox: %v", got)
 	}
 	tb.writable = true
-	if got := tb.specs(nil); len(got) != 9 {
-		t.Fatalf("writable toolbox should add edit/create/move/delete/draw, got %d", len(got))
+	writable := append([]string{"create_file", "delete_file", "draw_sketch", "edit_file", "move_file"}, readOnly...)
+	sort.Strings(writable)
+	if got := names(); strings.Join(got, ",") != strings.Join(writable, ",") {
+		t.Fatalf("writable toolbox: %v", got)
 	}
 }
 
@@ -539,5 +552,81 @@ func TestWorkspaceVocabulary(t *testing.T) {
 		if !strings.Contains(v, want) {
 			t.Errorf("vocabulary missing %q in %q", want, v)
 		}
+	}
+}
+
+// history is the speccy's only window onto what changed; timeline is its only
+// honest answer about deadlines. Both must work from the toolbox alone.
+func TestSpeccyHistoryAndTimelineTools(t *testing.T) {
+	tb, proj := toolboxFixture(t, false)
+
+	// a second commit with a real semantic change to explain
+	before, sha, err := proj.File(tb.branch, "specs/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := strings.Replace(before, "status: draft", "status: approved\nstarts: 2099-01-01", 1)
+	next = strings.Replace(next, "retained for 5 years", "retained for 7 years", 1)
+	if _, err := proj.SaveFile(tb.branch, "specs/a.md", next, sha); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proj.Commit(tb.branch, "spec: retention goes to 7 years", "t", "t@t", nil); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := proj.Snapshot(tb.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb.files = snap
+
+	// workspace-wide log
+	out, halt, err := tb.exec("history", `{}`)
+	if err != nil || halt {
+		t.Fatalf("history: %v (halt %v)", err, halt)
+	}
+	if !strings.Contains(out, "retention goes to 7 years") || !strings.Contains(out, "M specs/a.md") {
+		t.Fatalf("workspace history:\n%s", out)
+	}
+
+	// per-document, then the delta of the newest commit
+	out, _, err = tb.exec("history", `{"path":"specs/a.md"}`)
+	if err != nil || !strings.Contains(out, "commits touching specs/a.md") {
+		t.Fatalf("document history: %v\n%s", err, out)
+	}
+	sha8 := strings.Fields(strings.Split(out, "\n")[1])[0]
+	out, _, err = tb.exec("history", `{"sha":"`+sha8+`"}`)
+	if err != nil {
+		t.Fatalf("commit delta: %v", err)
+	}
+	if !strings.Contains(out, "~ status: draft → approved") || !strings.Contains(out, "+ starts: 2099-01-01") {
+		t.Fatalf("delta must read as document changes:\n%s", out)
+	}
+
+	// timeline: the document now carries a window, and nothing depends on it
+	out, _, err = tb.exec("timeline", `{}`)
+	if err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	if !strings.Contains(out, "PENDING") || !strings.Contains(out, "specs/a.md") {
+		t.Fatalf("timeline:\n%s", out)
+	}
+	if out, _, _ := tb.exec("timeline", `{"state":"expired"}`); !strings.Contains(out, "No document carries") {
+		t.Fatalf("empty bucket should say so:\n%s", out)
+	}
+	if _, _, err := tb.exec("timeline", `{"state":"whenever"}`); err == nil {
+		t.Fatal("want an error for an unknown state")
+	}
+	if _, _, err := tb.exec("history", `{"since":"yesterday"}`); err == nil {
+		t.Fatal("free-form since must be refused")
+	}
+
+	// read-only conversations get both tools (they only read)
+	tb.writable = false
+	names := map[string]bool{}
+	for _, s := range tb.specs(tb.files) {
+		names[s.Name] = true
+	}
+	if !names["history"] || !names["timeline"] {
+		t.Fatalf("read-only toolset lost the read tools: %v", names)
 	}
 }

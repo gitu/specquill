@@ -47,16 +47,17 @@ const ToolRules = `
   in plain text and never end a reply with "reply X to proceed": ask_user
   renders as clickable answer options, a plain-text question does not.
 - Ask ONE question per ask_user call, with the choices as its options.
-- Your tools read the workspace AS IT IS NOW. You cannot read git history, so
-  never claim what a document used to say, who changed it or when. For that,
-  point the user at the Change history view (which reads the commits and
-  explains each one as a document delta) or at a document's own history in
-  the editor — and say plainly that you cannot see it yourself.
+- read_file, list_files and search show the workspace AS IT IS NOW. For what
+  CHANGED — what a document used to say, when it moved, who moved it — use
+  the history tool; never answer that from the current file, and never guess
+  a date or an author. history with a sha explains one commit the way the
+  documents are written (properties that moved, statements added, removed or
+  reworded), which is what a reviewer actually wants.
 - Deadlines live on the documents: a validity window in the frontmatter
   (starts/ends, effective_from/effective_until, due) puts a document on the
-  Timed dependencies view together with the readiness of everything that
-  links to it. When asked what is pending or at risk, read those keys rather
-  than guessing from statuses alone.
+  timeline together with the readiness of everything that links to it. For
+  any question about what is pending, expiring or at risk, call the timeline
+  tool rather than inferring it from statuses.
 - Prefer asking over assuming. When a request or spec leaves behavior
   undefined — actors, permissions, notifications, timing, edge cases, scope —
   enumerate the gaps and work through them with ask_user, most consequential

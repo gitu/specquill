@@ -69,6 +69,8 @@ class Handler(BaseHTTPRequestHandler):
                 tool_call = {'name': 'ask_user',
                              'arguments': json.dumps({'question': 'Follow-up question?', 'options': ['gamma', 'delta']})}
                 reply = 'Read it; one point is still open.'
+            elif name in ('history', 'timeline'):
+                reply = f"(mock) tool {name} returned {len(last['content'])} chars:\n{last['content'][:400]}"
             elif last['content'].startswith('ERROR'):
                 reply = f"(mock) the edit failed: {last['content']}"
             else:
@@ -83,6 +85,17 @@ class Handler(BaseHTTPRequestHandler):
             reply = ''
         elif body.get('tools') and (m := re.search(r'DELETE (\S+)', user)):
             tool_call = {'name': 'delete_file', 'arguments': json.dumps({'path': m.group(1)})}
+            reply = ''
+        elif body.get('tools') and re.search(r'\bHISTORY\b', user):
+            m = re.search(r'HISTORY (\S+)', user)
+            arg = m.group(1) if m else ''
+            args = {} if not arg else ({'sha': arg} if re.fullmatch(r'[0-9a-f]{7,40}', arg) else {'path': arg})
+            tool_call = {'name': 'history', 'arguments': json.dumps(args)}
+            reply = ''
+        elif body.get('tools') and re.search(r'\bTIMELINE\b', user):
+            m = re.search(r'TIMELINE (\S+)', user)
+            args = {'state': m.group(1)} if m else {}
+            tool_call = {'name': 'timeline', 'arguments': json.dumps(args)}
             reply = ''
         elif body.get('tools') and (m := re.search(r'DRAW (\S+)', user)):
             scene = json.dumps({'elements': [
