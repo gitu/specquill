@@ -41,8 +41,12 @@ type linkCounts struct {
 }
 
 var (
-	lcLink   = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
-	lcFence  = regexp.MustCompile("(?s)```.*?```")
+	lcLink  = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	lcFence = regexp.MustCompile("(?s)```.*?```")
+	// inline code spans are PROSE ABOUT links, not links: the docs show
+	// `[text](/path/doc.md)` as an example of the syntax, and checking it
+	// reports the workspace's own documentation as broken
+	lcCode   = regexp.MustCompile("``[^`]*``|`[^`\n]*`")
 	lcScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
 
@@ -149,7 +153,7 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 			dir = p[:i]
 		}
 		seen := map[string]bool{}
-		body := lcFence.ReplaceAllString(files[p], "")
+		body := lcCode.ReplaceAllString(lcFence.ReplaceAllString(files[p], ""), "")
 		for _, m := range lcLink.FindAllStringSubmatch(body, -1) {
 			href := m[1]
 			bare := strings.SplitN(href, "#", 2)[0]

@@ -46,6 +46,11 @@ func TestLinkCheck(t *testing.T) {
 		"[mailto ignored](mailto:x@example.com)",
 		"[anchor ignored](#section)",
 		"```", "[fenced ignored](nowhere.md)", "```", "",
+		// prose ABOUT link syntax: the docs demonstrate `[text](path)` and the
+		// example must not be verified as if it were a link
+		"Untyped body links (`[code span ignored](nowhere.md)`) become edges.",
+		"Doubled too: ``[doubled ignored](nowhere.md)``.",
+		"`inline code` then a real one: [after code](../index.md)",
 	}, "\n"))
 	run("-C", src, "add", "-A")
 	run("-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
@@ -106,7 +111,7 @@ func TestLinkCheck(t *testing.T) {
 		t.Fatalf("linkcheck: %d %v", code, out)
 	}
 	in := kindCounts(out, "internal")
-	if num(in, "ok") != 2 || num(in, "broken") != 2 {
+	if num(in, "ok") != 3 || num(in, "broken") != 2 {
 		t.Fatalf("internal counts: %v", in)
 	}
 	if srcC := kindCounts(out, "source"); num(srcC, "broken") != 1 {
@@ -130,7 +135,7 @@ func TestLinkCheck(t *testing.T) {
 	}
 	for href := range problems {
 		if strings.Contains(href, "nowhere.md") {
-			t.Fatalf("fenced link reported: %v", problems)
+			t.Fatalf("link inside code reported: %v", problems)
 		}
 	}
 
