@@ -395,59 +395,143 @@ func DriftPrompt(docPath, docContent, linkedBlock, extracted, instructions strin
 	}
 }
 
-const extractSystem = `You are the specquill requirements extractor. You read
-ONE read-only reference source — an application's code, API contract or
-documentation — and write down what it actually requires of the system, as a
-structured inventory of atomic requirements GROUPED by capability.
+const surveySystem = `You are the specquill application surveyor. You take ONE
+read-only reference source — an application's code, API contract or
+documentation — and divide it into the AREAS a requirements analyst would work
+through one at a time.
 
-Investigate with the tools first: list_files/read_file/search over the
-~source/... files until you understand what the application does. Then check
-the workspace documents (search/read_file) to see which of these requirements
-an existing document already states. Reply with ONLY a JSON object, no prose:
+Explore with the tools (list_files, read_file, search) before answering. Then
+reply with ONLY a JSON object, no prose:
 
 {
-  "groups": [
+  "areas": [
     {
       "name": "Transaction reporting",
       "summary": "Submitting executed trades to the competent authority.",
-      "requirements": [
-        {
-          "title": "Report submission deadline",
-          "statement": "Executed transactions SHALL be reported no later than the close of the following working day.",
-          "evidence": [{"path": "regulations/mifid-ii.md", "quote": "no later than the close of the following working day"}],
-          "coveredBy": "requirements/REQ-042.md"
-        }
-      ]
+      "paths": ["reporting/submit.go", "openapi.json"]
     }
   ]
 }
 
 Rules:
-- Group by CAPABILITY (what the application does), not by file layout. A
-  group holds related requirements; 2-8 groups is typical.
+- Divide by CAPABILITY — what the application does for its users — not by
+  directory layout or language artefacts.
+- "paths" lists the source files that carry that area, so the next pass can
+  read just those. Copy paths exactly as list_files reports them (without the
+  ~source/ prefix); every area needs at least one.
+- Cover the whole source: an area for each substantial capability, none for
+  build files, fixtures or vendored code. 2-8 areas is typical; never more
+  than 12.
+- Areas must not overlap — each capability belongs to exactly one.`
+
+// SurveyPrompt builds the divide-the-application conversation: partition one
+// source into the capability areas that are then extracted one at a time.
+func SurveyPrompt(sourceName, instructions string) []Message {
+	system := surveySystem
+	if instructions != "" {
+		system += "\n\nWorkspace drift instructions:\n" + instructions
+	}
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: "# Application source to divide: ~" + sourceName +
+			"\n\nExplore it and return its capability areas as JSON."},
+	}
+}
+
+const matchSystem = `You are the specquill coverage matcher. You are given
+requirements extracted from an application and the workspace's requirement
+documents. For EACH extracted requirement you decide whether a document
+already states it.
+
+Use the tools: search the workspace for the terms of each requirement and
+read_file the candidates before deciding. Then reply with ONLY a JSON object,
+no prose:
+
+{
+  "matches": [
+    {"index": 1, "coverage": "full", "document": "requirements/REQ-042.md",
+     "note": "REQ-042 states the same deadline."},
+    {"index": 2, "coverage": "partial", "document": "specs/txn-report.md",
+     "note": "The spec mentions timestamps but sets no precision."},
+    {"index": 3, "coverage": "none", "document": "", "note": ""}
+  ]
+}
+
+Rules:
+- Answer for EVERY index you were given, exactly once.
+- "coverage": full (a document states this requirement), partial (a document
+  touches it but leaves the substance open) or none.
+- "document" is an exact path from the index below, "" when coverage is none.
+- Match on MEANING, not wording — the same rule stated differently is full
+  coverage. Never claim coverage you did not read; when unsure, say none.`
+
+// MatchPrompt builds one batch of the walk-and-match pass: extracted
+// requirements on one side, the workspace's documents on the other.
+func MatchPrompt(items, docIndex, instructions string) []Message {
+	system := matchSystem
+	if instructions != "" {
+		system += "\n\nWorkspace drift instructions:\n" + instructions
+	}
+	var b strings.Builder
+	b.WriteString("# Extracted requirements to match\n" + items + "\n")
+	b.WriteString("\n# Workspace documents\n" + docIndex + "\n")
+	b.WriteString("\nMatch each requirement against the documents and reply as JSON.")
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: b.String()},
+	}
+}
+
+const extractSystem = `You are the specquill requirements extractor. You read
+ONE AREA of a read-only reference source — an application's code, API contract
+or documentation — and write down what it actually requires of the system, as
+atomic requirements.
+
+Read the area's files with the tools first (read_file, search); follow what
+they reference when you need to. Then reply with ONLY a JSON object, no prose:
+
+{
+  "requirements": [
+    {
+      "title": "Report submission deadline",
+      "statement": "Executed transactions SHALL be reported no later than the close of the following working day.",
+      "evidence": [{"path": "regulations/mifid-ii.md", "quote": "no later than the close of the following working day"}]
+    }
+  ]
+}
+
+Rules:
+- Stay inside this area. Another pass covers the rest of the application.
 - "statement" is ONE atomic, testable sentence using RFC-2119 keywords
   (SHALL/MUST/SHOULD/MAY) and no vague bounds. Describe WHAT is required,
   never how the source implements it.
 - "evidence" quotes are VERBATIM excerpts copied from the named source file —
   they are checked and the requirement is discarded when they do not match.
-- "coveredBy" is the workspace document that already states this requirement,
-  or "" when none does. Search before concluding it is uncovered.
 - Extract what the source actually mandates. Never invent requirements the
-  evidence does not support, and never restate trivia (logging, formatting).`
+  evidence does not support, and never restate trivia (logging, formatting).
+- Whether a workspace document already covers a requirement is decided by a
+  later pass — do not guess it here.`
 
-// ExtractPrompt builds the analyze-the-application conversation: read one
-// reference source and inventory the requirements it implies, grouped by
-// capability and mapped onto the documents that already cover them.
-func ExtractPrompt(sourceName, docIndex, instructions string) []Message {
+// ExtractPrompt builds the conquer step: extract the requirements of ONE
+// surveyed area of an application source.
+func ExtractPrompt(sourceName, area, summary string, paths []string, instructions string) []Message {
 	system := extractSystem
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
 	}
 	var b strings.Builder
-	b.WriteString("# Application source to analyze: ~" + sourceName + "\n\n")
-	b.WriteString("# Workspace documents (search them to fill in coveredBy)\n")
-	b.WriteString(docIndex + "\n")
-	b.WriteString("\nAnalyze ~" + sourceName + " and return its grouped requirement inventory as JSON.")
+	b.WriteString("# Application source: ~" + sourceName + "\n")
+	b.WriteString("# Area under extraction: " + area + "\n")
+	if summary != "" {
+		b.WriteString(summary + "\n")
+	}
+	if len(paths) > 0 {
+		b.WriteString("\nIts files (read them with read_file, prefixed ~" + sourceName + "/):\n")
+		for _, p := range paths {
+			b.WriteString("- ~" + sourceName + "/" + p + "\n")
+		}
+	}
+	b.WriteString("\nExtract this area's requirements as JSON.")
 	return []Message{
 		{Role: "system", Content: system},
 		{Role: "user", Content: b.String()},

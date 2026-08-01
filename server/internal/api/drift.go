@@ -56,6 +56,13 @@ const (
 	extractionEnd   = "<!-- specquill:extraction:end -->"
 )
 
+// divide-and-conquer bounds: areas surveyed per source, and how many
+// extracted requirements are matched against the specs per AI call.
+const (
+	maxExtractAreas = 12
+	matchBatchSize  = 8
+)
+
 // extractionPath is where a source's extracted requirements live: beside the
 // project's alignment report, named after the source.
 func extractionPath(reportPath, source string) string {
@@ -1201,8 +1208,11 @@ func extractionContext(files map[string]string, reportPath, source string) strin
 type extractedRequirement struct {
 	Title     string          `json:"title"`
 	Statement string          `json:"statement"`
-	CoveredBy string          `json:"coveredBy"`
 	Evidence  []driftEvidence `json:"evidence"`
+	// filled by the matching pass
+	Coverage  string `json:"coverage"` // full | partial | none
+	CoveredBy string `json:"coveredBy"`
+	Note      string `json:"note"`
 }
 
 // extractedGroup bundles requirements by capability.
@@ -1212,9 +1222,10 @@ type extractedGroup struct {
 	Requirements []extractedRequirement `json:"requirements"`
 }
 
-// driftCheckExtract analyzes ONE application source and returns its grouped
-// requirement inventory. Evidence is verified exactly like a finding's:
-// a requirement whose quotes are not in the source is dropped.
+// driftCheckExtract analyzes ONE application source by divide and conquer:
+// survey it into capability areas, extract each area's requirements on its
+// own AI loop, then walk the results in batches and match them against the
+// workspace's documents. Evidence is verified exactly like a finding's.
 func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, branch, sourceName string,
 	files map[string]string, sources []ai.GroundingSource, instructions string,
 	note func(string)) ([]extractedGroup, int, error) {
@@ -1228,55 +1239,159 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 	if src == nil {
 		return nil, 0, fmt.Errorf("unknown source")
 	}
-	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
-		files: files, publish: func() {}}
-	var specs []ai.ToolSpec
-	for _, spec := range tb.specs(files) {
-		if spec.Name != "ask_user" {
-			specs = append(specs, spec)
+	ask := func(msgs []ai.Message, out any) error {
+		tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
+			files: files, publish: func() {}}
+		var specs []ai.ToolSpec
+		for _, spec := range tb.specs(files) {
+			if spec.Name != "ask_user" {
+				specs = append(specs, spec)
+			}
+		}
+		var reply strings.Builder
+		if _, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+			func(delta string) error { reply.WriteString(delta); return nil },
+			func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil },
+		); err != nil {
+			return err
+		}
+		return ai.ExtractJSON(reply.String(), out)
+	}
+
+	// ---- divide: survey the application into areas
+	var survey struct {
+		Areas []struct {
+			Name    string   `json:"name"`
+			Summary string   `json:"summary"`
+			Paths   []string `json:"paths"`
+		} `json:"areas"`
+	}
+	if err := ask(ai.SurveyPrompt(sourceName, instructions), &survey); err != nil {
+		return nil, 0, fmt.Errorf("survey: %w", err)
+	}
+	areas := survey.Areas[:0:0]
+	for _, a := range survey.Areas {
+		if strings.TrimSpace(a.Name) != "" {
+			areas = append(areas, a)
 		}
 	}
-	docs := resolveDriftScope(files, nil, nil)
-	msgs := ai.ExtractPrompt(sourceName, strings.Join(docs, "\n"), instructions)
+	if len(areas) == 0 {
+		return nil, 0, fmt.Errorf("survey returned no areas")
+	}
+	if len(areas) > maxExtractAreas {
+		note(fmt.Sprintf("    · %d areas surveyed — capped at %d", len(areas), maxExtractAreas))
+		areas = areas[:maxExtractAreas]
+	}
+	note(fmt.Sprintf("  ▸ divided ~%s into %d area%s", sourceName, len(areas), plural(len(areas))))
 
-	var reply strings.Builder
-	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
-		func(delta string) error { reply.WriteString(delta); return nil },
-		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
-	if err != nil {
-		return nil, 0, err
-	}
-	var out struct {
-		Groups []extractedGroup `json:"groups"`
-	}
-	if err := ai.ExtractJSON(reply.String(), &out); err != nil {
-		return nil, 0, fmt.Errorf("model reply was not extraction JSON: %w", err)
-	}
+	// ---- conquer: one extraction pass per area
 	dropped := 0
 	var groups []extractedGroup
-	for _, g := range out.Groups {
-		kept := make([]extractedRequirement, 0, len(g.Requirements))
-		for _, r := range g.Requirements {
+	for i, a := range areas {
+		if ctx.Err() != nil {
+			return groups, dropped, ctx.Err()
+		}
+		note(fmt.Sprintf("  ▸ area %d/%d: %s", i+1, len(areas), a.Name))
+		var out struct {
+			Requirements []extractedRequirement `json:"requirements"`
+		}
+		if err := ask(ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, instructions), &out); err != nil {
+			note("    ✗ " + a.Name + ": " + err.Error()) // one bad area never sinks the source
+			continue
+		}
+		kept := make([]extractedRequirement, 0, len(out.Requirements))
+		for _, r := range out.Requirements {
 			if strings.TrimSpace(r.Statement) == "" ||
 				!verifyEvidence(modelFinding{Source: sourceName, Evidence: r.Evidence}, sources) {
 				dropped++
 				continue
 			}
-			// only a real workspace document counts as coverage
-			if r.CoveredBy != "" {
-				if _, ok := files[cleanDocPath(r.CoveredBy)]; !ok {
-					r.CoveredBy = ""
-				} else {
-					r.CoveredBy = cleanDocPath(r.CoveredBy)
-				}
-			}
+			r.Coverage, r.CoveredBy, r.Note = "none", "", ""
 			kept = append(kept, r)
 		}
-		if name := strings.TrimSpace(g.Name); name != "" && len(kept) > 0 {
-			groups = append(groups, extractedGroup{Name: name, Summary: strings.TrimSpace(g.Summary), Requirements: kept})
+		note(fmt.Sprintf("    ✓ %d requirement%s", len(kept), plural(len(kept))))
+		if len(kept) > 0 {
+			groups = append(groups, extractedGroup{Name: strings.TrimSpace(a.Name),
+				Summary: strings.TrimSpace(a.Summary), Requirements: kept})
 		}
 	}
+
+	// ---- match: walk the extracted requirements against the specs
+	s.matchExtracted(ctx, groups, files, ask, note, instructions)
 	return groups, dropped, nil
+}
+
+// matchExtracted walks every extracted requirement in batches and asks which
+// workspace document already states it. Best-effort per batch: a failed batch
+// leaves its requirements unmatched rather than failing the extraction.
+func (s *Server) matchExtracted(ctx context.Context, groups []extractedGroup, files map[string]string,
+	ask func([]ai.Message, any) error, note func(string), instructions string) {
+	type ref struct{ g, r int }
+	var flat []ref
+	for gi := range groups {
+		for ri := range groups[gi].Requirements {
+			flat = append(flat, ref{gi, ri})
+		}
+	}
+	if len(flat) == 0 {
+		return
+	}
+	docIndex := strings.Join(resolveDriftScope(files, nil, nil), "\n")
+	matched := 0
+	for start := 0; start < len(flat); start += matchBatchSize {
+		if ctx.Err() != nil {
+			return
+		}
+		end := start + matchBatchSize
+		if end > len(flat) {
+			end = len(flat)
+		}
+		var items strings.Builder
+		for i, f := range flat[start:end] {
+			r := groups[f.g].Requirements[f.r]
+			fmt.Fprintf(&items, "%d. [%s] %s\n", i+1, groups[f.g].Name, r.Statement)
+		}
+		note(fmt.Sprintf("  ▸ matching %d-%d of %d against the specs", start+1, end, len(flat)))
+		var out struct {
+			Matches []struct {
+				Index    int    `json:"index"`
+				Coverage string `json:"coverage"`
+				Document string `json:"document"`
+				Note     string `json:"note"`
+			} `json:"matches"`
+		}
+		if err := ask(ai.MatchPrompt(items.String(), docIndex, instructions), &out); err != nil {
+			note("    ✗ matching failed: " + err.Error())
+			continue
+		}
+		for _, m := range out.Matches {
+			if m.Index < 1 || m.Index > end-start {
+				continue
+			}
+			f := flat[start+m.Index-1]
+			r := &groups[f.g].Requirements[f.r]
+			doc := cleanDocPath(m.Document)
+			if _, ok := files[doc]; !ok { // only a real document counts
+				doc = ""
+			}
+			switch strings.ToLower(strings.TrimSpace(m.Coverage)) {
+			case "full":
+				r.Coverage = "full"
+			case "partial":
+				r.Coverage = "partial"
+			default:
+				r.Coverage, doc = "none", ""
+			}
+			if doc == "" && r.Coverage != "none" { // a claim without a document is no claim
+				r.Coverage = "none"
+			}
+			r.CoveredBy, r.Note = doc, strings.TrimSpace(m.Note)
+			if r.Coverage != "none" {
+				matched++
+			}
+		}
+	}
+	note(fmt.Sprintf("  ✓ matched %d of %d requirement%s to documents", matched, len(flat), plural(len(flat))))
 }
 
 // writeExtraction persists a source's inventory beside the alignment report,
@@ -1300,12 +1415,15 @@ func (s *Server) writeExtraction(repo *project.Project, reportBranch, reportPath
 // per capability group with each requirement, its evidence and the document
 // that covers it (or a gap marker).
 func extractionBlock(source, headSHA string, groups []extractedGroup) string {
-	total, covered := 0, 0
+	total, full, partial := 0, 0, 0
 	for _, g := range groups {
 		for _, r := range g.Requirements {
 			total++
-			if r.CoveredBy != "" {
-				covered++
+			switch r.Coverage {
+			case "full":
+				full++
+			case "partial":
+				partial++
 			}
 		}
 	}
@@ -1317,26 +1435,34 @@ func extractionBlock(source, headSHA string, groups []extractedGroup) string {
 	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "- Extracted: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(&b, "- %d requirement(s) in %d group(s) — %d covered by a document, %d not\n",
-		total, len(groups), covered, total-covered)
+	fmt.Fprintf(&b, "- %d requirement(s) across %d area(s)\n", total, len(groups))
+	fmt.Fprintf(&b, "- Coverage: %d fully stated by a document, %d partially, %d not covered\n",
+		full, partial, total-full-partial)
 
 	cell := func(v string) string { return strings.ReplaceAll(strings.ReplaceAll(v, "|", "\\|"), "\n", " ") }
+	mark := map[string]string{"full": "✓ full", "partial": "◐ partial"}
 	for _, g := range groups {
 		fmt.Fprintf(&b, "\n## %s\n\n", g.Name)
 		if g.Summary != "" {
 			b.WriteString(g.Summary + "\n\n")
 		}
-		b.WriteString("| Requirement | Evidence | Covered by |\n|---|---|---|\n")
+		b.WriteString("| Requirement | Evidence | Coverage | Document |\n|---|---|---|---|\n")
 		for _, r := range g.Requirements {
 			ev := make([]string, 0, len(r.Evidence))
 			for _, e := range r.Evidence {
 				ev = append(ev, "`"+cell(e.Path)+"`: \u201c"+cell(e.Quote)+"\u201d")
 			}
-			cov := r.CoveredBy
+			cov, doc := mark[r.Coverage], r.CoveredBy
 			if cov == "" {
-				cov = "— *not covered*"
+				cov, doc = "— *not covered*", ""
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s |\n", cell(r.Statement), strings.Join(ev, "<br>"), cell(cov))
+			if r.Note != "" {
+				cov += "<br>*" + cell(r.Note) + "*"
+			}
+			if doc == "" {
+				doc = "—"
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", cell(r.Statement), strings.Join(ev, "<br>"), cov, cell(doc))
 		}
 	}
 	return b.String()

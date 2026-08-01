@@ -311,18 +311,26 @@ test('extract analyzes the app into a persisted requirement inventory', async ({
     `/api/repos/${REPO}/files/reports/extracted-regulations.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(doc.content).toContain('type: extraction');
   expect(doc.content).toContain('<!-- specquill:extraction:begin');
-  expect(doc.content).toContain('## Transaction reporting');
+  expect(doc.content).toContain('## Transaction reporting');   // divided by area
+  expect(doc.content).toContain('## Data protection');          // …both of them
   expect(doc.content).toContain('SHALL be captured to microsecond precision');
-  expect(doc.content).toContain('requirements/REQ-042.md');   // covered
-  expect(doc.content).toContain('— *not covered*');           // and not
-  expect(doc.content).not.toContain('Hallucinated');          // evidence verified
+  expect(doc.content).toContain('✓ full');                      // walked and matched
+  expect(doc.content).toContain('requirements/REQ-042.md');
+  expect(doc.content).toContain('◐ partial');
+  expect(doc.content).toContain('— *not covered*');
+  expect(doc.content).not.toContain('Hallucinated');            // evidence verified
 
   // the card links it, and the run says what it did
   await expect(page.getByText('reports/extracted-regulations.md').first()).toBeVisible();
   const feed = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
     run: { activity: string[] }; extractions: { source: string; path: string }[];
   };
-  expect(feed.run.activity.join('\n')).toMatch(/✓ 3 requirements in 2 groups → reports\/extracted-regulations\.md/);
+  const log = feed.run.activity.join('\n');
+  expect(log).toContain('divided ~regulations into 2 areas');            // divide
+  expect(log).toMatch(/area 1\/2: /);                                    // conquer
+  expect(log).toContain('matching 1-3 of 3 against the specs');          // walk
+  expect(log).toContain('matched 2 of 3 requirements to documents');     // match
+  expect(log).toMatch(/✓ 3 requirements in 2 groups → reports\/extracted-regulations\.md/);
   expect(feed.extractions).toContainEqual({ source: 'regulations', path: 'reports/extracted-regulations.md' });
 
   // a following drift run starts FROM the extraction

@@ -106,10 +106,17 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
-- **Extraction is the baseline** (mode `extract`): before comparing, the
-  engine ANALYZES each reference source into a grouped requirement
-  inventory — capability groups, atomic RFC-2119 statements, verbatim
-  evidence, and the workspace doc that covers each (or none). It persists
+- **Extraction is the baseline** (mode `extract`), and it is DIVIDE AND
+  CONQUER, not one pass: (1) `ai.SurveyPrompt` divides the app into
+  capability areas with file hints (capped at `maxExtractAreas`), (2) each
+  area is extracted on its OWN AI loop — a failed area is noted and skipped,
+  never sinking the source, (3) `ai.MatchPrompt` then walks the extracted
+  requirements in batches of `matchBatchSize` and matches each against the
+  workspace docs (full/partial/none + the document + why). Extraction no
+  longer guesses coverage inline — matching is its own phase, and a match
+  naming a document that does not exist degrades to `none`. The result is a
+  grouped inventory: capability areas, atomic RFC-2119 statements, verbatim
+  evidence, coverage per requirement. It persists
   as its own living document BESIDE the alignment report
   (`<report folder>/extracted-<source>.md`, `specquill:extraction:begin/end`
   markers, `type: extraction`); the run records what it wrote in

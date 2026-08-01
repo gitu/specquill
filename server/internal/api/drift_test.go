@@ -809,22 +809,25 @@ func TestGapRunAndReverseEngineering(t *testing.T) {
 	}
 }
 
-func TestExtractAnalyzesTheAppAndPersistsTheInventory(t *testing.T) {
-	extraction := `{"groups":[
-		{"name":"Reporting","summary":"submitting trades",
-		 "requirements":[
-		   {"title":"Precision","statement":"Timestamps SHALL be microsecond precise.",
-		    "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}],
-		    "coveredBy":"specs/txn.md"},
-		   {"title":"Ghost","statement":"Dropped by verification.",
-		    "evidence":[{"path":"rules.md","quote":"NOT IN THE FILE"}],"coveredBy":""},
-		   {"title":"Uncovered","statement":"Reports SHALL name the venue.",
-		    "evidence":[{"path":"rules.md","quote":"RTS 22 requires"}],
-		    "coveredBy":"docs/does-not-exist.md"}
-		 ]},
-		{"name":"Empty group","requirements":[]}
+func TestExtractDividesConquersAndMatches(t *testing.T) {
+	survey := `{"areas":[
+		{"name":"Reporting","summary":"submitting trades","paths":["rules.md"]},
+		{"name":"","summary":"nameless — dropped"}
 	]}`
-	h, _, _, _, prompts := testDriftServer(t, []string{extraction, `{"findings": []}`})
+	area := `{"requirements":[
+		{"title":"Precision","statement":"Timestamps SHALL be microsecond precise.",
+		 "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]},
+		{"title":"Ghost","statement":"Dropped by verification.",
+		 "evidence":[{"path":"rules.md","quote":"NOT IN THE FILE"}]},
+		{"title":"Venue","statement":"Reports SHALL name the venue.",
+		 "evidence":[{"path":"rules.md","quote":"RTS 22 requires"}]}
+	]}`
+	// the walk: one covered, one claimed without a document (degrades to none)
+	matches := `{"matches":[
+		{"index":1,"coverage":"full","document":"specs/txn.md","note":"the spec states it"},
+		{"index":2,"coverage":"partial","document":"docs/nope.md","note":"invented document"}
+	]}`
+	h, _, _, _, prompts := testDriftServer(t, []string{survey, area, matches, `{"findings": []}`})
 	cookie := login(t, h)
 
 	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{"mode": "extract"})
@@ -836,13 +839,22 @@ func TestExtractAnalyzesTheAppAndPersistsTheInventory(t *testing.T) {
 	if run["status"] != "ok" {
 		t.Fatalf("run = %v", run)
 	}
-	// the hallucinated requirement is dropped, exactly like a finding's evidence
-	if run["droppedUnverified"].(float64) != 1 {
+	if run["droppedUnverified"].(float64) != 1 { // the hallucinated requirement
 		t.Fatalf("dropped = %v, want 1", run["droppedUnverified"])
 	}
-	ex, _ := drift["extractions"].([]any)
-	if len(ex) != 1 || ex[0].(map[string]any)["path"] != "reports/extracted-reg.md" {
-		t.Fatalf("extractions = %v", ex)
+	feed := ""
+	for _, l := range run["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	for _, want := range []string{
+		"divided ~reg into 1 area",            // divide
+		"area 1/1: Reporting",                 // conquer, per area
+		"matching 1-2 of 2 against the specs", // the iterative walk
+		"matched 1 of 2 requirements to documents",
+	} {
+		if !strings.Contains(feed, want) {
+			t.Fatalf("activity missing %q:\n%s", want, feed)
+		}
 	}
 
 	code, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/extracted-reg.md?ref=main", nil)
@@ -851,24 +863,26 @@ func TestExtractAnalyzesTheAppAndPersistsTheInventory(t *testing.T) {
 	}
 	doc := file["content"].(string)
 	for _, want := range []string{
-		"type: extraction",                           // a real workspace document
-		"<!-- specquill:extraction:begin",            // living-document contract
-		"2 requirement(s) in 1 group(s) — 1 covered", // grouped + coverage summary
-		"## Reporting",                               // the capability group
-		"Timestamps SHALL be microsecond precise.",   // the requirement
-		"“microsecond timestamps”",                   // its verbatim evidence
-		"specs/txn.md",                               // mapped onto the covering doc
-		"— *not covered*",                            // a bogus coveredBy is dropped
+		"type: extraction",
+		"<!-- specquill:extraction:begin",
+		"2 requirement(s) across 1 area(s)",
+		"Coverage: 1 fully stated by a document, 0 partially, 1 not covered",
+		"## Reporting",
+		"Timestamps SHALL be microsecond precise.",
+		"“microsecond timestamps”",
+		"✓ full",
+		"specs/txn.md",
+		"— *not covered*", // the match naming a nonexistent document
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("inventory missing %q:\n%s", want, doc)
 		}
 	}
-	if strings.Contains(doc, "Empty group") || strings.Contains(doc, "Dropped by verification") {
-		t.Fatalf("empty group / unverified requirement leaked:\n%s", doc)
+	if strings.Contains(doc, "Dropped by verification") || strings.Contains(doc, "docs/nope.md") {
+		t.Fatalf("unverified requirement or invented document leaked:\n%s", doc)
 	}
 
-	// the inventory is engine-owned: it never becomes an audited document
+	// the inventory is engine-owned: never an audited document
 	files := map[string]string{"reports/extracted-reg.md": doc, "specs/a.md": "x"}
 	if got := resolveDriftScope(files, nil, nil); fmt.Sprint(got) != "[specs/a.md]" {
 		t.Fatalf("extraction must stay out of run scopes, got %v", got)

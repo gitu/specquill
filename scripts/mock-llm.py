@@ -50,52 +50,66 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'requirements extractor' in system:
-            # extraction: a grouped inventory of what the app requires, with
-            # evidence quoted VERBATIM from the demo regulations source
-            reply = json.dumps({'groups': [
-                {
-                    'name': 'Transaction reporting',
-                    'summary': '(mock) Submitting executed trades to the competent authority.',
-                    'requirements': [
-                        {
-                            'title': 'Reporting deadline',
-                            'statement': 'Executed transactions SHALL be reported no later than the '
-                                         'close of the following working day.',
-                            'evidence': [{'path': 'regulations/mifid-ii.md',
-                                          'quote': 'no later than the close of the following working day'}],
-                            'coveredBy': 'requirements/REQ-042.md',
-                        },
-                        {
-                            'title': 'Timestamp precision',
-                            'statement': 'Execution timestamps SHALL be captured to microsecond precision.',
-                            'evidence': [{'path': 'regulations/mifid-ii.md',
-                                          'quote': 'reported to **microsecond** precision'}],
-                            'coveredBy': '',
-                        },
-                        {
-                            'title': 'Hallucinated rule',
-                            'statement': 'This one SHALL be dropped by evidence verification.',
-                            'evidence': [{'path': 'regulations/mifid-ii.md', 'quote': 'NOT IN THE SOURCE'}],
-                            'coveredBy': '',
-                        },
-                    ],
-                },
-                {
-                    'name': 'Data protection',
-                    'summary': '(mock) Retention limits on reported personal data.',
-                    'requirements': [
-                        {
-                            'title': 'Storage limitation',
-                            'statement': 'Report data SHALL be kept no longer than necessary for the '
-                                         'reporting purpose.',
-                            'evidence': [{'path': 'regulations/gdpr.md',
-                                          'quote': 'kept for no longer than is necessary'}],
-                            'coveredBy': '',
-                        },
-                    ],
-                },
+        if 'application surveyor' in system:
+            # divide: two capability areas of the demo regulations source
+            reply = json.dumps({'areas': [
+                {'name': 'Transaction reporting',
+                 'summary': '(mock) Submitting executed trades to the competent authority.',
+                 'paths': ['regulations/mifid-ii.md']},
+                {'name': 'Data protection',
+                 'summary': '(mock) Retention limits on reported personal data.',
+                 'paths': ['regulations/gdpr.md']},
             ]})
+        elif 'requirements extractor' in system:
+            # conquer: this area's requirements, evidence quoted VERBATIM
+            if 'Data protection' in user:
+                reply = json.dumps({'requirements': [{
+                    'title': 'Storage limitation',
+                    'statement': 'Report data SHALL be kept no longer than necessary for the '
+                                 'reporting purpose.',
+                    'evidence': [{'path': 'regulations/gdpr.md',
+                                  'quote': 'kept for no longer than is necessary'}],
+                }]})
+            else:
+                reply = json.dumps({'requirements': [
+                    {
+                        'title': 'Reporting deadline',
+                        'statement': 'Executed transactions SHALL be reported no later than the '
+                                     'close of the following working day.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md',
+                                      'quote': 'no later than the close of the following working day'}],
+                    },
+                    {
+                        'title': 'Timestamp precision',
+                        'statement': 'Execution timestamps SHALL be captured to microsecond precision.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md',
+                                      'quote': 'reported to **microsecond** precision'}],
+                    },
+                    {
+                        'title': 'Hallucinated rule',
+                        'statement': 'This one SHALL be dropped by evidence verification.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md', 'quote': 'NOT IN THE SOURCE'}],
+                    },
+                ]})
+        elif 'coverage matcher' in system:
+            # the walk: match each extracted requirement against the specs
+            out = []
+            for line in user.splitlines():
+                m = re.match(r'^(\d+)\. \[', line)
+                if not m:
+                    continue
+                i = int(m.group(1))
+                if 'no later than' in line:
+                    out.append({'index': i, 'coverage': 'full',
+                                'document': 'requirements/REQ-042.md',
+                                'note': '(mock) REQ-042 states the same deadline.'})
+                elif 'microsecond' in line:
+                    out.append({'index': i, 'coverage': 'partial',
+                                'document': 'specs/txn-report.md',
+                                'note': '(mock) the spec names the field but not the precision.'})
+                else:
+                    out.append({'index': i, 'coverage': 'none', 'document': '', 'note': ''})
+            reply = json.dumps({'matches': out})
         elif 'remediation author' in system:
             # remedy: draft the change record / work item that tracks the fix.
             # The server adds the typed link and enforces the folder.
