@@ -478,3 +478,45 @@ func (p *Project) DiffRange(target, source string) ([]gitx.DiffFile, error) {
 	files, err := p.Repo.DiffRange(target, source)
 	return p.mapDiff(files), err
 }
+
+// DiffCommit is one commit's own diff, project-relative.
+func (p *Project) DiffCommit(parent, sha string) ([]gitx.DiffFile, error) {
+	files, err := p.Repo.DiffCommit(parent, sha)
+	return p.mapDiff(files), err
+}
+
+// Log is the workspace's commit history: repo commits restricted to the
+// project's content root, with paths mapped to the project-relative wire
+// form. A commit whose files all fall outside the root drops out entirely —
+// in a monorepo, another team's commits are not this workspace's history.
+func (p *Project) Log(ref, since string, limit int) ([]gitx.Commit, error) {
+	commits, err := p.Repo.Log(ref, since, limit, p.ContentRoot)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]gitx.Commit, 0, len(commits))
+	for _, c := range commits {
+		files := make([]gitx.CommitFile, 0, len(c.Files))
+		for _, f := range c.Files {
+			rel, ok := p.MapOut(f.Path)
+			if !ok {
+				continue
+			}
+			f.Path = rel
+			if f.OldPath != "" {
+				if old, ok := p.MapOut(f.OldPath); ok {
+					f.OldPath = old
+				} else {
+					f.OldPath = "" // renamed in from outside the workspace
+				}
+			}
+			files = append(files, f)
+		}
+		if len(files) == 0 {
+			continue
+		}
+		c.Files = files
+		out = append(out, c)
+	}
+	return out, nil
+}

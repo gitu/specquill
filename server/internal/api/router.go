@@ -22,18 +22,19 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	git        *gitx.Manager // shared manager (local/dev mode git operations)
-	fleet      *gitx.Fleet   // per-user managers (forge-PAT mode git operations)
-	vault      *auth.TokenVault
-	store      *store.Store
-	sessions   *auth.Sessions
-	ai         *ai.Client  // nil when disabled
-	bus        *events.Bus // nil-safe
-	devUser    *store.User
-	srcCache   *srcCache        // grounding source snapshots, keyed by repo key + head SHA
-	forgeCache *forgeCache      // forge review threads, keyed by user + repo key + branch
-	importer   *importer.Runner // nil when no non-git sources are configured
+	cfg          *config.Config
+	git          *gitx.Manager // shared manager (local/dev mode git operations)
+	fleet        *gitx.Fleet   // per-user managers (forge-PAT mode git operations)
+	vault        *auth.TokenVault
+	store        *store.Store
+	sessions     *auth.Sessions
+	ai           *ai.Client  // nil when disabled
+	bus          *events.Bus // nil-safe
+	devUser      *store.User
+	srcCache     *srcCache        // grounding source snapshots, keyed by repo key + head SHA
+	forgeCache   *forgeCache      // forge review threads, keyed by user + repo key + branch
+	summaryCache *summaryCache    // per-commit AI summaries, keyed by repo id + sha (immutable)
+	importer     *importer.Runner // nil when no non-git sources are configured
 }
 
 type Options struct {
@@ -59,7 +60,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 }
 
 func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handler, *Server) {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), vault: auth.NewTokenVault()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), summaryCache: newSummaryCache(), vault: auth.NewTokenVault()}
 	if cfg.Auth.Forge.Enabled() {
 		s.fleet = gitx.NewFleet(cfg)
 		s.fleet.Notify = func(kind, repo, branch string) { s.publish(kind, repo, branch) }
@@ -103,6 +104,10 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("DELETE /api/repos/{repo}/files/{path...}", s.writableH(s.deleteFile))
 	apiMux.HandleFunc("POST /api/repos/{repo}/move", s.writableH(s.postMove))
 	apiMux.HandleFunc("GET /api/repos/{repo}/history", s.repoH(s.getHistory))
+	// repo-wide change feed (REQ-027); /history above is per-document
+	apiMux.HandleFunc("GET /api/repos/{repo}/log", s.repoH(s.getLog))
+	apiMux.HandleFunc("GET /api/repos/{repo}/commit", s.repoH(s.getCommit))
+	apiMux.HandleFunc("GET /api/repos/{repo}/commit/summary", s.repoH(s.getCommitSummary))
 	apiMux.HandleFunc("GET /api/repos/{repo}/status", s.writableViewH(s.getStatus))
 	apiMux.HandleFunc("POST /api/repos/{repo}/commit", s.writableH(s.postCommit))
 	apiMux.HandleFunc("POST /api/repos/{repo}/discard", s.writableH(s.postDiscard))
