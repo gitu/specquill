@@ -34,6 +34,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const draft = useDraftRequirement(repo, branch);
   const [mode, setMode] = useState<DriftMode>('drift');
   const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
+  const [report, setReport] = useState(''); // '' = follow the last run / default
   const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
 
@@ -58,9 +59,11 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
   const sources = data.sources ?? [];
   const unitNoun = data.run?.mode === 'gaps' ? 'sources' : 'docs';
 
+  const reportTarget = report || data.run?.reportPath || 'reports/source-alignment.md';
+  const reportExists = (data.reports ?? []).includes(reportTarget);
   const start = () => {
     setErr('');
-    const body = mode === 'gaps' ? { mode } : { mode, paths: scope };
+    const body = { mode, report: reportTarget, ...(mode === 'drift' ? { paths: scope } : {}) };
     run.mutate(body, { onError: (e) => setErr(String((e as Error).message ?? e)) });
   };
   const doFile = (f: DriftFinding) => {
@@ -130,6 +133,22 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
               {sources.length > 0 && <span style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-3)")}> — {sources.map((s) => '~' + s).join(', ')}</span>}
             </div>
           )}
+          <div style={sx('display:flex;align-items:center;gap:6px;margin-top:9px')}>
+            <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>report</span>
+            <input value={reportTarget} list="drift-report-docs" spellCheck={false}
+              onChange={(e) => setReport(e.target.value)}
+              title="The run report doc: pick an existing one to continue it (your text outside the engine block is preserved) or type a new path to start a fresh report"
+              style={sx("flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:'JetBrains Mono',monospace;font-size:10.5px")} />
+            <datalist id="drift-report-docs">
+              {(data.reports ?? []).map((p) => <option key={p} value={p} />)}
+            </datalist>
+            <button onClick={() => setReport(`reports/alignment-${new Date().toISOString().slice(0, 10)}.md`)}
+              title="Start a fresh, dated report instead of continuing the standing one"
+              style={sx('height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-3);font-family:inherit;font-size:10.5px;cursor:pointer;flex:none')}>
+              new
+            </button>
+            <span style={sx('font-size:10px;color:var(--text-3);flex:none')}>{reportExists ? 'continue' : 'create'}</span>
+          </div>
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
               {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope` : 'reports uncovered capabilities as gaps'}

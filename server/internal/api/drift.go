@@ -32,11 +32,18 @@ import (
 	"specquill/server/internal/tracker"
 )
 
-// driftReportPath is the git-native run report: a markdown document the
-// worker rewrites as the run progresses, so the state of the last alignment
-// run lives IN the specs repository (committed like any doc) instead of only
-// in the server's database. Never part of a run's own scope.
-const driftReportPath = "reports/source-alignment.md"
+// The git-native run report: a markdown document the worker rewrites as the
+// run progresses, so alignment state lives IN the specs repository (committed
+// like any doc) instead of only in the server's database. Reports are LIVING
+// documents: the engine owns only the marker-delimited block — everything
+// outside it (the human's conclusions, decisions, sign-offs) is preserved —
+// and each run can target the standing default report, continue any existing
+// one, or start a fresh one (`report` on the run request).
+const (
+	defaultDriftReportPath = "reports/source-alignment.md"
+	reportBegin            = "<!-- specquill:alignment:begin — engine-maintained, edit OUTSIDE this block -->"
+	reportEnd              = "<!-- specquill:alignment:end -->"
+)
 
 // driftRegistry tracks the in-flight run per repo+branch: one at a time, and
 // the cancel endpoint needs a handle on the worker's context.
@@ -184,7 +191,8 @@ func resolveDriftScope(files map[string]string, requested, configured []string) 
 	candidate := func(p string) bool {
 		return strings.HasSuffix(p, ".md") && !strings.HasPrefix(p, ".") &&
 			!strings.HasPrefix(p, "uploads/") && !okf.Reserved(base(p)) &&
-			p != driftReportPath // the run report never audits itself
+			// alignment reports (any of them) never audit themselves
+			!strings.Contains(files[p], reportBegin)
 	}
 	seen := map[string]bool{}
 	var docs []string
@@ -266,6 +274,25 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 	}
 	sort.Strings(names)
 	out["sources"] = names
+	// existing report docs (engine-marked or under reports/) — the run
+	// dialog offers them for continuation, plus the standing default
+	if files, err := repo.Snapshot(branch); err == nil {
+		reports := map[string]bool{defaultDriftReportPath: true}
+		for p, content := range files {
+			if strings.HasSuffix(p, ".md") &&
+				(strings.Contains(content, reportBegin) || strings.HasPrefix(p, "reports/")) {
+				reports[p] = true
+			}
+		}
+		list := make([]string, 0, len(reports))
+		for p := range reports {
+			list = append(list, p)
+		}
+		sort.Strings(list)
+		out["reports"] = list
+	} else {
+		out["reports"] = []string{defaultDriftReportPath}
+	}
 	jsonOK(w, out)
 }
 
@@ -304,8 +331,9 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		return
 	}
 	var body struct {
-		Mode  string   `json:"mode"`
-		Paths []string `json:"paths"`
+		Mode   string   `json:"mode"`
+		Paths  []string `json:"paths"`
+		Report string   `json:"report"` // report doc to create/continue; default: the standing report
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = default scope
 	if body.Mode == "" {
@@ -313,6 +341,13 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	}
 	if body.Mode != "drift" && body.Mode != "gaps" {
 		jsonError(w, http.StatusBadRequest, "mode must be drift or gaps")
+		return
+	}
+	if body.Report == "" {
+		body.Report = defaultDriftReportPath
+	}
+	if cleanDocPath(body.Report) != body.Report || okf.Reserved(base(body.Report)) {
+		jsonError(w, http.StatusBadRequest, "report must be a workspace-relative .md path")
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
@@ -340,6 +375,14 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		sort.Strings(units)
 	} else {
 		units = resolveDriftScope(files, body.Paths, driftCfg.Paths)
+		// a pre-existing doc chosen as the report target leaves the scope
+		// even before it carries the engine markers
+		for i, u := range units {
+			if u == body.Report {
+				units = append(units[:i], units[i+1:]...)
+				break
+			}
+		}
 		if len(units) == 0 {
 			jsonError(w, http.StatusUnprocessableEntity, "no documents in scope")
 			return
@@ -372,7 +415,7 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			reportBranch = ""
 		}
 	}
-	reportPath := driftReportPath
+	reportPath := body.Report
 	if reportBranch == "" {
 		reportPath = ""
 	}
@@ -429,6 +472,7 @@ func (s *Server) postDriftDismiss(w http.ResponseWriter, r *http.Request, repo *
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.refreshDriftReport(repo, branch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, map[string]string{"status": status})
 }
@@ -533,7 +577,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		actJSON, _ := json.Marshal(activity)
 		_ = s.store.UpdateDriftRunProgress(runID, i+1, dropped, string(actJSON))
 		// the in-repo report follows along — every completed unit updates it
-		s.writeDriftReport(runID, repo, branch)
+		s.writeDriftReport(runID, repo, branch, false)
 		s.publish("drift", repo.Key(), branch)
 	}
 	errMsg := ""
@@ -549,17 +593,19 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	if err := s.store.FinishDriftRun(runID, status, errMsg); err != nil {
 		log.Printf("drift [%s@%s]: finish run: %v", repo.ID, branch, err)
 	}
-	if rb := s.writeDriftReport(runID, repo, branch); rb != "" {
+	if rb := s.writeDriftReport(runID, repo, branch, true); rb != "" {
 		s.publish("save", repo.Key(), rb)
 	}
 	s.publish("drift", repo.Key(), branch)
 }
 
-// writeDriftReport regenerates the in-repo run report from the current store
-// state and saves it on the run's report branch as an uncommitted draft.
-// Best-effort: report trouble never disturbs the run. Returns the branch
-// written to ("" when the run has no report target).
-func (s *Server) writeDriftReport(runID int64, repo *project.Project, branch string) string {
+// writeDriftReport refreshes the in-repo report from the current store state
+// and saves it on the run's report branch as an uncommitted draft. Only the
+// marker-delimited engine block is rewritten — the human's text around it
+// survives. appendLog adds the run's summary line to the accumulated run log
+// (once, when it finishes). Best-effort: report trouble never disturbs the
+// run. Returns the branch written to ("" when the run has no report target).
+func (s *Server) writeDriftReport(runID int64, repo *project.Project, branch string, appendLog bool) string {
 	run, err := s.store.LatestDriftRun(repo.Key(), branch)
 	if err != nil || run.ID != runID || run.ReportBranch == "" {
 		return ""
@@ -568,8 +614,16 @@ func (s *Server) writeDriftReport(runID int64, repo *project.Project, branch str
 	if err != nil {
 		return ""
 	}
-	content := driftReportMarkdown(run, findings)
-	_, sha, _ := repo.File(run.ReportBranch, run.ReportPath)
+	existing, sha, _ := repo.File(run.ReportBranch, run.ReportPath)
+	runLog := extractRunLog(existing)
+	if appendLog {
+		runLog = append(runLog, runLogLine(run, findings))
+	}
+	content := mergeDriftReport(existing, driftReportBlock(run, findings, runLog), run.ReportPath)
+	if content, err = mdfm.Touch(content, false, time.Now()); err != nil {
+		log.Printf("drift [%s@%s]: report: %v", repo.ID, branch, err)
+		return ""
+	}
 	if _, err := repo.SaveFile(run.ReportBranch, run.ReportPath, content, sha); err != nil {
 		log.Printf("drift [%s@%s]: report: %v", repo.ID, branch, err)
 		return ""
@@ -577,21 +631,100 @@ func (s *Server) writeDriftReport(runID int64, repo *project.Project, branch str
 	return run.ReportBranch
 }
 
-// driftReportMarkdown renders the report document: run summary, the live
-// findings, and the activity log. Regenerated wholesale on every update —
-// git history (the user commits it with their work) is the archive.
-func driftReportMarkdown(run *store.DriftRun, findings []store.DriftFinding) string {
+// refreshDriftReport re-renders the last finished run's report after a
+// finding changed outside a run (dismissed, filed, drafted) — the report
+// tracks the workflow, not just the run. No-op while a run is in flight
+// (the worker owns the report) or when no run/report exists.
+func (s *Server) refreshDriftReport(repo *project.Project, branch string) {
+	run, err := s.store.LatestDriftRun(repo.Key(), branch)
+	if err != nil || run.Status == "running" || run.ReportBranch == "" {
+		return
+	}
+	if rb := s.writeDriftReport(run.ID, repo, branch, false); rb != "" {
+		s.publish("save", repo.Key(), rb)
+	}
+}
+
+// runLogLine is one run's entry in the report's accumulated run log.
+func runLogLine(run *store.DriftRun, findings []store.DriftFinding) string {
+	unitNoun := "docs"
+	if run.Mode == "gaps" {
+		unitNoun = "sources"
+	}
+	open := 0
+	for _, f := range findings {
+		if f.Status != "dismissed" {
+			open++
+		}
+	}
+	line := fmt.Sprintf("- %s · %s · %d/%d %s · %s · %d finding%s live",
+		time.Unix(run.StartedAt, 0).Format("2006-01-02 15:04"), run.Mode,
+		run.DocsDone, run.DocsTotal, unitNoun, run.Status, open, plural(open))
+	if run.DroppedUnverified > 0 {
+		line += fmt.Sprintf(" · %d dropped", run.DroppedUnverified)
+	}
+	return line
+}
+
+// extractRunLog pulls the accumulated run-log lines out of an existing
+// report's engine block (empty for a fresh or markerless document).
+func extractRunLog(existing string) []string {
+	start := strings.Index(existing, reportBegin)
+	end := strings.Index(existing, reportEnd)
+	if start < 0 || end < start {
+		return nil
+	}
+	block := existing[start:end]
+	i := strings.Index(block, "## Run log")
+	if i < 0 {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(block[i:], "\n") {
+		if strings.HasPrefix(line, "- ") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// mergeDriftReport splices the engine block into the report document:
+// between the markers of an existing report (the human's text around them is
+// theirs), appended to a markerless document someone picked as a report
+// target, or into a fresh scaffold when the file does not exist yet.
+func mergeDriftReport(existing, block, reportPath string) string {
+	wrapped := reportBegin + "\n\n" + block + "\n" + reportEnd
+	if existing != "" {
+		start := strings.Index(existing, reportBegin)
+		end := strings.Index(existing, reportEnd)
+		if start >= 0 && end > start {
+			return existing[:start] + wrapped + existing[end+len(reportEnd):]
+		}
+		return strings.TrimRight(existing, "\n") + "\n\n" + wrapped + "\n"
+	}
+	name := strings.TrimSuffix(base(reportPath), ".md")
+	words := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	title := strings.Join(words, " ")
+	return "---\ntitle: " + title + "\ntype: report\ngenerated_by: specquill drift engine\n---\n\n" +
+		"# " + title + "\n\n" +
+		"_The block below is engine-maintained and rewritten on every alignment run. " +
+		"Everything outside it is yours — add conclusions, decisions and sign-offs, " +
+		"and commit the report with your work; git history is the archive._\n\n" +
+		wrapped + "\n"
+}
+
+// driftReportBlock renders the engine-maintained section of the report:
+// run summary, the live findings, the activity log, and the accumulated
+// run log. Everything around it belongs to the human.
+func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog []string) string {
 	var scope, activity []string
 	_ = json.Unmarshal([]byte(run.ScopeJSON), &scope)
 	_ = json.Unmarshal([]byte(run.ActivityJSON), &activity)
 
 	var b strings.Builder
-	b.WriteString("---\ntitle: Source alignment report\ntype: report\ngenerated_by: specquill drift engine\nupdated: " +
-		time.Now().Format("2006-01-02") + "\n---\n\n")
-	b.WriteString("# Source alignment report\n\n")
-	b.WriteString("_Maintained automatically by the drift engine — updated live during every run. " +
-		"Commit it with your work; git history is the archive._\n\n")
-
 	mode := "drift check (documents verified against the reference sources)"
 	unitNoun := "documents"
 	if run.Mode == "gaps" {
@@ -671,6 +804,12 @@ func driftReportMarkdown(run *store.DriftRun, findings []store.DriftFinding) str
 			b.WriteString(line + "\n")
 		}
 		b.WriteString("```\n")
+	}
+	if len(runLog) > 0 {
+		b.WriteString("\n## Run log\n\n")
+		for _, line := range runLog {
+			b.WriteString(line + "\n")
+		}
 	}
 	return b.String()
 }
@@ -941,6 +1080,7 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.refreshDriftReport(repo, branch)
 	s.publish("save", repo.Key(), writeBranch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, map[string]any{"path": path, "branch": writeBranch})
@@ -1135,6 +1275,7 @@ func (s *Server) postDriftFile(w http.ResponseWriter, r *http.Request, repo *pro
 	if backlinkErr != "" {
 		out["backlinkError"] = backlinkErr
 	}
+	s.refreshDriftReport(repo, branch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, out)
 }

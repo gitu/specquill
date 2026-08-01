@@ -127,10 +127,17 @@ from the code.
   field, both docs exist, not already linked); apply appends to the
   from-doc's frontmatter as a worktree save. **Live feedback + git-native
   report**: every run narrates per-unit activity (`run.activity` in
-  GET /drift, shown in the card while running) and continuously rewrites
-  `reports/source-alignment.md` IN the repo (run summary + findings table +
-  activity log; on the caller's ws branch when the run branch is protected;
-  the report never audits itself). Because `CREATE TABLE IF NOT EXISTS`
+  GET /drift, shown in the card while running) and continuously rewrites a
+  report doc IN the repo (default `reports/source-alignment.md`; the run
+  request's `report:` field creates a new one or CONTINUES any existing one
+  — the card has a picker). Reports are LIVING documents: the engine owns
+  only the `<!-- specquill:alignment:begin/end -->` block (run summary +
+  findings table + activity + accumulated run log); everything outside it
+  is the human's and survives every rewrite. Written on the caller's ws
+  branch when the run branch is protected; any doc containing the begin
+  marker is excluded from run scopes (plus the run's own report path
+  pre-marker). Dismiss/file/draft refresh the last finished run's report
+  too. Because `CREATE TABLE IF NOT EXISTS`
   never adds columns, `store.Open` drops drift tables whose shape is stale
   (`dropStaleDriftTables` — safe, they hold derived state only). E2e gotcha:
   findings from reopened state are visible/fileable while a run is still

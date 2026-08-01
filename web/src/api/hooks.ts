@@ -190,6 +190,7 @@ export interface DriftTarget { name: string; kind: string; project: string }
 export interface DriftResp {
   enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
   sources: string[]; // the references a gaps run would sweep
+  reports: string[]; // existing report docs a run can continue (incl. the default)
 }
 
 /** Latest source-drift run + live findings; polls while a run is in flight. */
@@ -205,7 +206,7 @@ export function useDrift(repo: string | undefined, branch: string) {
 export function useRunDrift(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { mode?: DriftMode; paths?: string[] }) =>
+    mutationFn: (body: { mode?: DriftMode; paths?: string[]; report?: string }) =>
       api<{ runId: number; docsTotal: number; mode: DriftMode }>(
         `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),

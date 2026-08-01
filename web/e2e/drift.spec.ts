@@ -44,9 +44,12 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   await page.goto(`/p/${REPO}/dashboard`);
   await expect(page.getByText('Source alignment')).toBeVisible();
 
-  // scope the run to specs/ — index.md is generated and stays out
+  // scope the run to specs/ — index.md is generated and stays out — and pin
+  // the report target explicitly (the picker defaults to the LAST run's
+  // report, which another session may have pointed elsewhere)
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
   await expect(page.getByText(/2 docs in scope/)).toBeVisible();
+  await page.locator('input[list="drift-report-docs"]').fill('reports/source-alignment.md');
   await page.getByRole('button', { name: 'Check drift' }).click();
 
   // the mock reports one finding per doc, evidence quoting the regulations
@@ -84,7 +87,8 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   await expect(page.getByText('reports/source-alignment.md')).toBeVisible();
   const report = (await (await request.get(
     `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
-  expect(report.content).toContain('# Source alignment report');
+  expect(report.content).toContain('# Source Alignment');
+  expect(report.content).toContain('<!-- specquill:alignment:begin');
   expect(report.content).toContain('## Run activity');
   expect(report.content).toContain('timestamp precision drifted');
 

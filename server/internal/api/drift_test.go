@@ -286,7 +286,8 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 		t.Fatalf("report not written: %d", code)
 	}
 	rep := report["content"].(string)
-	for _, want := range []string{"# Source alignment report", "first title", "## Run activity", "1 finding(s) whose evidence did not verify"} {
+	for _, want := range []string{"# Source Alignment", "<!-- specquill:alignment:begin",
+		"first title", "## Run activity", "1 finding(s) whose evidence did not verify"} {
 		if !strings.Contains(rep, want) {
 			t.Fatalf("report missing %q:\n%s", want, rep)
 		}
@@ -325,6 +326,67 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	targets := drift["targets"].([]any)
 	if len(targets) != 1 || targets[0].(map[string]any)["name"] != "board" {
 		t.Fatalf("targets = %v", targets)
+	}
+
+	// the second run appended to the report's accumulated run log
+	_, report = doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/source-alignment.md?ref=main", nil)
+	if got := strings.Count(report["content"].(string), "\n- 20"); got != 2 {
+		t.Fatalf("run log must accumulate one line per run, got %d:\n%s", got, report["content"])
+	}
+}
+
+func TestDriftReportContinueAndPreserveHumanEdits(t *testing.T) {
+	empty := `{"findings": []}`
+	h, _, _, _, _ := testDriftServer(t, []string{empty, empty})
+	cookie := login(t, h)
+
+	// first run maintains a NAMED report (created fresh, scaffolded)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"report": "reports/q3-review.md"})
+	if code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	if drift["run"].(map[string]any)["reportPath"] != "reports/q3-review.md" {
+		t.Fatalf("run = %v", drift["run"])
+	}
+	_, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/q3-review.md?ref=main", nil)
+	content := file["content"].(string)
+	if !strings.Contains(content, "# Q3 Review") || !strings.Contains(content, "<!-- specquill:alignment:begin") {
+		t.Fatalf("scaffold wrong:\n%s", content)
+	}
+
+	// the human continues working on the report OUTSIDE the engine block
+	sha := file["sha"].(string)
+	edited := strings.Replace(content, "# Q3 Review\n", "# Q3 Review\n\nSign-off: reviewed by Flo, ship it.\n", 1) +
+		"\n## Conclusions\n\nEverything below the block is ours.\n"
+	if code, out := doJSON(t, h, cookie, "PUT", "/api/repos/w/files/reports/q3-review.md?branch=main",
+		map[string]string{"content": edited, "baseSha": sha}); code != http.StatusOK {
+		t.Fatalf("edit report: %d %v", code, out)
+	}
+
+	// a second run CONTINUES the same report: human text intact, block fresh
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"report": "reports/q3-review.md"}); code != http.StatusOK {
+		t.Fatalf("re-run: %d %v", code, out)
+	}
+	waitDrift(t, h, cookie)
+	_, file = doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/q3-review.md?ref=main", nil)
+	content = file["content"].(string)
+	for _, want := range []string{"Sign-off: reviewed by Flo", "## Conclusions", "## Run log"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continued report missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Count(content, "<!-- specquill:alignment:begin") != 1 {
+		t.Fatalf("engine block must be replaced, not duplicated:\n%s", content)
+	}
+
+	// the report doc never enters a run's scope, even fresh in the worktree
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"paths": []string{"reports/"}})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("report must be out of scope: %d %v", code, out)
 	}
 }
 
