@@ -25,9 +25,6 @@ export interface EntityDef {
   group?: string;      // model axis: why | what | how | when
   driver?: string;     // WHY entities: the driver type docs of this kind stand for
   docType?: string;    // frontmatter `type:` value the family's documents carry
-  inbox?: boolean;     // this family IS the change inbox (feed, review, dashboards)
-  closedStatuses?: string[];    // inbox lifecycle: statuses that count as done
-  attentionStatuses?: string[]; // inbox statuses that need a human decision
   attributes?: string[]; // frontmatter keys new documents are seeded with
   builtin: boolean;
 }
@@ -54,6 +51,20 @@ export interface TraceabilityDef {
   when?: string;
 }
 
+/**
+ * Timed dependencies: which frontmatter keys carry a document's validity
+ * window, when a dependency counts as ready, and how far ahead "starting
+ * soon" / "expiring" reaches. Any document carrying one of the keys joins the
+ * timeline — the feature is entirely config-driven, no dedicated family.
+ */
+export interface TimedDef {
+  start: string[];
+  end: string[];
+  readyStatuses: string[];
+  horizonDays: number;
+  kinds: string[]; // empty = every family
+}
+
 export interface PropertySchema {
   order?: string[];
   fields?: Record<string, { label?: string; type?: string; values?: Record<string, string> }>;
@@ -65,6 +76,7 @@ export interface WorkspaceConfig {
   statuses: string[];
   linkTypes: LinkTypeDef[];
   traceability: TraceabilityDef[];
+  timed: TimedDef;
   properties: PropertySchema;
   /** the config declared its own properties: section (vs default/schema.json) */
   hasProperties: boolean;
@@ -79,7 +91,7 @@ export const BUILTIN_ENTITIES: EntityDef[] = [
   {
     kind: 'regulation', group: 'why', driver: 'regulatory', docType: 'Regulation', folder: 'regulations/', label: 'Regulations', icon: '◈', color: 'var(--reg)', builtin: true,
     attributes: ['id', 'title', 'status'],
-    description: 'External rules the product must comply with — the origin of regulatory drivers and change records.',
+    description: 'External rules the product must comply with — the origin of regulatory drivers.',
   },
   {
     kind: 'requirement', group: 'what', docType: 'Requirement', folder: 'requirements/', label: 'Requirements', icon: '▤', color: 'var(--prod)', builtin: true,
@@ -102,12 +114,6 @@ export const BUILTIN_ENTITIES: EntityDef[] = [
     description: 'Sketches and text diagrams embedded in documents — portable formats, no tool lock-in.',
   },
   {
-    kind: 'change', group: 'why', docType: 'Change Record', folder: 'changes/', label: 'Changes', icon: '⚑', color: 'var(--reg)', builtin: true,
-    inbox: true, closedStatuses: ['done', 'merged'], attentionStatuses: ['triage'],
-    attributes: ['title', 'status', 'source', 'published'],
-    description: 'Incoming change records (regulatory, product, technical) triaged against the documents they impact.',
-  },
-  {
     kind: 'work_item', group: 'when', docType: 'Work Item', folder: 'work-items/', label: 'Work items', icon: '⧗', color: 'var(--data)', builtin: true,
     attributes: ['id', 'title', 'status', 'priority', 'owner', 'delivers', 'due'],
     description: 'WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done.',
@@ -125,7 +131,7 @@ export const DEFAULT_STATUSES = ['draft', 'in_review', 'approved', 'deprecated']
 // Every chain link is stored on the LOWER level pointing up; the graph and
 // backlinks derive the other direction.
 export const DEFAULT_LINK_TYPES: LinkTypeDef[] = [
-  { name: 'drivers', from: 'requirement', to: 'regulation, change', inverse: 'drives' },        // WHAT → WHY
+  { name: 'drivers', from: 'requirement', to: 'regulation', inverse: 'drives' },                // WHAT → WHY
   { name: 'implements', from: 'spec, data_mapping', to: 'requirement', inverse: 'implemented by' }, // HOW → WHAT
   { name: 'delivers', from: 'work_item', to: 'spec, requirement', inverse: 'delivered by' },    // WHEN → HOW (or WHAT directly)
   { name: 'maps_to', from: 'spec', to: 'data_field', inverse: 'mapped by' },
@@ -142,8 +148,20 @@ export const DEFAULT_TRACEABILITY: TraceabilityDef[] = [
   { link: 'maps_to', measure: 'from', label: 'Specs → data fields', when: 'data_mapping' },
 ];
 
+// Timed dependencies read the FIRST of these keys a document carries, so a
+// workspace can name the window `starts:`/`ends:` or keep regulatory wording
+// (`effective_from:`). `due` is included on the end side so scheduled work
+// items sit on the same timeline as regulatory deadlines.
+export const DEFAULT_TIMED: TimedDef = {
+  start: ['starts', 'effective_from', 'valid_from'],
+  end: ['ends', 'effective_until', 'valid_until', 'due'],
+  readyStatuses: ['approved', 'done'],
+  horizonDays: 90,
+  kinds: [],
+};
+
 export const DEFAULT_PROPERTIES: PropertySchema = {
-  order: ['id', 'type', 'status', 'priority', 'owner', 'source', 'due', 'drivers', 'implements', 'delivers', 'maps_to', 'verifies', 'created', 'updated'],
+  order: ['id', 'type', 'status', 'priority', 'owner', 'source', 'starts', 'ends', 'due', 'drivers', 'implements', 'delivers', 'maps_to', 'verifies', 'created', 'updated'],
   fields: {
     id: { label: 'ID', type: 'code' },
     type: { label: 'Type', type: 'tag' },
@@ -151,6 +169,8 @@ export const DEFAULT_PROPERTIES: PropertySchema = {
     priority: { label: 'Priority', type: 'enum', values: { must: 'amber', should: 'blue', could: 'slate' } },
     owner: { label: 'Owner', type: 'user' },
     source: { label: 'Source', type: 'enum', values: { regulatory: 'amber', product: 'blue', technical: 'slate' } },
+    starts: { label: 'Starts', type: 'date' },
+    ends: { label: 'Ends', type: 'date' },
     due: { label: 'Due', type: 'date' },
     drivers: { label: 'Drivers', type: 'links' },
     implements: { label: 'Implements', type: 'links' },
@@ -170,7 +190,6 @@ export const isLinkAttr = (key: string) => DEFAULT_PROPERTIES.fields![key]?.type
 interface RawEntity {
   folder?: unknown; label?: unknown; icon?: unknown; color?: unknown;
   description?: unknown; group?: unknown; driver?: unknown; doc_type?: unknown;
-  inbox?: unknown; closed_statuses?: unknown; attention_statuses?: unknown;
   attributes?: unknown; hidden?: unknown;
 }
 
@@ -185,6 +204,7 @@ export interface RawConfig {
   statuses?: string[];
   link_types?: Record<string, { from?: unknown; to?: unknown; inverse?: unknown }>;
   traceability?: TraceabilityDef[];
+  timed?: Partial<TimedDef>;
   ids?: Record<string, { pattern?: unknown }>;
   properties?: PropertySchema;
 }
@@ -214,6 +234,16 @@ export function parseRawConfig(yml: string | undefined): RawConfig {
       if (str(t.when)) def.when = str(t.when);
       return def;
     }).filter((t) => t.link);
+  }
+  if (isMap(doc.timed)) {
+    const t = doc.timed as Record<string, unknown>;
+    const timed: Partial<TimedDef> = {};
+    if (strList(t.start).length) timed.start = strList(t.start);
+    if (strList(t.end).length) timed.end = strList(t.end);
+    if (strList(t.ready_statuses).length) timed.readyStatuses = strList(t.ready_statuses);
+    if (typeof t.horizon_days === 'number' && t.horizon_days > 0) timed.horizonDays = t.horizon_days;
+    if (Array.isArray(t.kinds)) timed.kinds = strList(t.kinds);
+    out.timed = timed;
   }
   if (isMap(doc.ids)) out.ids = doc.ids as RawConfig['ids'];
   if (isMap(doc.properties)) {
@@ -264,9 +294,6 @@ function effectiveEntities(raw: RawConfig): EntityDef[] {
         group: str(spec.group) || cur.group,
         driver: str(spec.driver) || cur.driver,
         docType: str(spec.doc_type) || cur.docType,
-        inbox: spec.inbox === true || (spec.inbox === undefined ? cur.inbox : undefined),
-        closedStatuses: Array.isArray(spec.closed_statuses) ? spec.closed_statuses.map(str).filter(Boolean) : cur.closedStatuses,
-        attentionStatuses: Array.isArray(spec.attention_statuses) ? spec.attention_statuses.map(str).filter(Boolean) : cur.attentionStatuses,
         attributes: attributes ?? cur.attributes,
       };
     } else {
@@ -280,9 +307,6 @@ function effectiveEntities(raw: RawConfig): EntityDef[] {
         group: str(spec.group) || undefined,
         driver: str(spec.driver) || undefined,
         docType: str(spec.doc_type) || titleCaseKind(kind),
-        inbox: spec.inbox === true || undefined,
-        closedStatuses: Array.isArray(spec.closed_statuses) ? spec.closed_statuses.map(str).filter(Boolean) : undefined,
-        attentionStatuses: Array.isArray(spec.attention_statuses) ? spec.attention_statuses.map(str).filter(Boolean) : undefined,
         attributes,
         builtin: false,
       });
@@ -314,6 +338,9 @@ export function workspaceConfig(yml?: string): WorkspaceConfig {
     statuses: raw.statuses?.length ? raw.statuses : DEFAULT_STATUSES,
     linkTypes: raw.link_types ? linkTypeList(raw.link_types) : DEFAULT_LINK_TYPES,
     traceability: raw.traceability?.length ? raw.traceability : DEFAULT_TRACEABILITY,
+    // key-by-key merge: a config that names only `horizon_days` keeps the
+    // built-in key lists
+    timed: { ...DEFAULT_TIMED, ...(raw.timed || {}) },
     properties: raw.properties || DEFAULT_PROPERTIES,
     hasProperties: !!raw.properties,
   };

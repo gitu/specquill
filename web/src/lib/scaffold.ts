@@ -16,7 +16,8 @@ export function scaffoldConfigYml(project: string): string {
 version: 2
 project: ${project}
 
-# view shown when opening the workspace (dashboard | editor | changes | graph | model)
+# view shown when opening the workspace
+# (dashboard | editor | timed | changes | history | graph | model)
 ui:
   default_view: editor
 
@@ -43,19 +44,7 @@ entities:
     icon: "◈"
     color: "var(--reg)"
     attributes: [id, title, status]
-    description: "External rules the product must comply with — the origin of regulatory drivers and change records."
-  change:
-    doc_type: "Change Record"
-    group: why
-    folder: "changes/"
-    label: "Changes"
-    icon: "⚑"
-    color: "var(--reg)"
-    inbox: true                        # this family IS the change inbox
-    attention_statuses: [triage]       # needs a human — review card, sort first
-    closed_statuses: [done, merged]    # out of the open count and the feed
-    attributes: [title, status, source, published]
-    description: "Incoming change records (regulatory, product, technical) triaged against the documents they impact."
+    description: "External rules the product must comply with — the origin of regulatory drivers."
   requirement:
     doc_type: "Requirement"
     group: what
@@ -103,6 +92,11 @@ entities:
     description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
   # decision: { group: why, folder: "decisions/", label: "Decisions", icon: "◆", color: "#7c5cd6", description: "Why the system is shaped this way." }
 
+# NOTE (Aug 2026): the change-record inbox was replaced by timed dependencies
+# (below) and the git-derived change history. The old entity keys inbox,
+# attention_statuses and closed_statuses are accepted and IGNORED — a change
+# family still works as an ordinary document family, it simply has no inbox UI.
+
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
 # The categories a driver can fall into (chips in the Properties panel and
 # the dashboards). A \`drivers:\` link's type is DERIVED from the referenced
@@ -121,7 +115,7 @@ statuses: [draft, in_review, approved, deprecated]
 # \`inverse\` names the relation as read from the TARGET side (the Context
 # panel shows "implemented by" on a requirement, not "implements").
 link_types:
-  drivers:    { from: requirement,            to: [regulation, change], inverse: "drives" }        # WHAT → WHY
+  drivers:    { from: requirement,            to: regulation,           inverse: "drives" }        # WHAT → WHY
   implements: { from: [spec, data_mapping],   to: requirement,          inverse: "implemented by" } # HOW → WHAT
   delivers:   { from: work_item,              to: [spec, requirement],  inverse: "delivered by" }  # WHEN → HOW (or WHAT directly)
   maps_to:    { from: spec,                   to: data_field,           inverse: "mapped by" }
@@ -138,6 +132,21 @@ traceability:
   - { link: delivers,   measure: to }
   - { link: maps_to,    measure: from, label: "Specs → data fields", when: data_mapping }
 
+# ── timed dependencies: documents with a validity window ───────────────────
+# Any document carrying one of these frontmatter keys joins the Timed view,
+# whatever family it belongs to — a regulation that comes into force, a
+# requirement that only applies for a season, a work item with a due date.
+# The FIRST key present wins, so regulatory wording and plain starts/ends mix
+# freely. \`ready_statuses\` decides when a dependent document counts as done
+# in time; \`horizon_days\` is how far ahead "starting soon"/"expiring" reaches;
+# \`kinds\` narrows the timeline to named families (empty = all).
+timed:
+  start: [starts, effective_from, valid_from]
+  end: [ends, effective_until, valid_until, due]
+  ready_statuses: [approved, done]
+  horizon_days: 90
+  kinds: []
+
 # ── ID schemes for new documents ───────────────────────────────────────────
 # Tokens: {seq} / {seq:N} (next number in the family, zero-padded), {rand:N}
 # digits, {hex:N}, {adj} {word} (memorable pairs like "brisk-heron"), {yy}
@@ -146,9 +155,9 @@ traceability:
 ids:
   requirement:  { pattern: "REQ-{seq:3}" }
   regulation:   { pattern: "REG-{seq:3}" }
-  change:       { pattern: "CHG-{seq:3}" }
   data_mapping: { pattern: "MAP-{seq:3}" }
   work_item:    { pattern: "WI-{seq:3}" }
+  # change:     { pattern: "CHG-{seq:3}" }   # if you add a change-record family
 
 # ── attributes: the property schema ────────────────────────────────────────
 # Frontmatter fields — labels, types and enum colors drive the Properties
@@ -157,7 +166,7 @@ ids:
 # (Replaces the former .specquill/schema.json, which is still honored while
 # this section is absent.)
 properties:
-  order: [id, type, status, priority, owner, source, due, drivers, implements, delivers, maps_to, verifies, created, updated]
+  order: [id, type, status, priority, owner, source, starts, ends, due, drivers, implements, delivers, maps_to, verifies, created, updated]
   fields:
     id:         { label: "ID", type: code }
     type:       { label: "Type", type: tag }
@@ -165,6 +174,8 @@ properties:
     priority:   { label: "Priority", type: enum, values: { must: amber, should: blue, could: slate } }
     owner:      { label: "Owner", type: user }
     source:     { label: "Source", type: enum, values: { regulatory: amber, product: blue, technical: slate } }
+    starts:     { label: "Starts", type: date }
+    ends:       { label: "Ends", type: date }
     due:        { label: "Due", type: date }
     drivers:    { label: "Drivers", type: links }
     implements: { label: "Implements", type: links }
@@ -219,7 +230,9 @@ Rules the AI assistant follows for documents in THIS workspace — extend them
 with your team's structure and content expectations. Examples to adapt:
 
 - Every requirement gets a rationale paragraph before its normative statements.
-- Specs describe current behavior only; planned work belongs in change records.
+- Specs describe current behavior only; planned work belongs in work items.
+- A requirement that only applies from a date carries starts: (and ends: when it
+  lapses) — that is what puts it on the timed-dependency timeline.
 - Use tables for field mappings, mermaid flowcharts for branching flows.
 `;
 }

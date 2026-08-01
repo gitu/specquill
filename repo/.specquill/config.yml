@@ -18,13 +18,15 @@ entities:
 # property schema for THIS workspace (replaces the built-in default — the
 # trading specs carry regulatory attributes like authority/jurisdiction)
 properties:
-  order: [id, type, authority, jurisdiction, status, priority, business_value, coverage, owner, value_statement, drivers, implements, maps_to, verifies, diagrams, anchors, source_system, target_model, updated]
+  order: [id, type, authority, jurisdiction, status, starts, ends, priority, business_value, coverage, owner, value_statement, drivers, implements, maps_to, verifies, diagrams, anchors, source_system, target_model, updated]
   fields:
     id: { label: "ID", type: code }
     type: { label: "Type", type: tag }
     authority: { label: "Authority", type: tag }
     jurisdiction: { label: "Jurisdiction", type: tag }
     status: { label: "Status", type: enum, values: { draft: slate, in_review: amber, approved: green, active: green, deprecated: slate, triage: amber } }
+    starts: { label: "Starts", type: date }
+    ends: { label: "Ends", type: date }
     priority: { label: "Priority", type: enum, values: { must: amber, should: blue, could: slate } }
     business_value: { label: "Business value", type: enum, values: { high: green, medium: blue, low: slate } }
     coverage: { label: "Coverage", type: percent }

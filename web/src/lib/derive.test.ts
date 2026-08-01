@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backlinkLabel, buildChanges, buildDashboard, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
+import { backlinkLabel, buildDashboard, buildTimed, windowPhrase, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 import { workspaceConfig } from './config';
@@ -238,9 +238,9 @@ describe('buildDashboard', () => {
     'requirements/R2.md': '---\nid: R2\ntitle: Two\nstatus: draft\n---\n',
     'specs/s1.md': '---\nid: S1\ntitle: Spec One\nimplements:\n  - requirements/R1.md\n---\n',
     'work-items/W1.md': '---\nid: WI-1\ntitle: Ship it\nstatus: backlog\ndelivers:\n  - specs/s1.md\n---\n',
-    'changes/c1.md': '---\nid: CHG-1\ntitle: A change\nsource: product\nstatus: triage\npublished: 2026-07-01\n---\n',
+    'regulations/dora.md': '---\nid: REG-dora\ntitle: DORA\nstatus: approved\nstarts: 2026-09-01\n---\n',
   };
-  const d = buildDashboard(buildModel(files));
+  const d = buildDashboard(buildModel(files), '2026-08-01');
 
   it('computes chain health with inbound coverage for the upper levels', () => {
     const bars = Object.fromEntries(d.health.map((h) => [h.label, h.pct]));
@@ -249,28 +249,29 @@ describe('buildDashboard', () => {
     expect(bars['Specs ← work items']).toBe(100);      // s1 covered by W1's delivers
   });
 
-  it('derives KPI tiles and the driver breakdown from the config', () => {
-    const changes = d.tiles.find((t) => t.key === 'changes')!;
-    expect(changes.label).toBe('Open changes');
-    expect(changes.sub).toBe('0 regulatory · 1 product · 0 technical');
+  it('derives KPI tiles from the config', () => {
+    const timed = d.tiles.find((t) => t.key === 'timed')!;
+    expect(timed.label).toBe('Pending dependencies');
+    expect(timed.value).toBe('1');                    // DORA starts 2026-09-01
+    expect(timed.sub).toBe('0 active · 0 expiring · 0 expired');
     const what = d.tiles.find((t) => t.key === 'what')!;
     expect(what.value).toBe('2');
     expect(what.sub).toBe('1 of 2 implemented');
     expect(d.newDoc).toEqual({ kind: 'requirement', label: 'requirement' });
   });
 
-  it('drops tiles, bars and the feed for entities the workspace hides', () => {
+  it('drops tiles, bars and the timeline for entities the workspace hides', () => {
     const yml = [
       'entities:',
       '  requirement: { label: "User stories" }',
-      '  change: { hidden: true }',
+      '  regulation: { hidden: true }',
       '  data_mapping: { hidden: true }',
       '  work_item: { hidden: true }',
     ].join('\n');
     const cfg = workspaceConfig(yml);
-    const d2 = buildDashboard(buildModel(files, cfg));
-    expect(d2.changeEntity).toBeNull();
-    expect(d2.feed).toEqual([]);
+    const d2 = buildDashboard(buildModel(files, cfg), '2026-08-01');
+    expect(d2.hasTimed).toBe(false);                  // the only timed doc was a regulation
+    expect(d2.upcoming).toEqual([]);
     expect(d2.tiles.map((t) => t.key)).toEqual(['what']);
     expect(d2.tiles[0].label).toBe('User stories');
     expect(d2.newDoc).toEqual({ kind: 'requirement', label: 'user story' });
@@ -278,40 +279,86 @@ describe('buildDashboard', () => {
     expect(d2.health.map((h) => h.label)).toEqual(['User stories → drivers', 'User stories ← specs']);
   });
 
-  it('a custom inbox entity replaces the change family end to end', () => {
-    const yml = [
-      'entities:',
-      '  change: { hidden: true }',
-      '  ticket:',
-      '    group: why',
-      '    folder: "tickets/"',
-      '    label: "Tickets"',
-      '    inbox: true',
-      '    attention_statuses: [needs_triage]',
-      '    closed_statuses: [shipped]',
-      'drivers:',
-      '  customer: { label: "Customer", icon: "☺", color: "#aa3377" }',
-      '  internal: { label: "Internal", icon: "⚒", color: "#337799" }',
-    ].join('\n');
-    const cfg = workspaceConfig(yml);
+  it('buildTimed buckets windows, rolls up dependents and flags risk', () => {
     const tf = {
-      'requirements/R1.md': '---\nid: R1\ntitle: One\nstatus: draft\n---\n',
-      'tickets/t1.md': '---\nid: T-1\ntitle: Hot\nsource: customer\nstatus: needs_triage\npublished: 2026-07-01\n---\n',
-      'tickets/t2.md': '---\nid: T-2\ntitle: Done\nsource: internal\nstatus: shipped\npublished: 2026-06-01\n---\n',
-      'tickets/t3.md': '---\nid: T-3\ntitle: Rolling\nsource: internal\nstatus: in_progress\npublished: 2026-06-15\n---\n',
+      // starts inside the horizon, its only spec still draft → at risk
+      'requirements/R1.md': '---\nid: R1\ntitle: Soon\nstatus: approved\nstarts: 2026-08-20\n---\n',
+      'specs/s1.md': '---\ntitle: Impl\nstatus: draft\nimplements:\n  - requirements/R1.md\n---\n',
+      // starts inside the horizon with everything ready → pending, not at risk
+      'requirements/R2.md': '---\nid: R2\ntitle: Ready\nstatus: approved\nstarts: 2026-08-10\n---\n',
+      'specs/s2.md': '---\ntitle: Done\nstatus: approved\nimplements:\n  - requirements/R2.md\n---\n',
+      // in force with the end beyond the horizon → active
+      'regulations/g1.md': '---\nid: G1\ntitle: Running\nstatus: approved\nstarts: 2026-01-01\nends: 2027-06-01\n---\n',
+      // ends inside the horizon → expiring; already ended → expired
+      'regulations/g2.md': '---\nid: G2\ntitle: Closing\nstatus: approved\neffective_until: 2026-09-15\n---\n',
+      'regulations/g3.md': '---\nid: G3\ntitle: Gone\nstatus: approved\nends: 2026-07-01\n---\n',
+      // no window at all → not on the timeline
+      'requirements/R9.md': '---\nid: R9\ntitle: Untimed\nstatus: draft\n---\n',
+    };
+    const m = buildModel(tf);
+    expect(m.timed.map((t) => t.path).sort()).toEqual([
+      'regulations/g1.md', 'regulations/g2.md', 'regulations/g3.md',
+      'requirements/R1.md', 'requirements/R2.md',
+    ]);
+    const { items, counts } = buildTimed(m, '2026-08-01');
+    const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+    expect(byId.R1.state).toBe('pending');
+    expect(byId.R1.days).toBe(19);
+    expect(byId.R1.atRisk).toBe(true);            // s1 still draft
+    expect(byId.R1.readyCount).toBe(0);
+    expect(byId.R2.atRisk).toBe(false);           // s2 approved
+    expect(byId.G1.state).toBe('active');
+    expect(byId.G2.state).toBe('expiring');       // effective_until is a configured end key
+    expect(byId.G2.days).toBe(45);
+    expect(byId.G3.state).toBe('expired');
+    expect(byId.G3.days).toBe(-31);
+    expect(counts).toEqual({ all: 5, pending: 2, active: 1, expiring: 1, expired: 1 });
+    // pending first, soonest first; filters narrow to one bucket
+    expect(items.map((i) => i.id)).toEqual(['R2', 'R1', 'G1', 'G2', 'G3']);
+    expect(buildTimed(m, '2026-08-01', 'expired').items.map((i) => i.id)).toEqual(['G3']);
+  });
+
+  it('the dashboard card leads with at-risk windows and phrases them by their date', () => {
+    const tf = {
+      // three pending windows that are fine, one expiring window in trouble
+      'requirements/R1.md': '---\nid: R1\ntitle: Fine 1\nstatus: approved\nstarts: 2026-08-05\n---\n',
+      'requirements/R2.md': '---\nid: R2\ntitle: Fine 2\nstatus: approved\nstarts: 2026-08-06\n---\n',
+      'requirements/R3.md': '---\nid: R3\ntitle: Fine 3\nstatus: approved\nstarts: 2026-08-07\n---\n',
+      'regulations/g1.md': '---\nid: G1\ntitle: Trouble\nstatus: draft\nends: 2026-08-20\n---\n',
+      // active with no end: its countdown runs from the START
+      'regulations/g2.md': '---\nid: G2\ntitle: Running\nstatus: approved\nstarts: 2026-01-01\n---\n',
+    };
+    const d = buildDashboard(buildModel(tf), '2026-08-01');
+    expect(d.upcoming.map((i) => i.id)).toEqual(['G1', 'R1', 'R2']); // at risk first
+    expect(windowPhrase(d.upcoming[0])).toBe('ends in 19d');
+    expect(windowPhrase(d.upcoming[1])).toBe('starts in 4d');
+    const running = buildTimed(buildModel(tf), '2026-08-01').items.find((i) => i.id === 'G2')!;
+    expect(windowPhrase(running)).toBe('started 7mo ago'); // never "active in 7mo"
+  });
+
+  it('timed keys, ready statuses and horizon come from the config', () => {
+    const cfg = workspaceConfig([
+      'timed:',
+      '  start: [go_live]',
+      '  end: [sunset]',
+      '  ready_statuses: [shipped]',
+      '  horizon_days: 10',
+      '  kinds: [requirement]',
+    ].join('\n'));
+    const tf = {
+      'requirements/R1.md': '---\nid: R1\ntitle: Custom\nstatus: draft\ngo_live: 2026-08-05\n---\n',
+      'specs/s1.md': '---\ntitle: Impl\nstatus: shipped\nimplements:\n  - requirements/R1.md\n---\n',
+      // the built-in key is not configured here, and specs are out of `kinds`
+      'specs/s2.md': '---\ntitle: Other\nstatus: draft\nstarts: 2026-08-02\n---\n',
     };
     const m = buildModel(tf, cfg);
-    expect(m.inbox).toEqual({ kind: 'ticket', label: 'Tickets', closed: ['shipped'], attention: ['needs_triage'] });
-    expect(m.changes.map((c) => c.path).sort()).toEqual(['tickets/t1.md', 'tickets/t2.md', 'tickets/t3.md']);
-    // dashboard: tile + feed keyed on the inbox, open excludes closed statuses
-    const d = buildDashboard(m);
-    expect(d.changeEntity).toEqual({ label: 'Tickets', lower: 'tickets' });
-    expect(d.openCount).toBe(2); // shipped is closed
-    expect(d.tiles.find((t) => t.key === 'changes')!.sub).toBe('1 customer · 1 internal');
-    // inbox ordering: attention first, closed last; counts per custom driver
-    const ch = buildChanges(m, 'all');
-    expect(ch.items.map((c) => c.id)).toEqual(['T-1', 'T-3', 'T-2']);
-    expect(ch.counts).toEqual({ all: 3, customer: 1, internal: 2 });
+    expect(m.timed.map((t) => t.path)).toEqual(['requirements/R1.md']);
+    const { items } = buildTimed(m, '2026-08-01');
+    expect(items[0].startKey).toBe('go_live');
+    expect(items[0].deps[0].ready).toBe(true);    // shipped counts as ready here
+    expect(items[0].atRisk).toBe(true);           // …but the document itself is draft
+    // outside the 10-day horizon nothing is at risk yet
+    expect(buildTimed(m, '2026-07-01').items[0].atRisk).toBe(false);
   });
 
   it('driverMeta takes custom taxonomy entries from the config', () => {

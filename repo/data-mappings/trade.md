@@ -25,7 +25,7 @@ Source system `OMS v4` → reporting model `trade`.
 ## Drift — #1 `trade.executionTimestamp` {#executionTimestamp}
 The RTS 22 amendment (2026-06) requires **microsecond** precision. The current transform
 emits second precision → status `⚠ drift`. Fix tracked in
-[changes/2026-06-mifid-rts22.md](../changes/2026-06-mifid-rts22.md) (PR #128).
+the RTS 22 amendment in [regulations/mifid-ii.md](../regulations/mifid-ii.md) (PR #128).
 
 ## `trade.venue` {#venue}
 Resolved per [specs/venue.md](../specs/venue.md).

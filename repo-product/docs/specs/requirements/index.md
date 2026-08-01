@@ -25,3 +25,5 @@
 - [Encrypted tenant credentials for repo connection](REQ-023.md)
 - [Bring-your-own-token forge authentication](REQ-024.md)
 - [Token-scoped dynamic projects with clone quota and idle cleanup](REQ-025.md)
+- [Timed dependencies from document validity windows](REQ-026.md)
+- [Change history derived from git, in workspace terms](REQ-027.md)

@@ -33,7 +33,8 @@ title: Writing requirements
 When asked to draft or edit a requirement (requirements/REQ-*.md):
 
 - One requirement per file, id ` + "`REQ-<nnn>`" + `; the frontmatter id, filename and title heading agree.
-- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and drivers — the WHY documents (regulations/change records) that motivate it, as a plain path list. Specs point back via their implements list.
+- Frontmatter: id, title, status (draft|review|approved), priority (must|should|could), owner, and drivers — the WHY documents (regulations, product asks) that motivate it, as a plain path list. Specs point back via their implements list.
+- When the requirement only applies from or until a date — a rule coming into force, a commitment with a deadline, a rule being retired — record it as ` + "`starts:`" + ` / ` + "`ends:`" + ` (yyyy-mm-dd). Those keys put the document on the workspace's timed-dependency timeline, where the readiness of everything implementing it is tracked against the date. Never invent a date: take it from the driving document, or ask.
 - Body: one short context paragraph, then atomic sub-requirements as blockquotes: "**REQ-<nnn>.<m> · MUST** — <single testable statement>" using RFC-2119 keywords (MUST/SHALL/SHOULD/MAY).
 - Each statement is verifiable: no "user-friendly", "fast", "appropriate" without a measurable bound.
 - Never invent regulation references — link only files that exist in the workspace.
@@ -82,6 +83,7 @@ When working with regulations/*.md:
 - Regulation files are reference material — quote and link them (path#anchor), never rewrite their normative text.
 - Requirements cite them via the drivers frontmatter list as plain paths like regulations/<file>.md#<article-anchor>; the regulatory type is derived from the target.
 - When summarizing a regulatory change, list the driven requirements and where their coverage stands.
+- A regulation that comes into force (or lapses) on a date carries ` + "`effective_from:`" + ` / ` + "`effective_until:`" + ` — that is what puts it, and the requirements behind it, on the timed-dependency timeline.
 `,
 	},
 	"data-mappings": {
@@ -113,8 +115,11 @@ When asked to draft or edit a data mapping (data-mappings/*.md):
 - Every transformation rule is deterministic and testable; mark lossy or defaulted mappings explicitly.
 `,
 	},
+	// Optional family — nothing depends on it. What changed in the workspace
+	// is read from git history (the Changes/History views); a change record
+	// is for tracking an EXTERNAL delta a team wants a document for.
 	"changes": {
-		Key: "changes", Dir: "changes", Title: "Change records (incoming deltas: regulatory, product, technical)",
+		Key: "changes", Dir: "changes", Title: "Change records (optional: external deltas worth their own document)",
 		Starter: `---
 type: Change Record
 title: Example change record
@@ -125,7 +130,8 @@ source: product
 # Example change record
 
 What changed upstream, which requirements/specs/mappings it reaches, and the
-decision taken. Change records drive the change inbox on the dashboard.
+decision taken. Declare the family in .specquill/config.yml (entities:) to give
+these documents their own folder and icon.
 `,
 		Skill: `---
 type: Skill
@@ -167,7 +173,7 @@ title: Writing work items
 
 When asked to draft or edit a work item (work-items/WI-*.md):
 
-- One deliverable per file, id WI-<nnn>; frontmatter: id, title, status (backlog|in_progress|done), priority, owner, delivers (the requirements/specs this item ships), due (yyyy-mm-dd, optional).
+- One deliverable per file, id WI-<nnn>; frontmatter: id, title, status (backlog|in_progress|done), priority, owner, delivers (the requirements/specs this item ships), due (yyyy-mm-dd, optional — a due date puts the item on the timed-dependency timeline).
 - The body answers: what ships, why now (link the driving change records), and how we know it is done (acceptance checks referencing the linked requirements).
 - Keep delivers accurate — it is the WHEN edge of the traceability graph; do not pad it.
 `,
@@ -247,7 +253,8 @@ func configStarter(project string) string {
 version: 2
 project: ` + project + `
 
-# view shown when opening the workspace (dashboard | editor | changes | graph | model)
+# view shown when opening the workspace
+# (dashboard | editor | timed | changes | history | graph | model)
 ui:
   default_view: editor
 
@@ -273,19 +280,7 @@ entities:
     icon: "◈"
     color: "var(--reg)"
     attributes: [id, title, status]
-    description: "External rules the product must comply with — the origin of regulatory drivers and change records."
-  change:
-    doc_type: "Change Record"
-    group: why
-    folder: "changes/"
-    label: "Changes"
-    icon: "⚑"
-    color: "var(--reg)"
-    inbox: true                        # this family IS the change inbox
-    attention_statuses: [triage]       # needs a human — review card, sort first
-    closed_statuses: [done, merged]    # out of the open count and the feed
-    attributes: [title, status, source, published]
-    description: "Incoming change records (regulatory, product, technical) triaged against the documents they impact."
+    description: "External rules the product must comply with — the origin of regulatory drivers."
   requirement:
     doc_type: "Requirement"
     group: what
@@ -332,6 +327,11 @@ entities:
     attributes: [id, title, status, priority, owner, delivers, due]
     description: "WHEN work lands — planned units of delivery that schedule requirements and specs from backlog to done."
 
+# NOTE (Aug 2026): the change-record inbox was replaced by timed dependencies
+# (below) and the git-derived change history. The old entity keys inbox,
+# attention_statuses and closed_statuses are accepted and IGNORED — a change
+# family still works as an ordinary document family, it simply has no inbox UI.
+
 # ── WHY: driver taxonomy ───────────────────────────────────────────────────
 # The categories a driver can fall into (chips in the Properties panel and
 # the dashboards). A drivers link's type is DERIVED from the referenced
@@ -350,7 +350,7 @@ statuses: [draft, in_review, approved, deprecated]
 # "inverse" names the relation as read from the TARGET side (the Context
 # panel shows "implemented by" on a requirement, not "implements").
 link_types:
-  drivers:    { from: requirement,            to: [regulation, change], inverse: "drives" }        # WHAT -> WHY
+  drivers:    { from: requirement,            to: regulation,           inverse: "drives" }        # WHAT -> WHY
   implements: { from: [spec, data_mapping],   to: requirement,          inverse: "implemented by" } # HOW -> WHAT
   delivers:   { from: work_item,              to: [spec, requirement],  inverse: "delivered by" }  # WHEN -> HOW (or WHAT directly)
   maps_to:    { from: spec,                   to: data_field,           inverse: "mapped by" }
@@ -367,6 +367,21 @@ traceability:
   - { link: delivers,   measure: to }
   - { link: maps_to,    measure: from, label: "Specs → data fields", when: data_mapping }
 
+# ── timed dependencies: documents with a validity window ───────────────────
+# Any document carrying one of these frontmatter keys joins the Timed view,
+# whatever family it belongs to — a regulation that comes into force, a
+# requirement that only applies for a season, a work item with a due date.
+# The FIRST key present wins, so regulatory wording and plain starts/ends mix
+# freely. "ready_statuses" decides when a dependent document counts as done
+# in time; "horizon_days" is how far ahead "starting soon"/"expiring" reaches;
+# "kinds" narrows the timeline to named families (empty = all).
+timed:
+  start: [starts, effective_from, valid_from]
+  end: [ends, effective_until, valid_until, due]
+  ready_statuses: [approved, done]
+  horizon_days: 90
+  kinds: []
+
 # ── ID schemes for new documents ───────────────────────────────────────────
 # Tokens: {seq} / {seq:N} (next number in the family, zero-padded), {rand:N}
 # digits, {hex:N}, {adj} {word} (memorable pairs like "brisk-heron"), {yy}
@@ -375,9 +390,9 @@ traceability:
 ids:
   requirement:  { pattern: "REQ-{seq:3}" }
   regulation:   { pattern: "REG-{seq:3}" }
-  change:       { pattern: "CHG-{seq:3}" }
   data_mapping: { pattern: "MAP-{seq:3}" }
   work_item:    { pattern: "WI-{seq:3}" }
+  # change:     { pattern: "CHG-{seq:3}" }   # if you add a change-record family
 
 # ── attributes: the property schema ────────────────────────────────────────
 # Frontmatter fields — labels, types and enum colors drive the Properties
@@ -386,7 +401,7 @@ ids:
 # (Replaces the former .specquill/schema.json, which is still honored while
 # this section is absent.)
 properties:
-  order: [id, type, status, priority, owner, source, due, drivers, implements, delivers, maps_to, verifies, created, updated]
+  order: [id, type, status, priority, owner, source, starts, ends, due, drivers, implements, delivers, maps_to, verifies, created, updated]
   fields:
     id:         { label: "ID", type: code }
     type:       { label: "Type", type: tag }
@@ -394,6 +409,8 @@ properties:
     priority:   { label: "Priority", type: enum, values: { must: amber, should: blue, could: slate } }
     owner:      { label: "Owner", type: user }
     source:     { label: "Source", type: enum, values: { regulatory: amber, product: blue, technical: slate } }
+    starts:     { label: "Starts", type: date }
+    ends:       { label: "Ends", type: date }
     due:        { label: "Due", type: date }
     drivers:    { label: "Drivers", type: links }
     implements: { label: "Implements", type: links }
@@ -442,7 +459,9 @@ Rules the AI assistant follows for documents in THIS workspace — extend them
 with your team's structure and content expectations. Examples to adapt:
 
 - Every requirement gets a rationale paragraph before its normative statements.
-- Specs describe current behavior only; planned work belongs in change records.
+- Specs describe current behavior only; planned work belongs in work items.
+- A requirement that only applies from a date carries starts: (and ends: when it
+  lapses) — that is what puts it on the timed-dependency timeline.
 - Use tables for field mappings, mermaid flowcharts for branching flows.
 `
 
@@ -483,9 +502,18 @@ Place the document in its family folder, seed the family's attributes, and
 set the upward link to a REAL upper-level document — list_files/search first
 to find it, ask_user when ambiguous. Never invent target paths.
 
+## Timed dependencies
+A document with a validity window in its frontmatter (` + "`starts`" + `/` + "`ends`" + `, or
+regulatory wording like ` + "`effective_from`" + `/` + "`effective_until`" + ` — the exact keys are the
+workspace's ` + "`timed:`" + ` config) is a timed dependency: the deadline lives on the
+document it binds, never in a separate change record. When a driving document
+names a date, put it on the document it binds and say which documents must be
+approved before it.
+
 ## Ensure ("audit the model")
 Walk the workspace and report per level: documents missing their upward link,
-links whose target is the wrong kind, and legacy shapes (` + "`{type, ref}`" + ` driver
+links whose target is the wrong kind, timed documents whose window opens soon
+while the documents implementing them are still draft, and legacy shapes (` + "`{type, ref}`" + ` driver
 maps, ` + "`satisfies:`" + `, ` + "`implements:`" + ` on requirements). Report first; fix only on
 request.
 

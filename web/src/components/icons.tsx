@@ -26,6 +26,16 @@ export const IconFolder = () => svg(19, 'currentColor', 1.8,
 
 export const IconChanges = () => svg(19, 'currentColor', 1.8, <P d="M4 12h6M14 12h6M8 8l-4 4 4 4M16 16l4-4-4-4" />);
 
+// timed dependencies: a clock — validity windows opening and closing
+export const IconClock = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) =>
+  svg(size, 'currentColor', width, <><circle cx="12" cy="12" r="8.5" /><P d="M12 7v5.3l3.4 2" /></>);
+
+// change history: commits on a line
+export const IconHistory = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) =>
+  svg(size, 'currentColor', width, <>
+    <circle cx="7" cy="6" r="2.2" /><circle cx="7" cy="18" r="2.2" /><P d="M7 8.2v7.6" />
+    <P d="M11.5 6h8.5M11.5 18h8.5" /></>);
+
 export const IconTrace = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) => svg(size, 'currentColor', width, <>
   <circle cx="6" cy="6" r="2.3" /><circle cx="18" cy="6" r="2.3" /><circle cx="12" cy="18" r="2.3" />
   <P d="M7.5 7.4l3.3 8.4M16.5 7.4l-3.3 8.4M8 6h8" /></>);

@@ -10,7 +10,7 @@ test.beforeEach(async ({ request }) => {
 
 test('chat streams a grounded reply', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/txn-report.md');
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('ControlOrMeta+Enter');
   // .first(): the chat tab's fallback title repeats the question until the
@@ -53,7 +53,7 @@ test('chat tools edit a file as an uncommitted draft on the workspace branch', a
   await page.getByText(ws.branch, { exact: true }).click();
   await expect(page.getByText('✎ can edit')).toBeVisible();
 
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill(`EDIT ${doc} REPLACE "magic-${stamp} value" WITH "magic-${stamp} EDITED"`);
   await composer.press('ControlOrMeta+Enter');
 
@@ -91,7 +91,7 @@ test('chat tools move and delete files, moves rewriting inbound references', asy
   await page.getByText(ws.branch, { exact: true }).click();
   await expect(page.getByText('✎ can edit')).toBeVisible();
 
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill(`MOVE ${doc} TO ${moved}`);
   await composer.press('ControlOrMeta+Enter');
   await expect(page.getByText('move file', { exact: true })).toBeVisible({ timeout: 15_000 });
@@ -126,7 +126,7 @@ test('chat draws an excalidraw sketch as scene JSON', async ({ page, request }) 
   await page.getByText(ws.branch, { exact: true }).click();
   await expect(page.getByText('✎ can edit')).toBeVisible();
 
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill(`DRAW ${sketchPath}`);
   await composer.press('ControlOrMeta+Enter');
   await expect(page.getByText('draw sketch', { exact: true })).toBeVisible({ timeout: 15_000 });
@@ -143,7 +143,7 @@ test('chat draws an excalidraw sketch as scene JSON', async ({ page, request }) 
 
 test('chat pauses on a speccy question and resumes with the answer', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/txn-report.md');
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill('ASKME please');
   await composer.press('ControlOrMeta+Enter');
 
@@ -158,7 +158,7 @@ test('chat pauses on a speccy question and resumes with the answer', async ({ pa
 
 test('chats survive closing the panel, auto-name, and dismiss individually', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/txn-report.md');
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('ControlOrMeta+Enter');
   await expect(page.getByText(/grounded on \d+ workspace files/)).toBeVisible({ timeout: 15_000 });
@@ -186,7 +186,7 @@ test('chats survive closing the panel, auto-name, and dismiss individually', asy
 
 test('a question after a read_file round renders, and again after an answer', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/txn-report.md');
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
 
   // read_file round first, then the question — the reported failure chain
   await composer.fill('READFIRST please');

@@ -10,7 +10,7 @@ const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '../../../repo')
 
 function loadRepo(): Record<string, string> {
   const files: Record<string, string> = {};
-  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes', 'products']) {
+  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'products']) {
     for (const name of readdirSync(join(REPO, folder))) {
       files[`${folder}/${name}`] = readFileSync(join(REPO, folder, name), 'utf8');
     }
@@ -28,7 +28,16 @@ describe('buildModel over the demo repo', () => {
     expect(model.requirements).toHaveLength(6);
     expect(model.specs).toHaveLength(2);
     expect(model.maps).toHaveLength(2);
-    expect(model.changes).toHaveLength(4);
+    // documents with a validity window join the timeline, whatever family
+    expect(model.timed.map((t) => t.path).sort()).toEqual([
+      'products/ops-t1-settlement-sla.md',
+      'regulations/mifid-ii.md',
+      'requirements/REQ-042.md',
+      'requirements/REQ-063.md',
+      'requirements/REQ-070.md',
+      'requirements/REQ-090.md',
+      'requirements/REQ-095.md',
+    ]);
     expect(model.fields.length).toBeGreaterThanOrEqual(5);
   });
 
@@ -68,6 +77,7 @@ describe('buildModel over the demo repo', () => {
       // normalized forms all land: kind, spaced, cased
       'notes/a.md': '---\ntype: spec\ntitle: A\n---\n',
       'notes/b.md': '---\ntype: work_item\ntitle: B\n---\n',
+      // a family the workspace declares itself (change records are no longer built in)
       'notes/c.md': '---\ntype: Change Record\ntitle: C\nsource: product\nstatus: triage\n---\n',
       // no recognizable type → the folder decides
       'specs/typeless.md': '---\ntitle: T\n---\n',
@@ -75,7 +85,8 @@ describe('buildModel over the demo repo', () => {
       'misc/loose.md': '---\ntype: Guide\ntitle: L\n---\n',
       'regulations/a.md': '---\nid: REG-a\ntitle: Reg A\n---\n',
     };
-    const m = buildModel(files);
+    const cfg = workspaceConfig('entities:\n  change: { doc_type: "Change Record", group: why, folder: "changes/", label: "Changes" }\n');
+    const m = buildModel(files, cfg);
     const kindOf = (p: string) => m.docs.find((d) => d.path === p)?.kind;
     expect(kindOf('inbox/parked.md')).toBe('requirement');
     expect(kindOf('notes/a.md')).toBe('spec');
@@ -85,24 +96,21 @@ describe('buildModel over the demo repo', () => {
     expect(kindOf('misc/loose.md')).toBeUndefined();
     // the parked requirement fully participates: backlinks reach its driver
     expect(buildDashboard(m).health.find((h) => h.label === 'Requirements → drivers')!.pct).toBe(100);
-    // …and the change bucket picked up the mistyped-folder change record
-    expect(m.changes.map((c) => c.path)).toEqual(['notes/c.md']);
   });
 
   it('classifies docs by the configured entities, custom families included', () => {
     const prod = model.docs.find((d) => d.path === 'products/ops-t1-settlement-sla.md')!;
     expect(prod.kind).toBe('product_driver');
     expect(prod.group).toBe('why');
-    // a change doc's driver type comes from its own source: frontmatter
-    const chg = model.docs.find((d) => d.kind === 'change' && d.source === 'technical');
-    expect(chg).toBeTruthy();
   });
 
-  it('extracts change impact and diff', () => {
-    const chg = model.changes.find((c) => c.id === 'CHG-2026-06-mifid-rts22')!;
-    expect(chg.impReqs).toEqual(['REQ-042', 'REQ-051']);
-    expect(chg.diff).toContain('microsecond');
-    expect(chg.summary).toContain('microseconds');
+  it('reads the validity window from the first configured key present', () => {
+    const req = model.timed.find((t) => t.path === 'requirements/REQ-042.md')!;
+    expect(req).toMatchObject({ startKey: 'starts', start: '2026-09-01', end: '', status: 'in_review' });
+    // regulatory wording resolves through the same config
+    const reg = model.timed.find((t) => t.path === 'regulations/mifid-ii.md')!;
+    expect(reg.startKey).toBe('effective_from');
+    expect(reg.start).toBe('2026-01-03');
   });
 });
 

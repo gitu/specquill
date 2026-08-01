@@ -10,11 +10,11 @@ import { flushAllDrafts } from '../lib/draftRegistry';
 
 export type { PropertySchema } from '../lib/config';
 
-export const VIEWS = ['dashboard', 'editor', 'changes', 'graph', 'model'] as const;
+export const VIEWS = ['dashboard', 'editor', 'timed', 'changes', 'history', 'graph', 'model'] as const;
 export type ViewName = (typeof VIEWS)[number];
 
 /** every project-scoped view root a /p/<project> URL may continue with */
-export const PROJECT_VIEWS = [...VIEWS, 'diff'] as const;
+export const PROJECT_VIEWS = [...VIEWS] as const;
 
 /** theme preference: follow the OS (default) or pin light/dark */
 export type ThemeMode = 'system' | 'light' | 'dark';

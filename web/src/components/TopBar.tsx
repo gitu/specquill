@@ -26,7 +26,7 @@ export function TopBar() {
   const dynamic = useDynamicInfo();
   const narrow = useNarrow();
   const pathname = useAppPath();
-  const onTreeRoute = pathname.startsWith('/editor') || pathname.startsWith('/diff');
+  const onTreeRoute = pathname.startsWith('/editor');
   const ahead = status.data?.ahead ?? 0;
   const behind = status.data?.behind ?? 0;
   const logout = async () => {
@@ -126,7 +126,7 @@ export function TopBar() {
           style={sx('flex:0 1 340px;min-width:110px;height:30px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer;overflow:hidden')}
         >
           <span style={sx('flex:none;display:inline-flex')}><IconSearch /></span>
-          <span style={sx('font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>Search requirements, specs, fields, changes…</span>
+          <span style={sx('font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>Search requirements, specs, fields, documents…</span>
           <div style={sx('flex:1')} />
           <span style={sx("flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
         </div>

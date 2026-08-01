@@ -11,10 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"specquill/server/internal/ai"
+	"specquill/server/internal/delta"
+	"specquill/server/internal/gitx"
 	"specquill/server/internal/mdfm"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
 	"specquill/server/internal/sketch"
+	"specquill/server/internal/timed"
 )
 
 // speccyToolbox binds the chat tool set to one request: a project, the branch
@@ -71,6 +74,23 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 				"query":  str("literal text to find (not a regex)"),
 				"source": str("restrict to one reference source name; omit to search everything"),
 			}, "query"),
+		},
+		{
+			Name:        "history",
+			Description: "Read the workspace's own git history — this is the ONLY way you can see what changed, when, and by whom; your other tools show the workspace as it is now. Without arguments: recent commits across the workspace. With path: the commits touching that document. With sha: what that ONE commit actually changed per document — frontmatter properties that moved, normative statements added, removed or reworded, sections gained and lost.",
+			Parameters: obj(map[string]any{
+				"path":  str("workspace-relative path to limit the history to one document"),
+				"sha":   str("commit sha to explain in detail (from a previous history call)"),
+				"since": str("only commits on or after this date, yyyy-mm-dd"),
+				"limit": map[string]any{"type": "integer", "description": "how many commits to list (default 20, max 100)"},
+			}),
+		},
+		{
+			Name:        "timeline",
+			Description: "The workspace's timed dependencies: documents carrying a validity window in their frontmatter (the keys are workspace config — starts/ends, effective_from/effective_until, due), bucketed pending | active | expiring | expired against today, each with the documents that depend on it and whether they are ready in time. Use it for any question about deadlines, what is pending, what is at risk or what comes into force when — do not infer that from statuses alone.",
+			Parameters: obj(map[string]any{
+				"state": str("narrow to one bucket: pending | active | expiring | expired | at_risk"),
+			}),
 		},
 		{
 			Name:        "ask_user",
@@ -153,6 +173,23 @@ func (tb *speccyToolbox) exec(name, args string) (string, bool, error) {
 			return "", false, fmt.Errorf("search needs a query")
 		}
 		out, err := tb.search(a.Query, a.Source)
+		return out, false, err
+	case "history":
+		var a struct {
+			Path, Sha, Since string
+			Limit            int
+		}
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", false, fmt.Errorf("invalid arguments: %v", err)
+		}
+		out, err := tb.history(a.Path, a.Sha, a.Since, a.Limit)
+		return out, false, err
+	case "timeline":
+		var a struct{ State string }
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", false, fmt.Errorf("invalid arguments: %v", err)
+		}
+		out, err := tb.timeline(a.State)
 		return out, false, err
 	case "ask_user":
 		var a struct {
@@ -653,4 +690,155 @@ func workspaceVocabulary(files map[string]string) string {
 		b.WriteString(" Document families: " + strings.Join(fams, ", ") + ".")
 	}
 	return b.String()
+}
+
+// history answers "what changed" from git — the one thing the other tools
+// cannot see. Three modes, cheapest first: the workspace's recent commits,
+// one document's commits, or one commit explained as document deltas.
+func (tb *speccyToolbox) history(path, sha, since string, limit int) (string, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if sha != "" {
+		return tb.commitDelta(sha)
+	}
+	// models routinely pass a sha as `path` — read it as one rather than
+	// answering "no commits touch 4f2a1c9", which reads like a dead end
+	if path != "" && shaLike(path) {
+		if _, _, err := tb.repo.File(tb.branch, path); err != nil {
+			return tb.commitDelta(path)
+		}
+	}
+	if path != "" {
+		entries, err := tb.repo.FileHistory(tb.branch, path, limit)
+		if err != nil {
+			return "", fmt.Errorf("no history for %s (list_files finds the right path)", path)
+		}
+		if len(entries) == 0 {
+			return "no commits touch " + path + " on " + tb.branch, nil
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "%d commits touching %s (newest first):\n", len(entries), path)
+		for _, e := range entries {
+			fmt.Fprintf(&b, "%s  %s  %s  %s\n", e.SHA[:8], e.Date[:10], e.Author, e.Subject)
+		}
+		b.WriteString("\nCall history with one of these sha values to see what it changed.")
+		return b.String(), nil
+	}
+	if since != "" && !gitx.ValidSince(since) {
+		return "", fmt.Errorf("since must be a date, yyyy-mm-dd")
+	}
+	commits, err := tb.repo.Log(tb.branch, since, limit)
+	if err != nil {
+		return "", fmt.Errorf("cannot read history: %v", err)
+	}
+	if len(commits) == 0 {
+		return "no commits in this window on " + tb.branch, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d commits on %s (newest first):\n", len(commits), tb.branch)
+	for _, c := range commits {
+		fmt.Fprintf(&b, "%s  %s  %s  %s\n", c.SHA[:8], c.Date[:10], c.Author, c.Subject)
+		for _, f := range c.Files {
+			if f.OldPath != "" {
+				fmt.Fprintf(&b, "    %s %s (was %s)\n", f.Status, f.Path, f.OldPath)
+			} else {
+				fmt.Fprintf(&b, "    %s %s\n", f.Status, f.Path)
+			}
+		}
+	}
+	b.WriteString("\nCall history with one of these sha values to see what it changed.")
+	return b.String(), nil
+}
+
+// shaLike: hex, 7-40 chars, no path punctuation.
+func shaLike(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
+// commitDelta explains one commit the way the documents are written, not as
+// diff lines. Documents with no readable structure say so.
+func (tb *speccyToolbox) commitDelta(sha string) (string, error) {
+	if !gitx.ValidRef(sha) {
+		return "", fmt.Errorf("invalid commit sha")
+	}
+	commits, err := tb.repo.Log(sha, "", 1)
+	if err != nil || len(commits) == 0 {
+		return "", fmt.Errorf("unknown commit %s (call history first)", sha)
+	}
+	c := commits[0]
+	files, err := tb.repo.DiffCommit(c.Parent, c.SHA)
+	if err != nil {
+		return "", fmt.Errorf("cannot diff %s: %v", sha, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s  %s  %s\n%s\n\n", c.SHA[:8], c.Date[:10], c.Author, c.Subject)
+	for _, f := range files {
+		var before, after string
+		if f.Status != "A" && c.Parent != "" {
+			old := f.Path
+			if f.OldPath != "" {
+				old = f.OldPath
+			}
+			if content, _, err := tb.repo.FileAt(c.Parent, old); err == nil {
+				before = content
+			} else {
+				fmt.Fprintf(&b, "%s %s — no readable previous version\n", f.Status, f.Path)
+				continue
+			}
+		}
+		if f.Status != "D" {
+			content, _, err := tb.repo.FileAt(c.SHA, f.Path)
+			if err != nil {
+				fmt.Fprintf(&b, "%s %s — not readable at this commit\n", f.Status, f.Path)
+				continue
+			}
+			after = content
+		}
+		d := delta.Diff(f.Path, f.Status, before, after)
+		if d.Empty() {
+			fmt.Fprintf(&b, "%s %s (+%d -%d) — prose or binary change, no structural delta\n",
+				f.Status, f.Path, f.Additions, f.Deletions)
+			continue
+		}
+		b.WriteString(d.Summarize())
+	}
+	return b.String(), nil
+}
+
+// timeline reports the workspace's timed dependencies (REQ-026) from the
+// branch snapshot the conversation already carries.
+func (tb *speccyToolbox) timeline(state string) (string, error) {
+	def := timed.ParseDef(tb.files[".specquill/config.yml"])
+	now := time.Now()
+	items := timed.Build(tb.files, tb.files[".specquill/config.yml"], now)
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "":
+	case "at_risk", "at risk", "risk":
+		items = filterTimed(items, func(i timed.Item) bool { return i.AtRisk })
+	case "pending", "active", "expiring", "expired":
+		want := strings.ToLower(state)
+		items = filterTimed(items, func(i timed.Item) bool { return i.State == want })
+	default:
+		return "", fmt.Errorf("state must be one of pending, active, expiring, expired, at_risk")
+	}
+	return timed.Text(items, def, now), nil
+}
+
+func filterTimed(items []timed.Item, keep func(timed.Item) bool) []timed.Item {
+	out := items[:0:0]
+	for _, i := range items {
+		if keep(i) {
+			out = append(out, i)
+		}
+	}
+	return out
 }

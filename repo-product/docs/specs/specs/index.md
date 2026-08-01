@@ -22,3 +22,5 @@
 - [Tenants — GitHub App installations, derived roles (deprecated)](tenants.md)
 - [Multi-tenancy — architecture and boundaries (deprecated)](multi-tenancy.md)
 - [OKF conformance — producer and consumer](okf.md)
+- [Change history — commits read as document changes](change-history.md)
+- [Timed dependencies — validity windows and readiness](timed-dependencies.md)

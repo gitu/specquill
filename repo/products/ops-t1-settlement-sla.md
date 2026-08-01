@@ -3,6 +3,8 @@ id: PROD-ops-t1-sla
 title: Ops T+1 settlement SLA
 type: product_driver
 status: active
+starts: 2026-02-01
+ends: 2026-12-31
 owner: k.osei
 sponsor: Operations
 updated: 2026-04-02

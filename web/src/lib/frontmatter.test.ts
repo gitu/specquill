@@ -9,7 +9,7 @@ const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '../../../repo')
 
 const allMd = (): [string, string][] => {
   const out: [string, string][] = [];
-  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes']) {
+  for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings']) {
     for (const name of readdirSync(join(REPO, folder))) {
       if (name.endsWith('.md')) out.push([`${folder}/${name}`, readFileSync(join(REPO, folder, name), 'utf8')]);
     }

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
-import { reqByName } from '../lib/derive';
+import { buildTimed, daysLabel, todayISO } from '../lib/derive';
 import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, nameChat, streamChat, useSpeccyInfo } from '../api/speccy';
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
@@ -84,7 +84,9 @@ export function Speccy() {
   // edits only on a writable workspace branch — the server refuses protected
   // branches anyway, the flag just keeps the tools (and UI promise) honest
   const allowEdits = app.canEdit && !app.isProtectedBranch;
-  const change = app.model?.changes.find((c) => c.status === 'triage') || app.model?.changes[0];
+  // the document the "draft edits" flow works from: the timed dependency
+  // closest to missing its window with dependents still unfinished
+  const atRisk = useMemo(() => (app.model ? buildTimed(app.model, todayISO()).atRisk[0] : undefined), [app.model]);
   const focusPath = pathname.startsWith('/editor/') ? decodeURI(pathname.slice('/editor/'.length)) : undefined;
 
   useEffect(() => {
@@ -212,16 +214,13 @@ export function Speccy() {
   };
 
   const draft = async () => {
-    if (!change || !app.model || busy || !enabled) return;
+    if (!atRisk || !app.model || busy || !enabled) return;
     setError('');
     setBusy(true);
     try {
-      const files = [
-        ...change.impSpecs,
-        ...change.impMaps.map((m) => m.split('#')[0]),
-        ...change.impReqs.map((r) => reqByName(app.model!, r)?.path).filter((p): p is string => !!p),
-      ];
-      const result = await draftEdits(app.repoId, { changePath: change.path, files: [...new Set(files)] });
+      // impacted = the documents that depend on it and are not ready yet
+      const files = atRisk.deps.filter((d) => !d.ready).map((d) => d.path);
+      const result = await draftEdits(app.repoId, { changePath: atRisk.path, files: [...new Set(files)] });
       appendEntry(repoKey, chat?.id ?? newChat(repoKey), { kind: 'draft', result });
       qc.invalidateQueries({ queryKey: ['branches'] });
     } catch (e) {
@@ -308,23 +307,24 @@ export function Speccy() {
           ))}
         </div>
 
-        {change && (
+        {atRisk && atRisk.deps.some((d) => !d.ready) && (
           <div style={sx('flex:none;border:1px solid var(--reg-line);border-radius:11px;overflow:hidden;background:var(--surface)')}>
             <div style={sx('display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--reg-bg)')}>
-              <span style={sx('font-size:13px')}>⚖</span>
-              <span style={sx('font-size:12px;font-weight:700;color:var(--reg)')}>Regulatory change detected</span>
+              <span style={sx('font-size:13px')}>⧗</span>
+              <span style={sx('font-size:12px;font-weight:700;color:var(--reg)')}>Deadline at risk</span>
               <div style={sx('flex:1')} />
-              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--reg)")}>{change.published}</span>
+              <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--reg)")}>{atRisk.governing}</span>
             </div>
             <div style={sx('padding:11px 13px;font-size:12.5px;line-height:1.6;color:var(--text)')}>
-              {change.summary}
+              <b>{atRisk.title || atRisk.name}</b> {atRisk.state === 'pending' ? 'comes into force' : 'expires'} {daysLabel(atRisk.days)},
+              with {atRisk.deps.length - atRisk.readyCount} dependent document{atRisk.deps.length - atRisk.readyCount === 1 ? '' : 's'} not ready.
               <div style={sx('margin-top:11px;display:flex;flex-direction:column;gap:6px')}>
                 <button onClick={draft} disabled={busy || !enabled}
                   style={sx('display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--ai-line);border-radius:8px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;text-align:left;' + (busy || !enabled ? 'opacity:.5' : ''))}>
-                  ✦ {busy ? 'Working…' : 'Draft edits & open as diff'}
+                  ✦ {busy ? 'Working…' : 'Draft the outstanding edits'}
                 </button>
-                <button onClick={() => nav('/graph')} style={sx('display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;text-align:left')}>
-                  Open impact graph
+                <button onClick={() => nav('/timed?sel=' + encodeURIComponent(atRisk.path))} style={sx('display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;text-align:left')}>
+                  Open the timeline
                 </button>
               </div>
             </div>
@@ -380,7 +380,7 @@ export function Speccy() {
               // cmd/ctrl+enter sends; plain enter is a normal newline
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void ask(input); } }}
               title="⌘/Ctrl+Enter sends — Enter starts a new line"
-              placeholder={enabled ? 'Ask about requirements, changes, mappings… (⌘⏎ to send)' : 'Configure ai: in specquill.yml to enable Speccy'}
+              placeholder={enabled ? 'Ask about requirements, deadlines, mappings… (⌘⏎ to send)' : 'Configure ai: in specquill.yml to enable Speccy'}
               disabled={!enabled || busy}
               rows={1}
               style={{ ...sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5'), height: composerH, overflowY: 'auto' }}

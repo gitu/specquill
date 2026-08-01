@@ -16,7 +16,7 @@ test('capture speccy demo screenshot', async ({ page, request }) => {
   const info = (await (await request.get('/api/speccy/info')).json()) as { model?: string };
   test.skip(info.model !== 'mock-1', 'needs the deterministic mock provider');
   await page.goto('/p/trading-specs/editor/specs/txn-report.md');
-  const composer = page.getByPlaceholder('Ask about requirements, changes, mappings…');
+  const composer = page.getByPlaceholder('Ask about requirements, deadlines, mappings…');
   await composer.fill('Which mapping drifted?');
   await composer.press('Enter');
   await page.getByText(/grounded on \d+ workspace files/).waitFor({ timeout: 15_000 });
