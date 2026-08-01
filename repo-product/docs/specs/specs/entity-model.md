@@ -13,7 +13,9 @@ How [REQ-012](../requirements/REQ-012.md) is realized.
 ## Built-in families
 
 Six families ship with descriptions, icons and colors: regulations,
-requirements, specs, data mappings, diagrams, changes. Their descriptions
+requirements, specs, data mappings, diagrams, work items. (Change records
+were dropped from the built-ins with [REQ-026](../requirements/REQ-026.md); a
+workspace that wants them declares the family itself.) Their descriptions
 render on the Model view's entity cards and as tooltips on the tree's folder
 headers — the card is where a newcomer learns what a family is *for*.
 
