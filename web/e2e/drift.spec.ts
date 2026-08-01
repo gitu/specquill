@@ -126,3 +126,32 @@ test('gap analysis reverse-engineers the missing requirement', async ({ page, re
   // self-heal: remove the draft (resetFindings clears the pointer next run)
   await request.delete(`/api/repos/${REPO}/files/requirements/REQ-gdpr-retention.md?branch=${encodeURIComponent(ws.branch)}`, { headers: H });
 });
+
+test('linker proposes and applies a missing typed link', async ({ page, request }) => {
+  // self-heal: a previous run's applied link lives on the ws worktree
+  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+    headers: H, data: { paths: ['specs/venue.md'] },
+  });
+
+  await page.goto(`/p/${REPO}/dashboard`);
+  await expect(page.getByText('Link suggestions')).toBeVisible();
+  await page.getByRole('button', { name: 'Suggest links' }).click();
+
+  // the mock proposes venue.md implements REQ-063 (absent in the fixture)
+  await expect(page.getByText('specs/venue.md').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/does not declare REQ-063/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByText(/linked \(uncommitted draft\)/)).toBeVisible({ timeout: 15_000 });
+
+  // the from-doc's frontmatter carries the link on the workspace branch
+  const file = (await (await request.get(
+    `/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(file.content).toContain('requirements/REQ-063.md');
+
+  // self-heal for the next suite run
+  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+    headers: H, data: { paths: ['specs/venue.md'] },
+  });
+});

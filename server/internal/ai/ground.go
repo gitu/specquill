@@ -342,9 +342,11 @@ Rules:
   yields {"findings": []}. Never report style or formatting.`
 
 // DriftPrompt builds the per-document drift-check conversation. The document
-// is inlined (it is the subject under audit); the reference sources are
-// reachable through the read tools.
-func DriftPrompt(docPath, docContent, instructions string, sourceNames []string) []Message {
+// is inlined (it is the subject under audit) together with its LINKED
+// documents (linkedBlock — the WHY above and the HOW below it, so the check
+// sees the chain context); the reference sources are reachable through the
+// read tools.
+func DriftPrompt(docPath, docContent, linkedBlock, instructions string, sourceNames []string) []Message {
 	system := driftSystem
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
@@ -358,6 +360,10 @@ func DriftPrompt(docPath, docContent, instructions string, sourceNames []string)
 		b.WriteString("~" + n)
 	}
 	b.WriteString("\n\n# Document under audit: " + docPath + "\n```\n" + docContent + "\n```\n")
+	if linkedBlock != "" {
+		b.WriteString("\n# Linked documents (context only — report drift of the document under audit, not of these)\n")
+		b.WriteString(linkedBlock)
+	}
 	b.WriteString("\nVerify this document against the reference sources and report drift as JSON.")
 	return []Message{
 		{Role: "system", Content: system},
@@ -417,6 +423,43 @@ func GapPrompt(sourceName, docIndex, instructions string) []Message {
 	return []Message{
 		{Role: "system", Content: system},
 		{Role: "user", Content: b.String()},
+	}
+}
+
+const linkerSystem = `You are the specquill linker. You propose MISSING typed
+frontmatter links between workspace documents, strictly following the
+workspace's configured link types (which field lives on which document family
+and points at which). You never invent link fields and never re-propose links
+that already exist.
+
+Reply with ONLY a JSON object, no prose:
+
+{
+  "proposals": [
+    {
+      "from": "specs/venue.md",
+      "field": "implements",
+      "to": "requirements/REQ-063.md",
+      "reason": "The spec's partial-fill section realizes REQ-063 but does not declare it."
+    }
+  ]
+}
+
+Rules:
+- "from"/"to" are exact document paths from the index below; "field" is one of
+  the configured link types, placed on the LOWER document pointing UP.
+- Propose only links the documents' actual content clearly supports — shared
+  wording alone is not a relation. Give the decisive reason in one sentence.
+- Fewer, confident proposals beat many speculative ones. An already
+  well-linked workspace yields {"proposals": []}.`
+
+// LinkerPrompt builds the propose-missing-links conversation. docIndex lists
+// every document with its type, title and existing links; guidance is the
+// workspace's model rules (link types, families).
+func LinkerPrompt(docIndex, guidance string) []Message {
+	return []Message{
+		{Role: "system", Content: linkerSystem + guidance},
+		{Role: "user", Content: "# Document index\n" + docIndex + "\nPropose the missing links as JSON."},
 	}
 }
 

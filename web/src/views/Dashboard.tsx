@@ -7,6 +7,7 @@ import { buildDashboard, driverMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
 import { ForgeReview } from '../components/ForgeReview';
 import { DriftCard } from '../components/DriftCard';
+import { LinkerCard } from '../components/LinkerCard';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -167,6 +168,7 @@ export function Dashboard() {
             </div>
             )}
             <DriftCard repo={app.repoId} branch={app.branch} />
+            <LinkerCard repo={app.repoId} branch={app.branch} />
             <LinkCheckCard />
             <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>

@@ -117,7 +117,15 @@ from the code.
   uncommitted worktree save (ws-branch on protected mains) and
   `draft_path` links finding → doc. Reopening a finding
   (`dismiss {reopen:true}`) clears a stale draft pointer — the e2e
-  self-heal depends on that. Findings are SQLite rows keyed by an ANCHOR-based
+  self-heal depends on that. Each drift check inlines the doc's LINKED
+  documents (frontmatter link graph, both directions — `api/linker.go`
+  buildLinkIndex) as context. Large scopes are NOT refused: the worker just
+  loops (sequential, cancellable); an EXPLICIT `drift.max_docs` remains a
+  hard ceiling. The **linker** (`POST .../linker/propose|apply`, "Link
+  suggestions" card) AI-proposes missing typed links per the configured
+  link_types (tool-loop over the workspace, validated server-side: known
+  field, both docs exist, not already linked); apply appends to the
+  from-doc's frontmatter as a worktree save. Findings are SQLite rows keyed by an ANCHOR-based
   fingerprint (docPath|source|kind|anchor — model titles are display-only, so
   dismissals stick across reruns) and evidence quotes are string-verified
   against the source snapshot (unverifiable findings are silently dropped,

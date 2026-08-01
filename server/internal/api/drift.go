@@ -32,8 +32,6 @@ import (
 	"specquill/server/internal/tracker"
 )
 
-const defaultDriftMaxDocs = 50
-
 // driftRegistry tracks the in-flight run per repo+branch: one at a time, and
 // the cancel endpoint needs a handle on the worker's context.
 type driftRegistry struct {
@@ -324,10 +322,6 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			"no reference sources selected — drift needs references in .specquill/config.yml")
 		return
 	}
-	maxDocs := driftCfg.MaxDocs
-	if maxDocs <= 0 {
-		maxDocs = defaultDriftMaxDocs
-	}
 	// units: the docs to verify (drift) or the sources to sweep (gaps)
 	var units []string
 	if body.Mode == "gaps" {
@@ -341,9 +335,11 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			jsonError(w, http.StatusUnprocessableEntity, "no documents in scope")
 			return
 		}
-		if len(units) > maxDocs {
+		// large scopes just loop — the worker is sequential, incremental and
+		// cancellable. An EXPLICIT drift.max_docs remains a hard ceiling.
+		if driftCfg.MaxDocs > 0 && len(units) > driftCfg.MaxDocs {
 			jsonError(w, http.StatusUnprocessableEntity,
-				fmt.Sprintf("scope resolves to %d documents (max %d) — narrow the paths or raise drift.max_docs", len(units), maxDocs))
+				fmt.Sprintf("scope resolves to %d documents (max_docs %d) — narrow the paths or raise drift.max_docs", len(units), driftCfg.MaxDocs))
 			return
 		}
 	}
@@ -367,7 +363,10 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, driftCfg.Instructions)
+	// the link graph rides along: each doc is audited WITH its linked
+	// documents inlined, so the check sees the chain around it
+	idx := buildLinkIndex(files, linkFieldNames(files))
+	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx, driftCfg.Instructions)
 	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode})
 }
 
@@ -436,7 +435,7 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 // run continues; only cancellation stops it early.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
 	mode string, repo *project.Project, branch string, units []string, files map[string]string,
-	sources []ai.GroundingSource, instructions string) {
+	sources []ai.GroundingSource, idx *linkIndex, instructions string) {
 	defer cancel()
 	defer s.drift.release(key)
 
@@ -454,7 +453,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		if mode == "gaps" {
 			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions)
 		} else {
-			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, instructions)
+			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions)
 		}
 		dropped += droppedDoc
 		if err != nil {
@@ -502,9 +501,10 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 }
 
 // driftCheckDoc runs one document through the audit loop and returns its
-// verified findings plus the count dropped by evidence verification.
+// verified findings plus the count dropped by evidence verification. The
+// doc's linked documents ride along as context (idx may be nil).
 func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branch, doc string,
-	files map[string]string, sources []ai.GroundingSource, instructions string) ([]store.DriftFinding, int, error) {
+	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions string) ([]store.DriftFinding, int, error) {
 	content, ok := files[doc]
 	if !ok {
 		return nil, 0, fmt.Errorf("not in snapshot")
@@ -523,7 +523,11 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 		names = append(names, src.Name)
 	}
 	sort.Strings(names)
-	msgs := ai.DriftPrompt(doc, content, instructions, names)
+	linked := ""
+	if idx != nil {
+		linked = idx.linkedBlock(files, doc)
+	}
+	msgs := ai.DriftPrompt(doc, content, linked, instructions, names)
 
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,

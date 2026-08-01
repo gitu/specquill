@@ -131,6 +131,8 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/dismiss", s.writableH(s.postDriftDismiss))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/file", s.writableH(s.postDriftFile))
 	apiMux.HandleFunc("POST /api/repos/{repo}/drift/findings/{fp}/draft", s.writableH(s.postDriftDraft))
+	apiMux.HandleFunc("POST /api/repos/{repo}/linker/propose", s.writableH(s.postLinkerPropose))
+	apiMux.HandleFunc("POST /api/repos/{repo}/linker/apply", s.writableH(s.postLinkerApply))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))

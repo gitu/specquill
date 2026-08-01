@@ -274,6 +274,36 @@ export function useFileFinding(repo: string | undefined, branch: string) {
   });
 }
 
+// ---------------------------------------------------------------- linker
+
+export interface LinkProposal { from: string; field: string; to: string; reason?: string }
+
+/** Ask the AI for missing typed links between documents (nothing is written). */
+export function useProposeLinks(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: () =>
+      api<{ proposals: LinkProposal[]; dropped: number }>(
+        `/api/repos/${repo}/linker/propose?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+  });
+}
+
+/** Write accepted link proposals into the from-docs' frontmatter (drafts). */
+export function useApplyLinks(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (links: LinkProposal[]) =>
+      api<{ applied: LinkProposal[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/linker/apply?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ links }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+    },
+  });
+}
+
 // ---------------------------------------------------------------- mutations
 
 export function useWorktreeDiff(repo: string | undefined, branch: string, enabled: boolean) {

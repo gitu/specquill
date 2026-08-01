@@ -50,7 +50,17 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if 'coverage-gap auditor' in system:
+        if 'specquill linker' in system:
+            # linker: one canned missing link that holds in the demo fixture
+            # (venue.md implements REQ-051/070 but not REQ-063)
+            reply = json.dumps({'proposals': [{
+                'from': 'specs/venue.md',
+                'field': 'implements',
+                'to': 'requirements/REQ-063.md',
+                'reason': '(mock) the venue spec realizes partial-fill venue '
+                          'resolution but does not declare REQ-063.',
+            }]})
+        elif 'coverage-gap auditor' in system:
             # gap sweep: one canned uncovered capability, evidence quoting the
             # demo regulations source VERBATIM (unverified quotes get dropped)
             reply = json.dumps({'findings': [{

@@ -49,7 +49,7 @@ type DriftConfig struct {
 	// forge-PAT mode an entry may instead be an owner/repo path on the forge
 	// host, filed with the caller's own PAT.
 	Targets []string `yaml:"targets"`
-	MaxDocs int      `yaml:"max_docs"` // soft cap per run (default 50)
+	MaxDocs int      `yaml:"max_docs"` // optional hard cap per run (0 = uncapped, large scopes just loop)
 }
 
 // ManifestEntry declares one workspace in a repository's ROOT

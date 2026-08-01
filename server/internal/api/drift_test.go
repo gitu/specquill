@@ -88,8 +88,9 @@ func TestVerifyEvidence(t *testing.T) {
 // testDriftServer wires a writable workspace (one spec doc), a cataloged
 // read-only source, an AI fake scripted per request (replies are plain
 // content — the fake wraps them as SSE for streaming calls and as a JSON
-// completion for one-shot calls), and a fake forge target.
-func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.Store, *httptest.Server, *int) {
+// completion for one-shot calls; prompts sees each request's user message),
+// and a fake forge target.
+func testDriftServer(t *testing.T, aiResponses []string) (h http.Handler, st *store.Store, forgeSrv *httptest.Server, issuePosts *int, prompts *[]string) {
 	t.Helper()
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")
@@ -121,15 +122,25 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 
 	// scripted AI fake (OpenAI-compatible; streaming and one-shot)
 	aiCalls := 0
+	prompts = &[]string{}
 	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if aiCalls >= len(aiResponses) {
 			t.Errorf("unexpected AI request #%d", aiCalls+1)
 			return
 		}
 		var req struct {
-			Stream bool `json:"stream"`
+			Stream   bool `json:"stream"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, m := range req.Messages {
+			if m.Role == "user" {
+				*prompts = append(*prompts, m.Content)
+			}
+		}
 		content := aiResponses[aiCalls]
 		aiCalls++
 		if req.Stream {
@@ -145,9 +156,9 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 	t.Cleanup(aiSrv.Close)
 
 	// fake forge: marker search + issue creation (github shape under /api/v3)
-	issuePosts := 0
+	posts := 0
 	var issueBodies []string
-	forgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	forgeSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
@@ -162,7 +173,7 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 			}
 			_, _ = w.Write([]byte(out + "]"))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
-			issuePosts++
+			posts++
 			var body struct{ Body string }
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			issueBodies = append(issueBodies, body.Body)
@@ -188,7 +199,7 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 			TokenEnv: "SPECQUILL_TEST_DRIFT_TOKEN", Labels: []string{"from-specquill"},
 		}},
 	}
-	st := store.OpenTest(t)
+	st = store.OpenTest(t)
 	if err := st.SyncProjects([]store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -206,13 +217,13 @@ func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.S
 	if err := git.Init(); err != nil {
 		t.Fatal(err)
 	}
-	h := New(cfg, git, Options{
+	h = New(cfg, git, Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
 		AI:       ai.New(config.AIConfig{Enabled: true, BaseURL: aiSrv.URL, Model: "test-1"}),
 		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
-	return h, st, forgeSrv, &issuePosts
+	return h, st, forgeSrv, &posts, prompts
 }
 
 // waitDrift polls until the latest run leaves `running`, returning the drift payload.
@@ -243,7 +254,7 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 			 "detail":"made up","evidence":[{"path":"rules.md","quote":"THIS IS NOT IN THE FILE"}]}
 		]}`
 	}
-	h, _, _, _ := testDriftServer(t, []string{findings("first title"), findings("reworded title")})
+	h, _, _, _, _ := testDriftServer(t, []string{findings("first title"), findings("reworded title")})
 	cookie := login(t, h)
 
 	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{})
@@ -299,7 +310,7 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 }
 
 func TestDriftRunScopeAndCaps(t *testing.T) {
-	h, _, _, _ := testDriftServer(t, nil)
+	h, _, _, _, _ := testDriftServer(t, nil)
 	cookie := login(t, h)
 
 	// out-of-scope path → no docs → 422
@@ -310,7 +321,7 @@ func TestDriftRunScopeAndCaps(t *testing.T) {
 }
 
 func TestDriftFileFindingCreatesIssueAndBacklinks(t *testing.T) {
-	h, st, _, issuePosts := testDriftServer(t, nil)
+	h, st, _, issuePosts, _ := testDriftServer(t, nil)
 	cookie := login(t, h)
 	t.Setenv("SPECQUILL_TEST_DRIFT_TOKEN", "tok")
 
@@ -383,7 +394,7 @@ func TestGapRunAndReverseEngineering(t *testing.T) {
 		 "evidence":[{"path":"rules.md","quote":"NOT IN THE FILE"}]}
 	]}`
 	draftReply := `{"path":"requirements/REQ-deadline.md","content":"---\nid: REQ-deadline\ntitle: Reporting deadline\ntype: requirement\nstatus: draft\ndrivers: []\n---\n\n# Reporting deadline\n\nReports carry microsecond timestamps. Derived from ~reg/rules.md.\n"}`
-	h, st, _, _ := testDriftServer(t, []string{gapFindings, draftReply})
+	h, st, _, _, _ := testDriftServer(t, []string{gapFindings, draftReply})
 	cookie := login(t, h)
 
 	// gaps mode sweeps sources, not docs
