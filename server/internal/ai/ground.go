@@ -304,3 +304,63 @@ func DraftPrompt(changeContent string, files map[string]string, authoring string
 		{Role: "user", Content: b.String()},
 	}
 }
+
+const driftSystem = `You are the specquill source-drift auditor. You verify ONE
+requirements document against the workspace's read-only reference sources
+(source code, API contracts, documentation) and report where they diverge.
+
+Investigate with the tools first: list_files/search/read_file over the
+~source/... references to find the places that implement or describe what the
+document specifies. Then reply with ONLY a JSON object, no prose:
+
+{
+  "findings": [
+    {
+      "anchor": "REQ-012",
+      "source": "platform-api",
+      "kind": "contradiction",
+      "severity": "high",
+      "title": "Timestamp precision differs from the spec",
+      "detail": "The document requires microsecond precision; the API contract declares millisecond timestamps.",
+      "sourcePaths": ["openapi.json"],
+      "evidence": [{"path": "openapi.json", "quote": "\"format\": \"date-time-ms\""}]
+    }
+  ]
+}
+
+Rules:
+- "anchor" identifies the drifted section STRUCTURALLY: the requirement id from
+  the document's frontmatter/filename (e.g. REQ-012) or the nearest heading
+  text. Never invent ids.
+- "source" is the reference source name the finding is against (no ~).
+- "kind" is one of: missing-implementation | undocumented-behavior |
+  contradiction | outdated-requirement. "severity": high | medium | low.
+- "evidence" quotes are VERBATIM excerpts copied from the named source file —
+  they are checked against the file and the finding is discarded when they do
+  not match. Quote the smallest decisive fragment.
+- Report only real divergence you have evidence for. A consistent document
+  yields {"findings": []}. Never report style or formatting.`
+
+// DriftPrompt builds the per-document drift-check conversation. The document
+// is inlined (it is the subject under audit); the reference sources are
+// reachable through the read tools.
+func DriftPrompt(docPath, docContent, instructions string, sourceNames []string) []Message {
+	system := driftSystem
+	if instructions != "" {
+		system += "\n\nWorkspace drift instructions:\n" + instructions
+	}
+	var b strings.Builder
+	b.WriteString("Reference sources to verify against: ")
+	for i, n := range sourceNames {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("~" + n)
+	}
+	b.WriteString("\n\n# Document under audit: " + docPath + "\n```\n" + docContent + "\n```\n")
+	b.WriteString("\nVerify this document against the reference sources and report drift as JSON.")
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: b.String()},
+	}
+}

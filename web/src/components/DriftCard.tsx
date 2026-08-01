@@ -1,0 +1,185 @@
+import { useMemo, useState } from 'react';
+import { sx } from '../lib/sx';
+import { useNav } from '../state/nav';
+import {
+  DriftFinding, useCancelDrift, useDismissFinding, useDrift, useFileFinding, useRunDrift, useTree,
+} from '../api/hooks';
+
+const SEV: Record<string, { label: string; fg: string; bg: string; rank: number }> = {
+  high: { label: 'high', fg: 'var(--reg)', bg: 'var(--reg-bg)', rank: 0 },
+  medium: { label: 'med', fg: 'var(--prod)', bg: 'var(--prod-bg)', rank: 1 },
+  low: { label: 'low', fg: 'var(--text-3)', bg: 'var(--surface-2)', rank: 2 },
+};
+
+/**
+ * Source drift: AI-verified divergence between the workspace documents and
+ * the selected read-only reference sources ("source" drift — "mapping drifts"
+ * are the frontmatter-flagged fields elsewhere). Scoped runs, review-then-file:
+ * every work item is an explicit human click on a displayed finding.
+ */
+export function DriftCard({ repo, branch }: { repo: string | undefined; branch: string }) {
+  const nav = useNav();
+  const drift = useDrift(repo, branch);
+  const tree = useTree(repo, branch);
+  const run = useRunDrift(repo, branch);
+  const cancel = useCancelDrift(repo, branch);
+  const dismiss = useDismissFinding(repo, branch);
+  const file = useFileFinding(repo, branch);
+  const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
+  const [pickTarget, setPickTarget] = useState<Record<string, string>>({});
+  const [err, setErr] = useState('');
+
+  const docs = useMemo(() => (tree.data ?? []).map((e) => e.path)
+    .filter((p) => p.endsWith('.md') && !p.startsWith('.') && !p.startsWith('uploads/')
+      && !p.endsWith('/index.md') && !p.endsWith('/log.md') && p !== 'index.md' && p !== 'log.md'), [tree.data]);
+  const folders = useMemo(() => {
+    const seen = new Set<string>();
+    docs.forEach((p) => { const i = p.indexOf('/'); if (i > 0) seen.add(p.slice(0, i + 1)); });
+    return [...seen].sort();
+  }, [docs]);
+  const scopedCount = scope.length === 0 ? docs.length
+    : docs.filter((p) => scope.some((f) => p.startsWith(f))).length;
+
+  const data = drift.data;
+  if (!data?.enabled) return null;
+  const running = data.run?.status === 'running';
+  const findings = (data.findings ?? []).filter((f) => f.status !== 'dismissed')
+    .sort((a, b) => (SEV[a.severity]?.rank ?? 3) - (SEV[b.severity]?.rank ?? 3));
+  const dismissed = (data.findings ?? []).filter((f) => f.status === 'dismissed');
+  const targets = data.targets ?? [];
+
+  const start = () => {
+    setErr('');
+    run.mutate({ paths: scope }, { onError: (e) => setErr(String((e as Error).message ?? e)) });
+  };
+  const doFile = (f: DriftFinding) => {
+    setErr('');
+    const target = pickTarget[f.fingerprint] || targets[0]?.name;
+    if (!target) { setErr('no work-item target configured (forge or work_item_targets)'); return; }
+    file.mutate({ fingerprint: f.fingerprint, target, docPath: f.docPath }, {
+      onError: (e) => setErr(String((e as Error).message ?? e)),
+      onSuccess: (resp) => { if (resp.backlinkError) setErr('work item created; backlink failed: ' + resp.backlinkError); },
+    });
+  };
+
+  return (
+    <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
+      <div style={sx('display:flex;align-items:center;gap:9px;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)')}>
+        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
+          Source drift
+        </span>
+        <span style={sx('flex:1')} />
+        {data.run && !running && (
+          <span title={data.run.error} style={sx(`font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;flex:none;background:${data.run.status === 'ok' ? 'var(--data-bg)' : 'var(--reg-bg)'};color:${data.run.status === 'ok' ? 'var(--data)' : 'var(--reg)'}`)}>
+            {data.run.status}
+          </span>
+        )}
+      </div>
+
+      {running ? (
+        <div style={sx('padding:12px 14px')}>
+          <div style={sx('display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)')}>
+            <span style={sx('flex:1')}>checking {data.run!.docsDone}/{data.run!.docsTotal} docs…</span>
+            <button onClick={() => cancel.mutate()} style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>Cancel</button>
+          </div>
+          <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
+            <div style={sx(`width:${data.run!.docsTotal ? Math.round((100 * data.run!.docsDone) / data.run!.docsTotal) : 0}%;height:100%;background:var(--ai)`)} />
+          </div>
+        </div>
+      ) : (
+        <div style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
+          <div style={sx('display:flex;flex-wrap:wrap;gap:5px')}>
+            <ScopeChip label="Everything" active={scope.length === 0} onClick={() => setScope([])} />
+            {folders.map((f) => (
+              <ScopeChip key={f} label={f} active={scope.includes(f)}
+                onClick={() => setScope((s) => (s.includes(f) ? s.filter((x) => x !== f) : [...s, f]))} />
+            ))}
+          </div>
+          <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
+            <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>{scopedCount} doc{scopedCount === 1 ? '' : 's'} in scope</span>
+            <button onClick={start} disabled={run.isPending || scopedCount === 0}
+              style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
+              Check drift
+            </button>
+          </div>
+        </div>
+      )}
+
+      {err && (
+        <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{err}</div>
+      )}
+      {data.run?.status === 'error' && data.run.error && !err && (
+        <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{data.run.error}</div>
+      )}
+
+      {findings.map((f) => {
+        const sev = SEV[f.severity] ?? SEV.low;
+        return (
+          <div key={f.fingerprint} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
+            <div style={sx('display:flex;align-items:center;gap:7px')}>
+              <span style={sx(`flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:${sev.bg};color:${sev.fg}`)}>{sev.label}</span>
+              <span style={sx('font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')} title={f.detail}>{f.title}</span>
+            </div>
+            <div onClick={() => nav('/editor/' + f.docPath)}
+              style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);margin-top:4px;cursor:pointer")}>
+              {f.docPath}{f.anchor ? ` · ${f.anchor}` : ''} <span style={sx('color:var(--text-3)')}>vs ~{f.source}</span>
+            </div>
+            <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.45')}>{f.detail}</div>
+            <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px')}>
+              {f.status === 'filed' && f.workItemUrl ? (
+                <a href={f.workItemUrl} target="_blank" rel="noopener noreferrer"
+                  style={sx('font-size:11px;font-weight:600;color:var(--data);text-decoration:none')}>
+                  ↗ work item filed{f.workItemTarget ? ` · ${f.workItemTarget}` : ''}
+                </a>
+              ) : (
+                <>
+                  {targets.length > 1 && (
+                    <select value={pickTarget[f.fingerprint] || targets[0]?.name}
+                      onChange={(e) => setPickTarget((m) => ({ ...m, [f.fingerprint]: e.target.value }))}
+                      style={sx('height:24px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;flex:none')}>
+                      {targets.map((tg) => <option key={tg.name} value={tg.name}>{tg.name}</option>)}
+                    </select>
+                  )}
+                  {targets.length > 0 && (
+                    <button onClick={() => doFile(f)} disabled={file.isPending}
+                      style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                      File issue
+                    </button>
+                  )}
+                </>
+              )}
+              <span style={sx('flex:1')} />
+              <button onClick={() => dismiss.mutate({ fingerprint: f.fingerprint })}
+                style={sx('height:24px;padding:0 10px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {!running && findings.length === 0 && data.run && data.run.status === 'ok' && (
+        <div style={sx('padding:11px 14px;font-size:12px;color:var(--text-3)')}>
+          <span style={sx('color:var(--data)')}>✓</span> no drift found in the last run
+        </div>
+      )}
+
+      {(data.run?.droppedUnverified || dismissed.length > 0) && (
+        <div style={sx('padding:7px 14px;font-size:10.5px;color:var(--text-3)')}>
+          {data.run?.droppedUnverified ? `${data.run.droppedUnverified} finding${data.run.droppedUnverified === 1 ? '' : 's'} dropped (evidence did not verify)` : ''}
+          {data.run?.droppedUnverified && dismissed.length > 0 ? ' · ' : ''}
+          {dismissed.length > 0 ? `${dismissed.length} dismissed` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScopeChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      style={sx(`height:22px;padding:0 9px;border:1px solid ${active ? 'var(--text)' : 'var(--border-2)'};border-radius:99px;background:${active ? 'var(--text)' : 'var(--surface)'};color:${active ? 'var(--bg)' : 'var(--text-2)'};font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none`)}>
+      {label}
+    </button>
+  );
+}

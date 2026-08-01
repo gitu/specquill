@@ -24,6 +24,17 @@ sources:
     remote: http://127.0.0.1:8643/demo-openapi.json
     sync_interval: 1h
 
+# drift work-item filing demo: scripts/mock-forge.py (:8992) plays the
+# tracker — issue endpoints are not auth-gated on the mock, so no token env
+# is needed. The trading-specs workspace selects this target via its
+# .specquill/config.yml drift.targets.
+work_item_targets:
+  - name: dev-board
+    kind: gitlab
+    base_url: http://127.0.0.1:8992
+    project: acme/backend
+    labels: [from-specquill]
+
 git:
   committer_name: specquill
   committer_email: specquill@dev.local

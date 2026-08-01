@@ -15,7 +15,7 @@ and sign in with e.g. "tok-dev".
 """
 import json
 import re
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8992
 
@@ -27,6 +27,9 @@ TOKENS = {
 
 open_mrs = {}  # source_branch -> mr dict
 next_iid = [1]
+
+issues = []  # created work items (drift filing), newest last
+next_issue = [1]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -47,6 +50,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        # issue listing (drift work items) is not auth-gated: catalog targets
+        # authenticate with env tokens dev setups may not bother to set
+        if re.search(r'/issues(\?|$)', self.path):
+            return self._json(200, issues)
         u = self._user()
         if not u:
             return self._json(401, {'message': '401 Unauthorized'})
@@ -67,11 +74,24 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {'message': 'not mocked: ' + self.path})
 
     def do_POST(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        payload = json.loads(self.rfile.read(length) or b'{}')
+        if self.path.endswith('/issues'):
+            iid = next_issue[0]
+            next_issue[0] += 1
+            issue = {
+                'iid': iid,
+                'title': payload.get('title') or 'untitled',
+                'state': 'opened',
+                'description': payload.get('description') or '',
+                'labels': (payload.get('labels') or '').split(','),
+                'web_url': 'http://127.0.0.1:%d/issues/%d' % (PORT, iid),
+            }
+            issues.append(issue)
+            return self._json(201, issue)
         u = self._user()
         if not u:
             return self._json(401, {'message': '401 Unauthorized'})
-        length = int(self.headers.get('Content-Length') or 0)
-        payload = json.loads(self.rfile.read(length) or b'{}')
         if self.path.endswith('/merge_requests'):
             iid = next_iid[0]
             next_iid[0] += 1
@@ -89,4 +109,4 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     print('mock forge (gitlab) on :%d — tokens: %s' % (PORT, ', '.join(TOKENS)))
-    HTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
+    ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()

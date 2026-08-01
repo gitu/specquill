@@ -106,6 +106,24 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
+- **Source drift** (`api/drift.go`, "Source drift" card on the Overview +
+  "Check drift" in the editor): scoped per-document AI runs verify docs against
+  the selected references; findings are SQLite rows keyed by an ANCHOR-based
+  fingerprint (docPath|source|kind|anchor — model titles are display-only, so
+  dismissals stick across reruns) and evidence quotes are string-verified
+  against the source snapshot (unverifiable findings are silently dropped,
+  counted as `droppedUnverified`). Filing a finding creates a GitLab/GitHub
+  issue (`forge.CreateIssue`, marker `<!-- specquill:drift:<fp> -->` +
+  `specquill-drift` label = idempotency) or a Jira issue (`internal/tracker`,
+  REST **v2** on purpose — plain-text description; `token_env` with ':' →
+  Basic, bare → Bearer) and appends the URL to the doc's `work-items:`
+  frontmatter (worktree save; on a protected branch it claims the caller's
+  ws branch). Targets = server `work_item_targets:` catalog ∩ in-repo
+  `drift.targets` + the project forge as implicit target; in dev,
+  `mock-forge.py` plays the `dev-board` target (its /issues endpoints are
+  deliberately unauthenticated, and it is a ThreadingHTTPServer — a
+  single-threaded mock deadlocks 15s between playwright's keep-alive probe
+  and the Go client). The drift e2e needs BOTH mocks (mock-llm + mock-forge).
 - **Speccy chat tools** (`ai.StreamTools` + `api/speccytools.go`): read_file /
   list_files / search / ask_user always — the read tools span the workspace
   plus ALL selected references (`resolveSources`; `grounding: true` only

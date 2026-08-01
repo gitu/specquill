@@ -1,0 +1,91 @@
+// Source-drift e2e — needs the dev server, scripts/mock-llm.py (:8991) AND
+// scripts/mock-forge.py (:8992, plays the dev-board work-item target).
+import { expect, test, APIRequestContext } from '@playwright/test';
+
+const H = { 'X-SpecQuill': '1' };
+const REPO = 'trading-specs';
+
+test.beforeEach(async ({ request }) => {
+  const info = await request.get('/api/speccy/info');
+  const body = (await info.json()) as { enabled: boolean; model?: string };
+  test.skip(!body.enabled || body.model !== 'mock-1', 'speccy not running against mock-llm');
+});
+
+// findings persist in the store across suite runs — reopen everything so each
+// test starts from a deterministic slate (e2e state discipline: self-heal)
+async function resetFindings(request: APIRequestContext) {
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+    findings?: { fingerprint: string }[];
+  };
+  for (const f of drift.findings ?? []) {
+    await request.post(`/api/repos/${REPO}/drift/findings/${f.fingerprint}/dismiss?branch=main`, {
+      headers: H, data: { reopen: true },
+    });
+  }
+}
+
+test('scoped drift run verifies findings, files a work item and backlinks the doc', async ({ page, request }) => {
+  let forgeUp = false;
+  try {
+    forgeUp = (await request.get('http://127.0.0.1:8992/api/v4/projects/acme%2Fbackend/issues')).ok();
+  } catch { /* not running */ }
+  test.skip(!forgeUp, 'mock-forge not running (drift filing target)');
+  await resetFindings(request);
+
+  await page.goto(`/p/${REPO}/dashboard`);
+  await expect(page.getByText('Source drift')).toBeVisible();
+
+  // scope the run to specs/ — index.md is generated and stays out
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  await expect(page.getByText(/2 docs in scope/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check drift' }).click();
+
+  // the mock reports one finding per doc, evidence quoting the regulations
+  // source verbatim (unverifiable quotes would be dropped server-side)
+  await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('vs ~regulations').first()).toBeVisible();
+
+  // file the first finding on the dev-board target (mock forge)
+  await page.getByRole('button', { name: 'File issue' }).first().click();
+  await expect(page.getByText(/work item filed/).first()).toBeVisible({ timeout: 15_000 });
+
+  // the filing wrote a work-items backlink into the doc's frontmatter as an
+  // uncommitted save on the workspace branch (main is protected in dev)
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as {
+    findings: { status: string; docPath: string; workItemUrl: string }[];
+  };
+  const filed = drift.findings.find((f) => f.status === 'filed');
+  expect(filed).toBeTruthy();
+  expect(filed!.workItemUrl).toContain('/issues/');
+
+  const ws = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { branch: string };
+  const file = (await (await request.get(
+    `/api/repos/${REPO}/files/${filed!.docPath}?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
+  expect(file.content).toContain('work-items:');
+  expect(file.content).toContain(filed!.workItemUrl);
+
+  // self-heal: drop the uncommitted backlink save so re-runs start clean
+  await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(ws.branch)}`, {
+    headers: H, data: { paths: [filed!.docPath] },
+  });
+});
+
+test('dismissing a finding survives a re-run', async ({ page, request }) => {
+  await resetFindings(request);
+  await page.goto(`/p/${REPO}/dashboard`);
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Dismiss' }).first().click();
+  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
+
+  // re-run the same scope: the fingerprint is anchor-based, so the identical
+  // finding stays dismissed instead of resurrecting
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await expect(page.getByText(/checking \d+\/\d+ docs/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/checking \d+\/\d+ docs/)).toBeHidden({ timeout: 30_000 });
+  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
+  await expect(page.getByText(/1 dismissed/)).toBeVisible();
+});

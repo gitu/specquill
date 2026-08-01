@@ -50,7 +50,23 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if body.get('tools') and last['role'] == 'tool':
+        if 'source-drift auditor' in system:
+            # drift check: one canned finding whose evidence quotes the demo
+            # regulations source VERBATIM (the server drops unverified quotes)
+            anchor = re.search(r'^id:\s*(\S+)', user, re.M)
+            reply = json.dumps({'findings': [{
+                'anchor': anchor.group(1) if anchor else 'REQ-042',
+                'source': 'regulations',
+                'kind': 'outdated-requirement',
+                'severity': 'high',
+                'title': '(mock) timestamp precision drifted vs RTS 22 amendment',
+                'detail': 'The 2026-06 amendment requires microsecond execution '
+                          'timestamps; this document still allows coarser precision.',
+                'sourcePaths': ['regulations/mifid-ii.md'],
+                'evidence': [{'path': 'regulations/mifid-ii.md',
+                              'quote': 'reported to **microsecond** precision'}],
+            }]})
+        elif body.get('tools') and last['role'] == 'tool':
             name = ''
             for m in reversed(body['messages']):
                 if m['role'] == 'assistant' and m.get('tool_calls'):

@@ -55,3 +55,12 @@ references:
   - source: regulations
     grounding: true
   - source: specquill-src
+
+# source-drift detection: the AI verifies documents against the selected
+# references and files findings as work items. `targets` selects from the
+# server's work_item_targets catalog (the project's own forge is always an
+# implicit target); paths is the default run scope.
+drift:
+  references: [regulations]
+  paths: [specs/, requirements/, data-mappings/]
+  targets: [dev-board]

@@ -68,6 +68,24 @@ projects:
   #   space: REG
   #   token_env: SPECQUILL_CONFLUENCE_TOKEN
 
+# Work-item targets: trackers source-drift findings can be filed to. The
+# workspace SELECTS from this catalog (.specquill/config.yml drift.targets)
+# — same catalog ∩ selection shape as sources; in-repo config can never mint
+# access. The project's own forge: is always available implicitly.
+# work_item_targets:
+#   - name: backend-board
+#     kind: gitlab                          # github | gitlab | jira
+#     base_url: https://gitlab.example.com
+#     project: acme/backend                 # forge path (Jira: project key)
+#     token_env: SPECQUILL_GL_ISSUES_TOKEN
+#     labels: [from-specquill]
+#   - name: platform-jira
+#     kind: jira
+#     base_url: https://acme.atlassian.net
+#     project: PLAT
+#     issue_type: Task
+#     token_env: SPECQUILL_JIRA_TOKEN       # "email:api_token" (Cloud) or a bare PAT (Server/DC)
+
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by
   committer_email: specquill@example.com   # trailer; the user is author AND committer

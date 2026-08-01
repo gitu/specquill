@@ -1,0 +1,368 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"specquill/server/internal/ai"
+	"specquill/server/internal/auth"
+	"specquill/server/internal/config"
+	"specquill/server/internal/gitx"
+	"specquill/server/internal/store"
+)
+
+func TestResolveDriftScope(t *testing.T) {
+	files := map[string]string{
+		"specs/a.md":            "a",
+		"specs/deep/b.md":       "b",
+		"requirements/r.md":     "r",
+		"specs/index.md":        "generated",
+		"uploads/pic.md":        "asset",
+		".specquill/config.yml": "cfg",
+		"readme.txt":            "not md",
+	}
+	// folder expansion + explicit file, deduped and sorted
+	got := resolveDriftScope(files, []string{"specs/", "requirements/r.md", "specs/a.md"}, nil)
+	want := []string{"requirements/r.md", "specs/a.md", "specs/deep/b.md"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("scope = %v, want %v", got, want)
+	}
+	// no request → config default paths
+	got = resolveDriftScope(files, nil, []string{"requirements/"})
+	if fmt.Sprint(got) != fmt.Sprint([]string{"requirements/r.md"}) {
+		t.Fatalf("config-scoped = %v", got)
+	}
+	// nothing at all → every candidate doc (no generated/uploads/dotfiles)
+	got = resolveDriftScope(files, nil, nil)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("full scope = %v, want %v", got, want)
+	}
+}
+
+func TestDriftFingerprintStability(t *testing.T) {
+	a := driftFingerprint("specs/a.md", "reg", "contradiction", "REQ-1")
+	b := driftFingerprint("specs/a.md", "reg", "contradiction", "  req-1  ")
+	if a != b {
+		t.Fatal("fingerprint must normalize anchor whitespace/case")
+	}
+	if a == driftFingerprint("specs/a.md", "reg", "contradiction", "REQ-2") {
+		t.Fatal("different anchors must differ")
+	}
+}
+
+func TestVerifyEvidence(t *testing.T) {
+	sources := []ai.GroundingSource{{Name: "reg", Files: map[string]string{
+		"rules.md": "Timestamps  shall use\nmicrosecond precision.",
+	}}}
+	ok := func(f modelFinding) bool { return verifyEvidence(f, sources) }
+	base := modelFinding{Source: "reg", Evidence: []driftEvidence{{Path: "rules.md", Quote: "microsecond precision"}}}
+	if !ok(base) {
+		t.Fatal("verbatim quote must verify")
+	}
+	ws := base
+	ws.Evidence = []driftEvidence{{Path: "~reg/rules.md", Quote: "shall use microsecond"}}
+	if !ok(ws) {
+		t.Fatal("whitespace-normalized quote with ~source path must verify")
+	}
+	for name, f := range map[string]modelFinding{
+		"hallucinated quote": {Source: "reg", Evidence: []driftEvidence{{Path: "rules.md", Quote: "nanosecond"}}},
+		"unknown file":       {Source: "reg", Evidence: []driftEvidence{{Path: "other.md", Quote: "microsecond"}}},
+		"unknown source":     {Source: "ghost", Evidence: []driftEvidence{{Path: "rules.md", Quote: "microsecond"}}},
+		"no evidence":        {Source: "reg"},
+		"empty quote":        {Source: "reg", Evidence: []driftEvidence{{Path: "rules.md", Quote: "  "}}},
+	} {
+		if ok(f) {
+			t.Fatalf("%s must not verify", name)
+		}
+	}
+}
+
+// sseReply renders a one-round streaming completion (content, no tool calls).
+func sseReply(t *testing.T, content string) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": content}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "data: " + string(raw) + "\n\ndata: [DONE]\n\n"
+}
+
+// testDriftServer wires a writable workspace (one spec doc), a cataloged
+// read-only source, an AI fake scripted per request, and a fake forge target.
+func testDriftServer(t *testing.T, aiResponses []string) (http.Handler, *store.Store, *httptest.Server, *int) {
+	t.Helper()
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	gitRun(t, "init", "-b", "main", src)
+	if err := os.MkdirAll(filepath.Join(src, ".specquill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgYML := "version: 2\nproject: w\nreferences:\n  - source: reg\n    grounding: true\ndrift:\n  targets: [board]\n"
+	if err := os.WriteFile(filepath.Join(src, ".specquill", "config.yml"), []byte(cfgYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := "---\nid: REQ-1\ntitle: Timestamps\nstatus: approved\n---\n\n# Timestamps\n\nMillisecond precision suffices.\n"
+	if err := os.WriteFile(filepath.Join(src, "specs", "txn.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
+
+	reg := filepath.Join(tmp, "reg-src")
+	gitRun(t, "init", "-b", "main", reg)
+	if err := os.WriteFile(filepath.Join(reg, "rules.md"), []byte("RTS 22 requires microsecond timestamps for reports."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "reg")
+
+	// scripted AI fake (SSE chat-completions)
+	aiCalls := 0
+	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if aiCalls >= len(aiResponses) {
+			t.Errorf("unexpected AI request #%d", aiCalls+1)
+			return
+		}
+		fmt.Fprint(w, aiResponses[aiCalls])
+		aiCalls++
+	}))
+	t.Cleanup(aiSrv.Close)
+
+	// fake forge: marker search + issue creation (github shape under /api/v3)
+	issuePosts := 0
+	var issueBodies []string
+	forgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			// marker search: return previously created issues
+			out := "["
+			for i, b := range issueBodies {
+				if i > 0 {
+					out += ","
+				}
+				raw, _ := json.Marshal(b)
+				out += fmt.Sprintf(`{"number":%d,"title":"t","state":"open","body":%s,"html_url":"https://forge.test/acme/specs/issues/%d"}`, i+1, raw, i+1)
+			}
+			_, _ = w.Write([]byte(out + "]"))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			issuePosts++
+			var body struct{ Body string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			issueBodies = append(issueBodies, body.Body)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"number":%d,"title":"t","state":"open","html_url":"https://forge.test/acme/specs/issues/%d"}`, len(issueBodies), len(issueBodies))))
+		default:
+			t.Errorf("unexpected forge request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(forgeSrv.Close)
+
+	cfg := &config.Config{
+		DataDir: filepath.Join(tmp, "data"),
+		BaseURL: "http://spec.test",
+		Git:     config.GitConfig{CommitterName: "svc", CommitterEmail: "svc@t"},
+		Session: config.SessionConfig{TTL: time.Hour, CookieSecure: false},
+		Auth:    config.AuthConfig{Local: config.LocalAuthConfig{Enabled: true}},
+		Repos: []config.RepoConfig{
+			{ID: "w", Mode: config.Writable, Remote: src, DefaultBranch: "main"},
+			{ID: "reg", Mode: config.ReadOnly, Remote: reg, DefaultBranch: "main"},
+		},
+		WorkItemTargets: []config.TargetConfig{{
+			Name: "board", Kind: "github", BaseURL: forgeSrv.URL, Project: "acme/specs",
+			TokenEnv: "SPECQUILL_TEST_DRIFT_TOKEN", Labels: []string{"from-specquill"},
+		}},
+	}
+	st := store.OpenTest(t)
+	if err := st.SyncProjects([]store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := auth.HashPassword("hunter2secret")
+	if err := st.AddLocalUser("flo", "Flo Test", "flo@test.local", hash); err != nil {
+		t.Fatal(err)
+	}
+	git, err := gitx.NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.Init(); err != nil {
+		t.Fatal(err)
+	}
+	h := New(cfg, git, Options{
+		Store:    st,
+		Sessions: auth.NewSessions(st, cfg),
+		AI:       ai.New(config.AIConfig{Enabled: true, BaseURL: aiSrv.URL, Model: "test-1"}),
+		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
+	})
+	return h, st, forgeSrv, &issuePosts
+}
+
+// waitDrift polls until the latest run leaves `running`, returning the drift payload.
+func waitDrift(t *testing.T, h http.Handler, cookie *http.Cookie) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/drift?branch=main", nil)
+		if code != http.StatusOK {
+			t.Fatalf("get drift: %d %v", code, out)
+		}
+		run, _ := out["run"].(map[string]any)
+		if run != nil && run["status"] != "running" {
+			return out
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("drift run never finished")
+	return nil
+}
+
+func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
+	findings := func(title string) string {
+		return sseReply(t, `{"findings":[
+			{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high","title":"`+title+`",
+			 "detail":"spec says ms, regulation says µs","evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]},
+			{"anchor":"REQ-9","source":"reg","kind":"contradiction","severity":"low","title":"bogus",
+			 "detail":"made up","evidence":[{"path":"rules.md","quote":"THIS IS NOT IN THE FILE"}]}
+		]}`)
+	}
+	h, _, _, _ := testDriftServer(t, []string{findings("first title"), findings("reworded title")})
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{})
+	if code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	if out["docsTotal"].(float64) != 1 {
+		t.Fatalf("docsTotal = %v", out["docsTotal"])
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" {
+		t.Fatalf("run = %v", run)
+	}
+	if run["droppedUnverified"].(float64) != 1 {
+		t.Fatalf("hallucinated evidence must be dropped: %v", run)
+	}
+	list := drift["findings"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want 1 verified finding, got %v", list)
+	}
+	f := list[0].(map[string]any)
+	if f["anchor"] != "REQ-1" || f["severity"] != "high" || f["title"] != "first title" {
+		t.Fatalf("unexpected finding: %v", f)
+	}
+	fp := f["fingerprint"].(string)
+
+	// dismiss, re-run with a REWORDED title → same fingerprint, still dismissed
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/"+fp+"/dismiss?branch=main", nil); code != http.StatusOK {
+		t.Fatalf("dismiss: %d %v", code, out)
+	}
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("re-run: %d %v", code, out)
+	}
+	drift = waitDrift(t, h, cookie)
+	list = drift["findings"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want 1 finding after re-run, got %v", list)
+	}
+	f = list[0].(map[string]any)
+	if f["fingerprint"] != fp {
+		t.Fatal("reworded title must not mint a new fingerprint")
+	}
+	if f["status"] != "dismissed" || f["title"] != "reworded title" {
+		t.Fatalf("dismissal must stick while display refreshes: %v", f)
+	}
+
+	// available targets: the in-repo selection ∩ catalog (no implicit — no forge on w)
+	targets := drift["targets"].([]any)
+	if len(targets) != 1 || targets[0].(map[string]any)["name"] != "board" {
+		t.Fatalf("targets = %v", targets)
+	}
+}
+
+func TestDriftRunScopeAndCaps(t *testing.T) {
+	h, _, _, _ := testDriftServer(t, nil)
+	cookie := login(t, h)
+
+	// out-of-scope path → no docs → 422
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{"paths": []string{"nowhere/"}})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty scope: %d %v", code, out)
+	}
+}
+
+func TestDriftFileFindingCreatesIssueAndBacklinks(t *testing.T) {
+	h, st, _, issuePosts := testDriftServer(t, nil)
+	cookie := login(t, h)
+	t.Setenv("SPECQUILL_TEST_DRIFT_TOKEN", "tok")
+
+	f := store.DriftFinding{
+		RepoKey: "w", Branch: "main", Fingerprint: "abc123def4567890", RunID: 1,
+		DocPath: "specs/txn.md", Anchor: "REQ-1", Source: "reg", Kind: "contradiction",
+		Severity: "high", Title: "Timestamp precision drift",
+		Detail:       "spec says ms, regulation says µs",
+		EvidenceJSON: `[{"path":"rules.md","quote":"microsecond timestamps"}]`,
+	}
+	if err := st.UpsertDriftFinding(f); err != nil {
+		t.Fatal(err)
+	}
+
+	// an unselected target is indistinguishable from a nonexistent one
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/"+f.Fingerprint+"/file?branch=main", map[string]string{"target": "ghost"})
+	if code != http.StatusNotFound {
+		t.Fatalf("unselected target: %d %v", code, out)
+	}
+
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/"+f.Fingerprint+"/file?branch=main", map[string]string{"target": "board"})
+	if code != http.StatusOK {
+		t.Fatalf("file: %d %v", code, out)
+	}
+	if out["created"] != true || out["url"] != "https://forge.test/acme/specs/issues/1" {
+		t.Fatalf("unexpected filing: %v", out)
+	}
+	if out["backlinked"] != true {
+		t.Fatalf("backlink failed: %v", out)
+	}
+
+	// the finding records the work item
+	got, err := st.DriftFinding("w", "main", f.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "filed" || got.WorkItemTarget != "board" {
+		t.Fatalf("finding not filed: %+v", got)
+	}
+
+	// the doc's frontmatter carries the backlink as an uncommitted save
+	code, file := doJSON(t, h, cookie, "GET", "/api/repos/w/files/specs/txn.md?ref=main", nil)
+	if code != http.StatusOK {
+		t.Fatalf("read doc: %d", code)
+	}
+	content := file["content"].(string)
+	if !strings.Contains(content, "work-items:") || !strings.Contains(content, "https://forge.test/acme/specs/issues/1") {
+		t.Fatalf("doc missing work-items backlink:\n%s", content)
+	}
+
+	// re-filing finds the marker instead of duplicating the issue
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/findings/"+f.Fingerprint+"/file?branch=main", map[string]string{"target": "board"})
+	if code != http.StatusOK || out["created"] != false {
+		t.Fatalf("re-file must re-find: %d %v", code, out)
+	}
+	if *issuePosts != 1 {
+		t.Fatalf("issue created %d times, want 1", *issuePosts)
+	}
+}

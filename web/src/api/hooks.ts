@@ -165,6 +165,92 @@ export function useForgeRequest(repo: string | undefined, branch: string | undef
   });
 }
 
+// ---------------------------------------------------------------- source drift
+
+export interface DriftEvidence { path: string; quote: string }
+export interface DriftFinding {
+  fingerprint: string; docPath: string; anchor: string; source: string;
+  kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string;
+  evidence: DriftEvidence[]; status: 'open' | 'dismissed' | 'filed';
+  workItemUrl: string; workItemTarget: string; updatedAt: number;
+}
+export interface DriftRun {
+  id: number; status: 'running' | 'ok' | 'error' | 'cancelled'; error: string;
+  scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
+  headSha: string; startedAt: number; finishedAt: number;
+}
+export interface DriftTarget { name: string; kind: string; project: string }
+export interface DriftResp {
+  enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
+}
+
+/** Latest source-drift run + live findings; polls while a run is in flight. */
+export function useDrift(repo: string | undefined, branch: string) {
+  return useQuery({
+    queryKey: ['drift', repo, branch],
+    queryFn: () => api<DriftResp>(`/api/repos/${repo}/drift?branch=${encodeURIComponent(branch)}`),
+    enabled: !!repo,
+    refetchInterval: (q) => (q.state.data?.run?.status === 'running' ? 2_500 : false),
+  });
+}
+
+export function useRunDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { paths?: string[] }) =>
+      api<{ runId: number; docsTotal: number }>(
+        `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export function useCancelDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean }>(`/api/repos/${repo}/drift/cancel?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export function useDismissFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, reopen }: { fingerprint: string; reopen?: boolean }) =>
+      api<{ status: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/dismiss?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ reopen: !!reopen }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export interface FileFindingResp {
+  url: string; created: boolean; target: string;
+  backlinked: boolean; backlinkBranch?: string; backlinkError?: string;
+}
+
+/** File a finding as a work item; the backlink save may touch an open doc. */
+export function useFileFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, target }: { fingerprint: string; target: string; docPath: string }) =>
+      api<FileFindingResp>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/file?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ target }) }),
+    onSuccess: (resp, { docPath }) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the backlink is a worktree save — refresh an open editor instead of
+      // letting it stale into a baseSha conflict
+      const wb = resp.backlinkBranch ?? branch;
+      qc.invalidateQueries({ queryKey: ['file', repo, wb, docPath] });
+      qc.invalidateQueries({ queryKey: ['status', repo, wb] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, wb] });
+    },
+  });
+}
+
 // ---------------------------------------------------------------- mutations
 
 export function useWorktreeDiff(repo: string | undefined, branch: string, enabled: boolean) {
