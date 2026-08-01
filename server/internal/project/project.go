@@ -460,8 +460,13 @@ func (p *Project) mapDiff(files []gitx.DiffFile) []gitx.DiffFile {
 		}
 		f.Path = rel
 		if f.OldPath != "" {
+			// a rename from OUTSIDE the content root has no project-relative
+			// old path — drop it rather than leaking a repo-absolute one onto
+			// the wire (the client would read it as a workspace document)
 			if old, ok := p.MapOut(f.OldPath); ok {
 				f.OldPath = old
+			} else {
+				f.OldPath = ""
 			}
 		}
 		out = append(out, f)

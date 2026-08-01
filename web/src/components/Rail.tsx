@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp, VIEWS, ViewName, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
@@ -22,7 +22,7 @@ export function Rail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // the rail badge counts what needs a human: windows opening (or closing)
   // inside the horizon with work still unfinished behind them
-  const atRisk = app.model ? buildTimed(app.model, todayISO()).atRisk.length : 0;
+  const atRisk = useMemo(() => (app.model ? buildTimed(app.model, todayISO()).atRisk.length : 0), [app.model]);
   const is = (p: string) => pathname === p || pathname.startsWith(p + '/');
 
   return (

@@ -489,6 +489,20 @@ export interface TimedItem extends TimedDoc {
 
 export const TIMED_STATES = ['pending', 'active', 'expiring', 'expired'] as const;
 
+/**
+ * How an item's countdown reads as one phrase: "starts in 19d", "ends in 2mo",
+ * "started 7mo ago". The verb follows the date `days` actually counts to — an
+ * active window with no end counts from its START, so labelling it "active in
+ * 7mo" (or "active 7mo ago") would be nonsense.
+ */
+export function windowPhrase(item: Pick<TimedItem, 'state' | 'days' | 'end'>): string {
+  const when = daysLabel(item.days);
+  if (item.state === 'pending') return `starts ${when}`;
+  if (item.state === 'expired') return `ended ${when}`;
+  if (item.end) return `ends ${when}`;
+  return `started ${when}`;
+}
+
 const DAY = 86400000;
 const dayDiff = (from: string, to: string) =>
   Math.round((new Date(to + 'T00:00:00').getTime() - new Date(from + 'T00:00:00').getTime()) / DAY);
@@ -646,10 +660,15 @@ export function buildDashboard(model: WorkspaceModel, today = todayISO()) {
     drifts, cov,
     showCov: !!what && whatDocs.length > 0,
     tiles,
-    // the WHEN card: the windows opening or closing next, at-risk ones first
+    // the WHEN card: the windows opening or closing next, at-risk ones first —
+    // a card of three must not let a distant pending window push out a
+    // deadline that is actually in trouble
     hasTimed: model.timed.length > 0,
     timedCounts: timed.counts,
-    upcoming: timed.items.filter((i) => i.state !== 'expired').slice(0, 3),
+    upcoming: timed.items
+      .filter((i) => i.state !== 'expired')
+      .sort((a, b) => Number(b.atRisk) - Number(a.atRisk))
+      .slice(0, 3),
     atRisk: timed.atRisk,
     newDoc: what ? { kind: what.kind, label: singular(what.label) } : null,
     mapEntity: !!mapEnt,

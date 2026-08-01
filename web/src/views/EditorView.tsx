@@ -587,7 +587,13 @@ export function EditorView() {
   }, [app.files]);
 
   // this document's own validity window, when it has one (timed dependency)
-  const timed = app.model ? buildTimed(app.model, todayISO()).items.find((t) => t.path === path) : undefined;
+  // this document's own validity window, when it has one (timed dependency).
+  // Memoized: the derivation walks the whole model's backlinks and the editor
+  // re-renders on every keystroke.
+  const timed = useMemo(
+    () => (app.model ? buildTimed(app.model, todayISO()).items.find((t) => t.path === path) : undefined),
+    [app.model, path],
+  );
   const tseg = (on: boolean) => (on ? 'background:var(--surface);box-shadow:var(--shadow);color:var(--text)' : 'color:var(--text-3)');
   // ready only when the draft belongs to *this* path — during a file switch
   // the draft briefly still holds the previous document; images skip the file

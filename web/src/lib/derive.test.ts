@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backlinkLabel, buildDashboard, buildTimed, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
+import { backlinkLabel, buildDashboard, buildTimed, windowPhrase, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 import { workspaceConfig } from './config';
@@ -316,6 +316,24 @@ describe('buildDashboard', () => {
     // pending first, soonest first; filters narrow to one bucket
     expect(items.map((i) => i.id)).toEqual(['R2', 'R1', 'G1', 'G2', 'G3']);
     expect(buildTimed(m, '2026-08-01', 'expired').items.map((i) => i.id)).toEqual(['G3']);
+  });
+
+  it('the dashboard card leads with at-risk windows and phrases them by their date', () => {
+    const tf = {
+      // three pending windows that are fine, one expiring window in trouble
+      'requirements/R1.md': '---\nid: R1\ntitle: Fine 1\nstatus: approved\nstarts: 2026-08-05\n---\n',
+      'requirements/R2.md': '---\nid: R2\ntitle: Fine 2\nstatus: approved\nstarts: 2026-08-06\n---\n',
+      'requirements/R3.md': '---\nid: R3\ntitle: Fine 3\nstatus: approved\nstarts: 2026-08-07\n---\n',
+      'regulations/g1.md': '---\nid: G1\ntitle: Trouble\nstatus: draft\nends: 2026-08-20\n---\n',
+      // active with no end: its countdown runs from the START
+      'regulations/g2.md': '---\nid: G2\ntitle: Running\nstatus: approved\nstarts: 2026-01-01\n---\n',
+    };
+    const d = buildDashboard(buildModel(tf), '2026-08-01');
+    expect(d.upcoming.map((i) => i.id)).toEqual(['G1', 'R1', 'R2']); // at risk first
+    expect(windowPhrase(d.upcoming[0])).toBe('ends in 19d');
+    expect(windowPhrase(d.upcoming[1])).toBe('starts in 4d');
+    const running = buildTimed(buildModel(tf), '2026-08-01').items.find((i) => i.id === 'G2')!;
+    expect(windowPhrase(running)).toBe('started 7mo ago'); // never "active in 7mo"
   });
 
   it('timed keys, ready statuses and horizon come from the config', () => {

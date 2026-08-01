@@ -106,16 +106,30 @@ func (s *Server) deltas(repo *project.Project, parent, sha string, files []gitx.
 			out = append(out, delta.DocDelta{Path: f.Path, Status: f.Status, Plain: true})
 			continue
 		}
+		// A side that should exist but cannot be read (rename edge cases, an
+		// unreadable blob) must NOT be passed on as an empty string: the delta
+		// would then report the whole document as added or removed. Fall back
+		// to Plain so the client shows the text diff instead.
 		var before, after string
 		if f.Status != "A" && parent != "" {
 			old := f.Path
 			if f.OldPath != "" {
 				old = f.OldPath
 			}
-			before, _, _ = repo.FileAt(parent, old)
+			content, _, err := repo.FileAt(parent, old)
+			if err != nil {
+				out = append(out, delta.DocDelta{Path: f.Path, Status: f.Status, Plain: true})
+				continue
+			}
+			before = content
 		}
 		if f.Status != "D" {
-			after, _, _ = repo.FileAt(sha, f.Path)
+			content, _, err := repo.FileAt(sha, f.Path)
+			if err != nil {
+				out = append(out, delta.DocDelta{Path: f.Path, Status: f.Status, Plain: true})
+				continue
+			}
+			after = content
 		}
 		out = append(out, delta.Diff(f.Path, f.Status, before, after))
 	}

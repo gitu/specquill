@@ -3,7 +3,7 @@ import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useBranches, useMergePreview } from '../api/hooks';
-import { buildDashboard, daysLabel, statusMeta } from '../lib/derive';
+import { buildDashboard, statusMeta, windowPhrase } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
 import { ForgeReview } from '../components/ForgeReview';
 import { NewDocDialog } from '../components/NewDocDialog';
@@ -50,7 +50,7 @@ export function Dashboard() {
   d.atRisk.forEach((t) => review.push({
     key: 'timed' + t.path, icon: '⧗', fg: 'var(--reg)', bg: 'var(--reg-bg)',
     title: t.title || t.name,
-    sub: `${t.state === 'pending' ? 'starts' : 'ends'} ${daysLabel(t.days)} · ${t.readyCount}/${t.deps.length} dependents ready`,
+    sub: `${windowPhrase(t)} · ${t.readyCount}/${t.deps.length} dependents ready`,
     go: '/timed?sel=' + encodeURIComponent(t.path),
   }));
   const kpiCols = d.tiles.length + (d.showCov ? 1 : 0);
@@ -105,7 +105,7 @@ export function Dashboard() {
               <div key={t.path} onClick={() => nav('/timed?sel=' + encodeURIComponent(t.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
                 <span style={sx('flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;' +
                   (t.atRisk ? 'background:var(--reg-bg);color:var(--reg)' : 'background:var(--surface-2);color:var(--text-2)'))}>
-                  {t.state === 'pending' ? 'starts' : t.state === 'expiring' ? 'ends' : 'active'} {daysLabel(t.days)}
+                  {windowPhrase(t)}
                 </span>
                 <div style={sx('flex:1;min-width:0')}>
                   <div style={sx('display:flex;align-items:baseline;gap:8px')}>

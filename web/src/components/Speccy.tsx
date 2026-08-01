@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
@@ -86,7 +86,7 @@ export function Speccy() {
   const allowEdits = app.canEdit && !app.isProtectedBranch;
   // the document the "draft edits" flow works from: the timed dependency
   // closest to missing its window with dependents still unfinished
-  const atRisk = app.model ? buildTimed(app.model, todayISO()).atRisk[0] : undefined;
+  const atRisk = useMemo(() => (app.model ? buildTimed(app.model, todayISO()).atRisk[0] : undefined), [app.model]);
   const focusPath = pathname.startsWith('/editor/') ? decodeURI(pathname.slice('/editor/'.length)) : undefined;
 
   useEffect(() => {
