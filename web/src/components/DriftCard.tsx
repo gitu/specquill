@@ -200,6 +200,18 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
               </div>
             )}
             <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.45')}>{f.detail}</div>
+            {(f.evidence?.length ?? 0) > 0 && (
+              <details style={{ marginTop: 4 }}>
+                <summary style={sx('font-size:10.5px;color:var(--text-3);cursor:pointer;user-select:none')}>
+                  evidence ({f.evidence.length}) — verified against ~{f.source}
+                </summary>
+                {f.evidence.map((ev, i) => (
+                  <div key={i} style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-2);margin:4px 0 0 12px;line-height:1.5")}>
+                    <span style={sx('color:var(--text-3)')}>{ev.path}:</span> “{ev.quote}”
+                  </div>
+                ))}
+              </details>
+            )}
             <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap')}>
               {gap && !f.draftPath && (
                 <button onClick={() => doDraft(f)} disabled={draft.isPending}

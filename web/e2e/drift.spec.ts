@@ -41,8 +41,8 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   test.skip(!forgeUp, 'mock-forge not running (drift filing target)');
   await resetFindings(request);
 
-  await page.goto(`/p/${REPO}/dashboard`);
-  await expect(page.getByText('Source alignment')).toBeVisible();
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
 
   // scope the run to specs/ — index.md is generated and stays out — and pin
   // the report target explicitly (the picker defaults to the LAST run's
@@ -84,7 +84,7 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
     const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=main`, { headers: H })).json()) as { run?: { status: string } };
     return d.run?.status;
   }, { timeout: 30_000 }).not.toBe('running');
-  await expect(page.getByText('reports/source-alignment.md')).toBeVisible();
+  await expect(page.getByText('reports/source-alignment.md').first()).toBeVisible();
   const report = (await (await request.get(
     `/api/repos/${REPO}/files/reports/source-alignment.md?ref=${encodeURIComponent(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(report.content).toContain('# Source Alignment');
@@ -100,7 +100,7 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
 
 test('dismissing a finding survives a re-run', async ({ page, request }) => {
   await resetFindings(request);
-  await page.goto(`/p/${REPO}/dashboard`);
+  await page.goto(`/p/${REPO}/alignment`);
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
   await page.getByRole('button', { name: 'Check drift' }).click();
   await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
@@ -123,8 +123,8 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
 
 test('gap analysis reverse-engineers the missing requirement', async ({ page, request }) => {
   await resetFindings(request);
-  await page.goto(`/p/${REPO}/dashboard`);
-  await expect(page.getByText('Source alignment')).toBeVisible();
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
 
   // switch to gap analysis: sweeps the selected references, not the docs
   await page.getByText('Gaps', { exact: true }).click();
@@ -160,7 +160,7 @@ test('linker proposes and applies a missing typed link', async ({ page, request 
     headers: H, data: { paths: ['specs/venue.md'] },
   });
 
-  await page.goto(`/p/${REPO}/dashboard`);
+  await page.goto(`/p/${REPO}/alignment`);
   await expect(page.getByText('Link suggestions')).toBeVisible();
   await page.getByRole('button', { name: 'Suggest links' }).click();
 

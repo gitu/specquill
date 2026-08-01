@@ -6,8 +6,7 @@ import { useBranches, useMergePreview } from '../api/hooks';
 import { buildDashboard, driverMeta } from '../lib/derive';
 import { LinkCheckCard } from '../components/LinkCheck';
 import { ForgeReview } from '../components/ForgeReview';
-import { DriftCard } from '../components/DriftCard';
-import { LinkerCard } from '../components/LinkerCard';
+import { AlignmentSummary } from '../components/AlignmentSummary';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -167,8 +166,7 @@ export function Dashboard() {
               </div>
             </div>
             )}
-            <DriftCard repo={app.repoId} branch={app.branch} />
-            <LinkerCard repo={app.repoId} branch={app.branch} />
+            <AlignmentSummary repo={app.repoId} branch={app.branch} />
             <LinkCheckCard />
             <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>

@@ -106,8 +106,11 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
-- **Source alignment** (`api/drift.go`, "Source alignment" card on the
-  Overview + "Check drift" in the editor) has TWO run modes: **drift** —
+- **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
+  `views/AlignmentView.tsx`, rail icon — hosting the full card, last-run
+  panel, activity log and the linker; the Overview keeps only the compact
+  `AlignmentSummary` card + "Check drift" in the editor) has TWO run modes:
+  **drift** —
   scoped per-document AI runs verify docs against the selected references —
   and **gaps** — per-source sweeps report capabilities no document covers
   (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE

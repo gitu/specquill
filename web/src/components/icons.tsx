@@ -85,3 +85,6 @@ export const IconQuill = ({ size = 14 }: { size?: number }) => (
     <path d="M3.6 20.7l2-1.9" />
   </svg>
 );
+
+export const IconAlign = () => svg(19, 'currentColor', 1.8, <>
+  <circle cx="12" cy="12" r="8.2" /><P d="M8.4 12.2l2.4 2.4 4.8-5" /><P d="M12 2v2.6M12 19.4V22M2 12h2.6M19.4 12H22" /></>);
