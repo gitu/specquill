@@ -182,8 +182,15 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
             <datalist id="drift-report-docs">
               {(data.reports ?? []).map((p) => <option key={p} value={p} />)}
             </datalist>
-            <button onClick={() => setReport(`reports/alignment-${new Date().toISOString().slice(0, 10)}.md`)}
-              title="Start a fresh, dated report instead of continuing the standing one"
+            <button onClick={() => {
+              // the default is already dated, so "new" must be finer-grained
+              // to start a SEPARATE report within the same day
+              const t = new Date();
+              const stamp = t.toISOString().slice(0, 10) + '-' +
+                String(t.getHours()).padStart(2, '0') + String(t.getMinutes()).padStart(2, '0');
+              setReport(`reports/alignment-${stamp}.md`);
+            }}
+              title="Start a separate report now instead of continuing today's"
               style={sx('height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-3);font-family:inherit;font-size:10.5px;cursor:pointer;flex:none')}>
               new
             </button>

@@ -65,5 +65,8 @@ drift:
   paths: [specs/, requirements/, data-mappings/]
   targets: [dev-board]
   # where THIS project keeps its alignment reports (project-relative: in a
-  # monorepo it lands under the project's own content_root, beside this file)
-  report: reports/source-alignment.md
+  # monorepo it lands under the project's own content_root, beside this file).
+  # {date}/{yyyy}/{mm}/{dd} expand at run time — a day's runs continue one
+  # report, the next day starts a fresh one. Omit the tokens for a single
+  # standing report.
+  report: reports/alignment-{date}.md

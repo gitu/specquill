@@ -291,16 +291,18 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 			t.Fatalf("activity feed missing %q:\n%s", want, feed)
 		}
 	}
-	// the git-native report landed in the repo (main is unprotected here)
-	if run["reportPath"] != "reports/source-alignment.md" || run["reportBranch"] != "main" {
+	// the git-native report landed in the repo (main is unprotected here),
+	// at the day's dated default
+	dated := "reports/alignment-" + time.Now().Format("2006-01-02") + ".md"
+	if run["reportPath"] != dated || run["reportBranch"] != "main" {
 		t.Fatalf("report target wrong: %v", run)
 	}
-	code, report := doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/source-alignment.md?ref=main", nil)
+	code, report := doJSON(t, h, cookie, "GET", "/api/repos/w/files/"+dated+"?ref=main", nil)
 	if code != http.StatusOK {
 		t.Fatalf("report not written: %d", code)
 	}
 	rep := report["content"].(string)
-	for _, want := range []string{"# Source Alignment", "<!-- specquill:alignment:begin",
+	for _, want := range []string{"<!-- specquill:alignment:begin",
 		"first title", "## Run activity", "1 finding(s) whose evidence did not verify"} {
 		if !strings.Contains(rep, want) {
 			t.Fatalf("report missing %q:\n%s", want, rep)
@@ -343,7 +345,7 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	}
 
 	// the second run appended to the report's accumulated run log
-	_, report = doJSON(t, h, cookie, "GET", "/api/repos/w/files/reports/source-alignment.md?ref=main", nil)
+	_, report = doJSON(t, h, cookie, "GET", "/api/repos/w/files/"+dated+"?ref=main", nil)
 	if got := strings.Count(report["content"].(string), "\n- 20"); got != 2 {
 		t.Fatalf("run log must accumulate one line per run, got %d:\n%s", got, report["content"])
 	}
@@ -449,8 +451,20 @@ func TestDriftRemedyRejectsUnknownKind(t *testing.T) {
 }
 
 func TestDriftReportPathComesFromProjectConfig(t *testing.T) {
-	if got := driftReportPath(project.DriftConfig{}); got != "reports/source-alignment.md" {
+	today := time.Now().Format("2006-01-02")
+	// the built-in default is DATED: a day's runs continue one report, the
+	// next day starts a fresh one
+	if got := driftReportPath(project.DriftConfig{}); got != "reports/alignment-"+today+".md" {
 		t.Fatalf("default = %q", got)
+	}
+	// a configured pattern may carry the tokens too
+	if got := driftReportPath(project.DriftConfig{Report: "audits/{yyyy}/{mm}/state-{date}.md"}); got !=
+		"audits/"+time.Now().Format("2006")+"/"+time.Now().Format("01")+"/state-"+today+".md" {
+		t.Fatalf("tokens = %q", got)
+	}
+	// …and a project that wants ONE standing report simply omits them
+	if got := driftReportPath(project.DriftConfig{Report: "reports/source-alignment.md"}); got != "reports/source-alignment.md" {
+		t.Fatalf("literal = %q", got)
 	}
 	if got := driftReportPath(project.DriftConfig{Report: "docs/alignment/state.md"}); got != "docs/alignment/state.md" {
 		t.Fatalf("configured = %q", got)
@@ -461,7 +475,7 @@ func TestDriftReportPathComesFromProjectConfig(t *testing.T) {
 	}
 	// junk configuration degrades to the default instead of failing runs
 	for _, bad := range []string{"../escape.md", "~src/x.md", "notmarkdown", "index.md"} {
-		if got := driftReportPath(project.DriftConfig{Report: bad}); got != "reports/source-alignment.md" {
+		if got := driftReportPath(project.DriftConfig{Report: bad}); got != "reports/alignment-"+today+".md" {
 			t.Fatalf("%q should fall back, got %q", bad, got)
 		}
 	}
@@ -1042,5 +1056,19 @@ func TestPlanProposesASetAndCreateWiresItTogether(t *testing.T) {
 	}
 	if got.DraftPath != "requirements/REQ-precision.md" || got.RemedyPath != "changes/2026-08-rts22.md" {
 		t.Fatalf("single-document pointers not kept meaningful: %+v", got)
+	}
+}
+
+func TestReportTitleKeepsTheDateReadable(t *testing.T) {
+	for path, want := range map[string]string{
+		"reports/alignment-2026-08-01.md":      "Alignment — 2026-08-01",
+		"reports/alignment-2026-08-01-1805.md": "Alignment — 2026-08-01-1805",
+		"reports/source-alignment.md":          "Source Alignment",
+		"audits/q3-review.md":                  "Q3 Review",
+		"reports/2026-08-01.md":                "Alignment report — 2026-08-01",
+	} {
+		if got := reportTitle(path); got != want {
+			t.Errorf("reportTitle(%q) = %q, want %q", path, got, want)
+		}
 	}
 }

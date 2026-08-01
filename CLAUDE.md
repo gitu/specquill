@@ -200,7 +200,10 @@ from the code.
   GET /drift, shown in the card while running) and continuously rewrites a
   report doc IN the repo. WHERE it lives belongs to the PROJECT, not the
   server: `drift.report:` in that project's own `.specquill/config.yml`
-  (fallback `reports/source-alignment.md`), and every report/draft/remedy
+  (fallback `reports/alignment-{date}.md` — DATED, so a day's runs continue
+  one report and the next day starts fresh; `{date}/{yyyy}/{mm}/{dd}` expand
+  at run time and a path without them means one standing report). Every
+  report/draft/remedy
   path is PROJECT-relative — `project.SaveFile` MapIns it, so a monorepo
   project's alignment docs land under its own `content_root` beside the
   config that names them, never at the repo root (see

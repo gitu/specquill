@@ -94,7 +94,9 @@ projects:
 #     references: [regulations]
 #     paths: [specs/, requirements/]
 #     targets: [backend-board]
-#     report: reports/source-alignment.md   # project-relative
+#     report: reports/alignment-{date}.md   # project-relative; {date}/{yyyy}/{mm}/{dd}
+#                                           # expand at run time (omit for one
+#                                           # standing report)
 
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by

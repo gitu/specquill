@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,7 +49,10 @@ import (
 // project's alignment docs land under its own content_root, beside the
 // config that names them — never in a repo-wide location the server picked.
 const (
-	builtinDriftReportPath = "reports/source-alignment.md"
+	// dated by default: each day's alignment work gets its own report, and
+	// runs within a day continue the same one. A project that wants a single
+	// standing report configures a path without a {date} token.
+	defaultDriftReportPath = "reports/alignment-{date}.md"
 	reportBegin            = "<!-- specquill:alignment:begin — engine-maintained, edit OUTSIDE this block -->"
 	reportEnd              = "<!-- specquill:alignment:end -->"
 	// the extraction inventory: what the application itself requires, grouped
@@ -101,15 +105,27 @@ func toolNote(tc ai.ToolCall, execErr error) string {
 	return "    · " + what
 }
 
-// driftReportPath is the project's standing alignment report: whatever its
-// own .specquill/config.yml declares (project-relative), else the built-in
-// default. An unusable configured value falls back rather than failing the
-// run — the report is a convenience, never a gate.
+// resolveReportTokens expands the date tokens a report path may carry, so a
+// configured pattern names a different document as time moves on.
+func resolveReportTokens(p string, now time.Time) string {
+	r := strings.NewReplacer(
+		"{date}", now.Format("2006-01-02"),
+		"{yyyy}", now.Format("2006"),
+		"{mm}", now.Format("01"),
+		"{dd}", now.Format("02"),
+	)
+	return r.Replace(p)
+}
+
+// driftReportPath is the project's current alignment report: whatever its own
+// .specquill/config.yml declares (project-relative, date tokens expanded),
+// else the built-in dated default. An unusable configured value falls back
+// rather than failing the run — the report is a convenience, never a gate.
 func driftReportPath(cfg project.DriftConfig) string {
-	if p := cleanDocPath(cfg.Report); p != "" && !okf.Reserved(base(p)) {
+	if p := cleanDocPath(resolveReportTokens(cfg.Report, time.Now())); p != "" && !okf.Reserved(base(p)) {
 		return p
 	}
-	return builtinDriftReportPath
+	return resolveReportTokens(defaultDriftReportPath, time.Now())
 }
 
 // driftRegistry tracks the in-flight run per repo+branch: one at a time, and
@@ -473,8 +489,10 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	if cfg := inRepoConfig(repo, branch); cfg != nil {
 		driftCfg = cfg.Drift
 	}
-	if body.Report == "" { // the project's own standing report
+	if body.Report == "" { // the project's own current report
 		body.Report = driftReportPath(driftCfg)
+	} else {
+		body.Report = resolveReportTokens(body.Report, time.Now())
 	}
 	if cleanDocPath(body.Report) != body.Report || okf.Reserved(base(body.Report)) {
 		jsonError(w, http.StatusBadRequest, "report must be a project-relative .md path")
@@ -934,6 +952,43 @@ func extractRunLog(existing string) []string {
 	return out
 }
 
+// reportTitle derives a document title from a report's filename, keeping a
+// trailing date stamp readable ("alignment-2026-08-01" → "Alignment —
+// 2026-08-01") instead of smearing it into words.
+func reportTitle(reportPath string) string {
+	name := strings.TrimSuffix(base(reportPath), ".md")
+	stamp := ""
+	switch {
+	case wholeDate.MatchString(name): // the filename IS the stamp
+		stamp, name = name, ""
+	default:
+		if m := dateSuffix.FindString(name); m != "" {
+			stamp = strings.TrimPrefix(m, "-")
+			name = strings.TrimSuffix(name, m)
+		}
+	}
+	words := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	title := strings.Join(words, " ")
+	switch {
+	case title == "" && stamp == "":
+		return "Alignment report"
+	case title == "":
+		return "Alignment report — " + stamp
+	case stamp == "":
+		return title
+	}
+	return title + " — " + stamp
+}
+
+// a trailing ISO date, optionally with an -HHMM stamp
+var (
+	dateSuffix = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}(-\d{4})?$`)
+	wholeDate  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(-\d{4})?$`)
+)
+
 // mergeDriftReport splices the engine block into the report document:
 // between the markers of an existing report (the human's text around them is
 // theirs), appended to a markerless document someone picked as a report
@@ -948,12 +1003,7 @@ func mergeDriftReport(existing, block, reportPath string) string {
 		}
 		return strings.TrimRight(existing, "\n") + "\n\n" + wrapped + "\n"
 	}
-	name := strings.TrimSuffix(base(reportPath), ".md")
-	words := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
-	for i, w := range words {
-		words[i] = strings.ToUpper(w[:1]) + w[1:]
-	}
-	title := strings.Join(words, " ")
+	title := reportTitle(reportPath)
 	return "---\ntitle: " + title + "\ntype: report\ngenerated_by: specquill drift engine\n---\n\n" +
 		"# " + title + "\n\n" +
 		"_The block below is engine-maintained and rewritten on every alignment run. " +
