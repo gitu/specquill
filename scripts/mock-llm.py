@@ -107,9 +107,15 @@ class Handler(BaseHTTPRequestHandler):
                             'for the reporting purpose.\n\n'
                             'Derived from ~regulations/gdpr.md (Art. 5 storage limitation).\n'),
             })
+        elif 'source-drift auditor' in system and last['role'] != 'tool':
+            # first round: consult the source, so the run's activity feed shows
+            # real tool use (the drift engine narrates every call)
+            tool_call = {'name': 'read_file',
+                         'arguments': json.dumps({'path': '~regulations/regulations/mifid-ii.md'})}
+            reply = ''
         elif 'source-drift auditor' in system:
-            # drift check: one canned finding whose evidence quotes the demo
-            # regulations source VERBATIM (the server drops unverified quotes)
+            # second round: the findings. Evidence quotes the demo regulations
+            # source VERBATIM (the server drops unverified quotes)
             anchor = re.search(r'^id:\s*(\S+)', user, re.M)
             reply = json.dumps({'findings': [{
                 'anchor': anchor.group(1) if anchor else 'REQ-042',
@@ -122,6 +128,18 @@ class Handler(BaseHTTPRequestHandler):
                 'sourcePaths': ['regulations/mifid-ii.md'],
                 'evidence': [{'path': 'regulations/mifid-ii.md',
                               'quote': 'reported to **microsecond** precision'}],
+            }, {
+                'anchor': (anchor.group(1) if anchor else 'REQ-042') + '#amendments',
+                'source': 'regulations',
+                'kind': 'new-requirement',
+                'severity': 'medium',
+                'title': '(mock) amendment tracking has no requirement',
+                'detail': 'The regulation records dated amendments that must be tracked, '
+                          'but no requirement states how amendments are picked up.',
+                'suggestedPath': 'requirements/REQ-amendment-tracking.md',
+                'sourcePaths': ['regulations/mifid-ii.md'],
+                'evidence': [{'path': 'regulations/mifid-ii.md',
+                              'quote': 'Execution timestamps must be captured'}],
             }]})
         elif body.get('tools') and last['role'] == 'tool':
             name = ''

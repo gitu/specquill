@@ -203,11 +203,14 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
       {findings.map((f) => {
         const sev = SEV[f.severity] ?? SEV.low;
         const gap = f.docPath === '';
+        // both kinds propose a NEW document, so both can be drafted
+        const proposes = gap || f.kind === 'new-requirement';
         return (
-          <div key={f.fingerprint} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
+          <div key={f.fingerprint} data-drift-finding={f.kind} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
             <div style={sx('display:flex;align-items:center;gap:7px')}>
               <span style={sx(`flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:${sev.bg};color:${sev.fg}`)}>{sev.label}</span>
               {gap && <span style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>gap</span>}
+              {f.kind === 'new-requirement' && <span style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>new</span>}
               <span style={sx('font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')} title={f.detail}>{f.title}</span>
             </div>
             {gap ? (
@@ -218,9 +221,13 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
                   : f.suggestedPath && <span style={sx('color:var(--text-3)')}> → suggests {f.suggestedPath}</span>}
               </div>
             ) : (
-              <div onClick={() => nav('/editor/' + f.docPath)}
-                style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);margin-top:4px;cursor:pointer")}>
-                {f.docPath}{f.anchor ? ` · ${f.anchor}` : ''} <span style={sx('color:var(--text-3)')}>vs ~{f.source}</span>
+              <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;margin-top:4px")}>
+                <span onClick={() => nav('/editor/' + f.docPath)} style={sx('color:var(--prod);cursor:pointer')}>
+                  {f.docPath}{f.anchor ? ` · ${f.anchor}` : ''}
+                </span> <span style={sx('color:var(--text-3)')}>vs ~{f.source}</span>
+                {f.draftPath
+                  ? <span onClick={() => nav('/editor/' + f.draftPath)} style={sx('color:var(--prod);cursor:pointer')}> → {f.draftPath}</span>
+                  : f.suggestedPath && <span style={sx('color:var(--text-3)')}> → suggests {f.suggestedPath}</span>}
               </div>
             )}
             <div style={sx('font-size:11.5px;color:var(--text-2);margin-top:3px;line-height:1.45')}>{f.detail}</div>
@@ -237,7 +244,7 @@ export function DriftCard({ repo, branch }: { repo: string | undefined; branch: 
               </details>
             )}
             <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap')}>
-              {gap && !f.draftPath && (
+              {proposes && !f.draftPath && (
                 <button onClick={() => doDraft(f)} disabled={draft.isPending}
                   title="Reverse-engineer the missing requirement document from the source evidence (AI draft, uncommitted)"
                   style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>

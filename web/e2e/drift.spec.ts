@@ -14,6 +14,20 @@ async function wsBranch(request: APIRequestContext) {
 }
 const q = (b: string) => encodeURIComponent(b);
 
+// finding rows carry data-drift-finding=<kind>; scope to them, since the run
+// activity feed repeats titles and would inflate page-wide text matches
+const rows = (page: import('@playwright/test').Page, kind?: string) =>
+  page.locator(kind ? `[data-drift-finding="${kind}"]` : '[data-drift-finding]');
+
+// findings appear per document while the run is still going — wait for the
+// run to finish before counting them
+async function runFinished(request: APIRequestContext, branch: string) {
+  await expect.poll(async () => {
+    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { run?: { status: string } };
+    return d.run?.status;
+  }, { timeout: 30_000 }).not.toBe('running');
+}
+
 // the standing report is the PROJECT's (drift.report:) — ask, never assume
 async function standingReport(request: APIRequestContext, branch: string) {
   const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as { defaultReport: string };
@@ -129,21 +143,20 @@ test('dismissing a finding survives a re-run', async ({ page, request }) => {
   await page.goto(`/p/${REPO}/alignment`);
   await page.getByRole('button', { name: 'specs/', exact: true }).click();
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(2);
+  await runFinished(request, ws.branch);
+  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  const before = await rows(page).count();
+  expect(before).toBeGreaterThan(1);
 
   await page.getByRole('button', { name: 'Dismiss' }).first().click();
-  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
+  await expect(rows(page)).toHaveCount(before - 1);
 
   // re-run the same scope: the fingerprint is anchor-based, so the identical
   // finding stays dismissed instead of resurrecting. Completion is awaited
   // via the API — the mock finishes runs faster than the UI poll interval.
   await page.getByRole('button', { name: 'Check drift' }).click();
-  await expect.poll(async () => {
-    const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as { run?: { status: string } };
-    return d.run?.status;
-  }, { timeout: 30_000 }).toBe('ok');
-  await expect(page.getByText(/timestamp precision drifted/)).toHaveCount(1);
+  await runFinished(request, ws.branch);
+  await expect(rows(page)).toHaveCount(before - 1);
   await expect(page.getByText(/1 dismissed/)).toBeVisible();
 });
 
@@ -160,11 +173,11 @@ test('gap analysis reverse-engineers the missing requirement', async ({ page, re
   // the mock reports one uncovered capability from ~regulations
   await expect(page.getByText(/GDPR storage limitation has no requirement/).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('gap', { exact: true })).toBeVisible();
-  await expect(page.getByText(/suggests requirements\/REQ-gdpr-retention\.md/)).toBeVisible();
+  await expect(rows(page, 'coverage-gap').getByText(/suggests requirements\/REQ-gdpr-retention\.md/)).toBeVisible();
 
   // reverse-engineer the missing requirement — lands as an uncommitted draft
   // on the workspace branch and the UI opens it in the editor
-  await page.getByRole('button', { name: 'Draft requirement' }).click();
+  await rows(page, 'coverage-gap').getByRole('button', { name: 'Draft requirement' }).click();
   await expect(page).toHaveURL(/editor\/requirements\/REQ-gdpr-retention\.md/, { timeout: 20_000 });
   await expect(page.getByText('Report Data Retention').first()).toBeVisible({ timeout: 10_000 });
 
@@ -234,4 +247,37 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   expect(drift.findings.some((f) => f.remedyPath === 'work-items/WI-timestamp-precision.md' && f.remedyKind === 'work_item')).toBe(true);
 
   await request.delete(`/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?branch=${q(ws.branch)}`, { headers: H });
+});
+
+test('the run narrates its work and proposes new requirements', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch);
+
+  // the activity feed shows what the run actually did — including the tool
+  // calls the model made against the reference source
+  const feed = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { activity: string[] }; findings: { kind: string; suggestedPath: string }[];
+  };
+  const log = feed.run.activity.join('\n');
+  expect(log).toContain('drift check of 2 documents against ~regulations');
+  expect(log).toContain('[1/2] specs/');
+  expect(log).toMatch(/· read ~regulations\//);        // tool use, live
+  expect(log).toMatch(/⚠ (high|medium) [\w-]+ @ /);      // each finding named
+  expect(log).toMatch(/▪ ok — \d+ findings? live/);     // closing summary
+  await expect(page.getByText(/· read ~regulations\//).first()).toBeVisible();
+
+  // drift also detects requirements that do not exist yet: the source
+  // mandates something no document states, with a path proposed for it
+  const fresh = feed.findings.find((f) => f.kind === 'new-requirement');
+  expect(fresh).toBeTruthy();
+  expect(fresh!.suggestedPath).toBe('requirements/REQ-amendment-tracking.md');
+  const row = rows(page, 'new-requirement').first();
+  await expect(row.getByText('new', { exact: true })).toBeVisible();
+  await expect(row.getByText(/suggests requirements\/REQ-amendment-tracking\.md/)).toBeVisible();
+  // and such a finding is draftable, exactly like a coverage gap
+  await expect(row.getByRole('button', { name: 'Draft requirement' })).toBeVisible();
 });

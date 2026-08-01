@@ -324,6 +324,17 @@ document specifies. Then reply with ONLY a JSON object, no prose:
       "detail": "The document requires microsecond precision; the API contract declares millisecond timestamps.",
       "sourcePaths": ["openapi.json"],
       "evidence": [{"path": "openapi.json", "quote": "\"format\": \"date-time-ms\""}]
+    },
+    {
+      "anchor": "REQ-012",
+      "source": "platform-api",
+      "kind": "new-requirement",
+      "severity": "medium",
+      "title": "Retry/backoff behaviour has no requirement",
+      "detail": "The client retries failed submissions with backoff; no requirement covers retry semantics.",
+      "suggestedPath": "requirements/REQ-submission-retry.md",
+      "sourcePaths": ["client.go"],
+      "evidence": [{"path": "client.go", "quote": "backoff.Retry(submit, "}]
     }
   ]
 }
@@ -334,7 +345,15 @@ Rules:
   text. Never invent ids.
 - "source" is the reference source name the finding is against (no ~).
 - "kind" is one of: missing-implementation | undocumented-behavior |
-  contradiction | outdated-requirement. "severity": high | medium | low.
+  contradiction | outdated-requirement | new-requirement.
+  "severity": high | medium | low.
+- Use "new-requirement" when the source mandates a capability, rule or
+  constraint in THIS document's area that no requirement states at all — the
+  document is not wrong, something is missing beside it. Such a finding also
+  carries "suggestedPath": where that new document should live, following the
+  workspace's family folders and id conventions. Do NOT use it for details
+  that belong inside the document under audit (that is undocumented-behavior
+  or missing-implementation).
 - "evidence" quotes are VERBATIM excerpts copied from the named source file —
   they are checked against the file and the finding is discarded when they do
   not match. Quote the smallest decisive fragment.

@@ -114,7 +114,17 @@ from the code.
   scoped per-document AI runs verify docs against the selected references —
   and **gaps** — per-source sweeps report capabilities no document covers
   (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
-  path). A gap's missing requirement can be **reverse-engineered**
+  path). Drift ALSO proposes documents that don't exist yet: kind
+  `new-requirement` (the source mandates something in the audited doc's
+  area that no requirement states) carries a `suggestedPath` and is
+  draftable exactly like a gap — `draftableKind()` gates the draft
+  action, so never re-gate it on `doc_path == ""`. Runs narrate
+  themselves per unit AND per model tool call (`· read ~src/path`,
+  `search "…"` — `toolNote`), naming every finding kept and dropped;
+  the feed persists live (each note) while the report is rewritten
+  per unit, and is capped at 400 lines. Finding rows carry
+  `data-drift-finding=<kind>` — the e2e must scope to them, since the
+  activity feed repeats finding titles in the DOM. A gap's missing requirement can be **reverse-engineered**
   (`POST .../findings/{fp}/draft`, `ai.ReversePrompt`, one-shot Complete):
   the AI drafts the doc from the finding's evidence files, it lands as an
   uncommitted worktree save (ws-branch on protected mains) and

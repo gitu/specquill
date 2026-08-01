@@ -273,10 +273,23 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 	if run["droppedUnverified"].(float64) != 1 {
 		t.Fatalf("hallucinated evidence must be dropped: %v", run)
 	}
-	// live feedback: the activity feed narrates each checked unit
+	// live feedback: the feed narrates the run, each unit, every finding it
+	// kept and every one it dropped
 	activity, _ := run["activity"].([]any)
-	if len(activity) == 0 || !strings.Contains(activity[0].(string), "specs/txn.md") {
-		t.Fatalf("activity feed missing: %v", activity)
+	feed := ""
+	for _, l := range activity {
+		feed += l.(string) + "\n"
+	}
+	for _, want := range []string{
+		"drift check of 1 document against ~reg", // what the run is doing
+		"[1/1] specs/txn.md",                     // progress per unit
+		"⚠ high contradiction @ REQ-1",           // the finding it kept
+		"evidence not found in the source",       // and the one it dropped
+		"▪ ok —",                                 // closing summary
+	} {
+		if !strings.Contains(feed, want) {
+			t.Fatalf("activity feed missing %q:\n%s", want, feed)
+		}
 	}
 	// the git-native report landed in the repo (main is unprotected here)
 	if run["reportPath"] != "reports/source-alignment.md" || run["reportBranch"] != "main" {

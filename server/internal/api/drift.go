@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,35 @@ const (
 	reportBegin            = "<!-- specquill:alignment:begin — engine-maintained, edit OUTSIDE this block -->"
 	reportEnd              = "<!-- specquill:alignment:end -->"
 )
+
+// toolNote renders one model tool call as an activity line — the run's
+// "what is it actually doing" signal (which sources it read, what it
+// searched for), not just its verdict.
+func toolNote(tc ai.ToolCall, execErr error) string {
+	var a struct{ Path, Source, Query string }
+	_ = json.Unmarshal([]byte(tc.Function.Arguments), &a)
+	what := ""
+	switch tc.Function.Name {
+	case "read_file":
+		what = "read " + a.Path
+	case "search":
+		what = "search " + strconv.Quote(a.Query)
+		if a.Source != "" {
+			what += " in ~" + strings.TrimPrefix(a.Source, "~")
+		}
+	case "list_files":
+		what = "list " + strings.TrimPrefix("~"+a.Source, "~~")
+		if a.Source == "" {
+			what = "list workspace"
+		}
+	default:
+		what = tc.Function.Name
+	}
+	if execErr != nil {
+		return "    · " + what + " — " + execErr.Error()
+	}
+	return "    · " + what
+}
 
 // driftReportPath is the project's standing alignment report: whatever its
 // own .specquill/config.yml declares (project-relative), else the built-in
@@ -105,7 +135,15 @@ func (d *driftRegistry) cancel(key string) bool {
 var driftKindSet = map[string]bool{
 	"missing-implementation": true, "undocumented-behavior": true,
 	"contradiction": true, "outdated-requirement": true,
+	// the source mandates something no requirement states yet — the finding
+	// proposes a NEW document (suggestedPath) and is draftable like a gap
+	"new-requirement": true,
+	"coverage-gap":    true,
 }
+
+// draftableKinds are the findings whose remedy is a NEW document, so the
+// reverse-engineer action applies to them.
+func draftableKind(k string) bool { return k == "coverage-gap" || k == "new-requirement" }
 
 func normDriftKind(k string) string {
 	k = strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(k)), " ", "-"), "_", "-")
@@ -544,9 +582,40 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		}
 		return unit
 	}
+	// the activity feed is the run's live narration (card) and ends up in the
+	// report — bounded so a long run cannot bloat either
+	const maxActivity = 400
+	persist := func(done int) {
+		if len(activity) > maxActivity {
+			activity = append([]string{fmt.Sprintf("… %d earlier lines trimmed", len(activity)-maxActivity)},
+				activity[len(activity)-maxActivity:]...)
+		}
+		actJSON, _ := json.Marshal(activity)
+		_ = s.store.UpdateDriftRunProgress(runID, done, dropped, string(actJSON))
+	}
 	note := func(line string) {
 		activity = append(activity, time.Now().Format("15:04:05")+" "+line)
 	}
+	// live: tool calls land in the feed as they happen, not after the unit
+	liveNote := func(done int) func(string) {
+		return func(line string) {
+			note(line)
+			persist(done)
+			s.publish("drift", repo.Key(), branch)
+		}
+	}
+	srcNames := make([]string, 0, len(sources))
+	for _, src := range sources {
+		srcNames = append(srcNames, "~"+src.Name)
+	}
+	sort.Strings(srcNames)
+	if mode == "gaps" {
+		note(fmt.Sprintf("▸ gap analysis over %d source%s", len(units), plural(len(units))))
+	} else {
+		note(fmt.Sprintf("▸ drift check of %d document%s against %s",
+			len(units), plural(len(units)), strings.Join(srcNames, ", ")))
+	}
+	persist(0)
 	for i, unit := range units {
 		if ctx.Err() != nil {
 			status = "cancelled"
@@ -555,10 +624,14 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		var findings []store.DriftFinding
 		var droppedDoc int
 		var err error
+		note(fmt.Sprintf("[%d/%d] %s", i+1, len(units), label(unit)))
+		persist(i)
+		s.publish("drift", repo.Key(), branch)
+		started := time.Now()
 		if mode == "gaps" {
-			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions)
+			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, liveNote(i))
 		} else {
-			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions)
+			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, liveNote(i))
 		}
 		dropped += droppedDoc
 		if err != nil {
@@ -568,7 +641,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			}
 			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, unit, err)
 			docErrs = append(docErrs, unit+": "+err.Error())
-			note("✗ " + label(unit) + " — " + err.Error())
+			note("  ✗ " + err.Error())
 		} else {
 			keep := make([]string, 0, len(findings))
 			for _, f := range findings {
@@ -590,21 +663,44 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			if mode == "gaps" {
 				word = "gap"
 			}
+			took := time.Since(started).Round(time.Millisecond)
 			if n := len(findings); n == 0 {
-				note("✓ " + label(unit) + " — clean")
+				note(fmt.Sprintf("  ✓ clean (%s)", took))
 			} else {
-				note(fmt.Sprintf("✓ %s — %d %s%s", label(unit), n, word, plural(n)))
+				note(fmt.Sprintf("  ✓ %d %s%s (%s)", n, word, plural(n), took))
+				for _, f := range findings {
+					where := f.Anchor
+					if f.Kind == "coverage-gap" {
+						where = "~" + f.Source + "/" + f.Anchor
+					}
+					line := fmt.Sprintf("    ⚠ %s %s @ %s — %s", f.Severity, f.Kind, where, f.Title)
+					if f.SuggestedPath != "" {
+						line += " → " + f.SuggestedPath
+					}
+					note(line)
+				}
 			}
 			if droppedDoc > 0 {
-				note(fmt.Sprintf("  %d unverified finding%s dropped", droppedDoc, plural(droppedDoc)))
+				note(fmt.Sprintf("    ✗ %d finding%s dropped — evidence not found in the source",
+					droppedDoc, plural(droppedDoc)))
 			}
 		}
-		actJSON, _ := json.Marshal(activity)
-		_ = s.store.UpdateDriftRunProgress(runID, i+1, dropped, string(actJSON))
+		persist(i + 1)
 		// the in-repo report follows along — every completed unit updates it
 		s.writeDriftReport(runID, repo, branch, false)
 		s.publish("drift", repo.Key(), branch)
 	}
+	open, _ := s.store.DriftFindings(repo.Key(), branch)
+	live := 0
+	for _, f := range open {
+		if f.Status != "dismissed" {
+			live++
+		}
+	}
+	note(fmt.Sprintf("▪ %s — %d finding%s live%s", status, live, plural(live),
+		map[bool]string{true: fmt.Sprintf(", %d dropped", dropped), false: ""}[dropped > 0]))
+	persist(len(units))
+
 	errMsg := ""
 	if len(docErrs) > 0 {
 		if status == "ok" {
@@ -846,7 +942,8 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 // verified findings plus the count dropped by evidence verification. The
 // doc's linked documents ride along as context (idx may be nil).
 func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branch, doc string,
-	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions string) ([]store.DriftFinding, int, error) {
+	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions string,
+	note func(string)) ([]store.DriftFinding, int, error) {
 	content, ok := files[doc]
 	if !ok {
 		return nil, 0, fmt.Errorf("not in snapshot")
@@ -874,7 +971,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
-		func(ai.ToolCall, string, error) error { return nil })
+		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
 	if err != nil {
 		return nil, 0, err
 	}
@@ -902,7 +999,8 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 		evidence, _ := json.Marshal(f.Evidence)
 		findings = append(findings, store.DriftFinding{
 			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp, RunID: 0,
-			DocPath: doc, Anchor: anchor, Source: f.Source, Kind: kind,
+			DocPath: doc, SuggestedPath: cleanDocPath(f.SuggestedPath),
+			Anchor: anchor, Source: f.Source, Kind: kind,
 			Severity: normDriftSeverity(f.Severity), Title: strings.TrimSpace(f.Title),
 			Detail: strings.TrimSpace(f.Detail), EvidenceJSON: string(evidence),
 		})
@@ -915,7 +1013,8 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 // carry no doc_path — reverse engineering (postDriftDraft) creates the
 // missing document from them.
 func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions string) ([]store.DriftFinding, int, error) {
+	files map[string]string, sources []ai.GroundingSource, instructions string,
+	note func(string)) ([]store.DriftFinding, int, error) {
 	var src *ai.GroundingSource
 	for i := range sources {
 		if sources[i].Name == sourceName {
@@ -940,7 +1039,7 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 	var reply strings.Builder
 	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
-		func(ai.ToolCall, string, error) error { return nil })
+		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
 	if err != nil {
 		return nil, 0, err
 	}
@@ -998,8 +1097,9 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if finding.DocPath != "" {
-		jsonError(w, http.StatusBadRequest, "only coverage-gap findings can be drafted — this one already has a document")
+	if !draftableKind(finding.Kind) {
+		jsonError(w, http.StatusBadRequest,
+			"only coverage-gap and new-requirement findings propose a new document to draft")
 		return
 	}
 	// idempotent: an existing draft is returned, a discarded one is redrafted
@@ -1174,11 +1274,12 @@ func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *p
 		}
 	}
 
-	// the affected document: the drifted doc, or a gap's reverse-engineered
-	// draft when one exists (a bare gap has no document yet)
-	targetPath := finding.DocPath
+	// the affected document: the drafted document when the finding produced
+	// one (a gap, or a new requirement beside the audited doc), else the
+	// document the finding is about
+	targetPath := finding.DraftPath
 	if targetPath == "" {
-		targetPath = finding.DraftPath
+		targetPath = finding.DocPath
 	}
 	targetKind, targetExcerpt := "", ""
 	if targetPath != "" {
