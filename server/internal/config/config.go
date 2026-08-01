@@ -64,6 +64,22 @@ type SourceConfig struct {
 // IsGit reports whether the source is a plain git clone (vs an importer mirror).
 func (s SourceConfig) IsGit() bool { return s.Kind == "" || s.Kind == "git" }
 
+// TargetConfig is one catalog entry of work-item destinations drift findings
+// can be filed to. Like sources, targets are server-side catalog + in-repo
+// selection (`drift.targets:`): the workspace picks from this list and can
+// never mint access. Credentials are env-only via token_env.
+type TargetConfig struct {
+	Name    string `yaml:"name"`
+	Kind    string `yaml:"kind"`     // github | gitlab | jira
+	BaseURL string `yaml:"base_url"` // forge/Jira web base, e.g. https://gitlab.example.com
+	// Project is the forge project path (owner/repo, nested groups on GitLab)
+	// or the Jira project key.
+	Project   string   `yaml:"project"`
+	TokenEnv  string   `yaml:"token_env"`
+	Labels    []string `yaml:"labels"`
+	IssueType string   `yaml:"issue_type"` // jira only; default "Task"
+}
+
 // ProjectConfig is a writable workspace: a git repo plus an optional
 // content_root subfolder (monorepo case; "" = repo root).
 type ProjectConfig struct {
@@ -190,6 +206,9 @@ type Config struct {
 	Session  SessionConfig   `yaml:"session"`
 	AI       AIConfig        `yaml:"ai"`
 	Dynamic  DynamicConfig   `yaml:"dynamic"`
+	// WorkItemTargets catalogs the trackers drift findings can be filed to
+	// (in-repo drift.targets selects from it).
+	WorkItemTargets []TargetConfig `yaml:"work_item_targets"`
 }
 
 func Load(path string) (*Config, error) {
@@ -274,7 +293,7 @@ func (c *Config) Normalize() {
 				p.Forge.Kind = c.Auth.Forge.Kind
 			}
 			if p.Forge.BaseURL == "" && c.Auth.Forge.BaseURL != "" {
-				p.Forge.BaseURL = forgeAPIBase(c.Auth.Forge.Kind, c.Auth.Forge.BaseURL)
+				p.Forge.BaseURL = ForgeAPIBase(c.Auth.Forge.Kind, c.Auth.Forge.BaseURL)
 			}
 		}
 		if p.DefaultBranch == "" {
@@ -332,8 +351,8 @@ func (c *Config) Normalize() {
 	c.Dynamic.normalize()
 }
 
-// forgeAPIBase derives the REST API base from a forge's web base URL.
-func forgeAPIBase(kind, webBase string) string {
+// ForgeAPIBase derives the REST API base from a forge's web base URL.
+func ForgeAPIBase(kind, webBase string) string {
 	base := strings.TrimSuffix(webBase, "/")
 	switch kind {
 	case forge.KindGitHub:
@@ -525,7 +544,34 @@ func (c *Config) validate() error {
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {
 		return fmt.Errorf("ai: base_url and model are required when enabled")
 	}
+	targetNames := map[string]bool{}
+	for i, t := range c.WorkItemTargets {
+		if t.Name == "" {
+			return fmt.Errorf("work_item_targets[%d]: name is required", i)
+		}
+		if targetNames[t.Name] {
+			return fmt.Errorf("duplicate work_item_target %q", t.Name)
+		}
+		targetNames[t.Name] = true
+		switch t.Kind {
+		case forge.KindGitHub, forge.KindGitLab, "jira":
+		default:
+			return fmt.Errorf("work_item_target %s: kind must be github, gitlab or jira (got %q)", t.Name, t.Kind)
+		}
+		u, err := url.Parse(t.BaseURL)
+		if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname()))) {
+			return fmt.Errorf("work_item_target %s: base_url must be an https URL (http only for loopback dev hosts)", t.Name)
+		}
+		if t.Project == "" {
+			return fmt.Errorf("work_item_target %s: project is required", t.Name)
+		}
+	}
 	return nil
+}
+
+// isLoopback allows plain-http work-item targets only for local dev mocks.
+func isLoopback(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // looksLikePath reports whether a remote is a filesystem path rather than a URL.

@@ -50,7 +50,200 @@ class Handler(BaseHTTPRequestHandler):
         # (arguments fragmented on purpose to exercise accumulation)
         tool_call = None
         last = body['messages'][-1]
-        if body.get('tools') and last['role'] == 'tool':
+        if 'remediation planner' in system:
+            # a driver with two requirements citing it — the set case
+            reply = json.dumps({
+                'rationale': '(mock) the amendment is a change realized by two requirements.',
+                'documents': [
+                    {'kind': 'change', 'title': 'RTS 22 microsecond timestamps',
+                     'path': 'changes/2026-08-rts22-precision.md',
+                     'purpose': 'Records the amendment and why the specs must follow.'},
+                    {'kind': 'requirement', 'title': 'Microsecond execution timestamps',
+                     'path': 'requirements/REQ-exec-precision.md',
+                     'purpose': 'States the precision the system must capture.', 'linksTo': [0]},
+                    {'kind': 'requirement', 'title': 'Timestamp validation on ingest',
+                     'path': 'requirements/REQ-timestamp-validation.md',
+                     'purpose': 'States what happens when precision is missing.', 'linksTo': [0]},
+                ],
+            })
+        elif 'focus adviser' in system:
+            # propose where a gap sweep would pay off
+            reply = json.dumps({'areas': [
+                {'name': 'Data retention',
+                 'reason': '(mock) the retention rules have no requirement document.',
+                 'sources': ['regulations']},
+                {'name': 'Incident reporting',
+                 'reason': '(mock) DORA windows are only partially covered.',
+                 'sources': ['regulations']},
+            ]})
+        elif 'application surveyor' in system:
+            # divide: two capability areas of the demo regulations source
+            reply = json.dumps({'areas': [
+                {'name': 'Transaction reporting',
+                 'summary': '(mock) Submitting executed trades to the competent authority.',
+                 'paths': ['regulations/mifid-ii.md']},
+                {'name': 'Data protection',
+                 'summary': '(mock) Retention limits on reported personal data.',
+                 'paths': ['regulations/gdpr.md']},
+            ]})
+        elif 'requirements extractor' in system:
+            # conquer: this area's requirements, evidence quoted VERBATIM
+            if 'Data protection' in user:
+                reply = json.dumps({'requirements': [{
+                    'title': 'Storage limitation',
+                    'statement': 'Report data SHALL be kept no longer than necessary for the '
+                                 'reporting purpose.',
+                    'evidence': [{'path': 'regulations/gdpr.md',
+                                  'quote': 'kept for no longer than is necessary'}],
+                }]})
+            else:
+                reply = json.dumps({'requirements': [
+                    {
+                        'title': 'Reporting deadline',
+                        'statement': 'Executed transactions SHALL be reported no later than the '
+                                     'close of the following working day.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md',
+                                      'quote': 'no later than the close of the following working day'}],
+                    },
+                    {
+                        'title': 'Timestamp precision',
+                        'statement': 'Execution timestamps SHALL be captured to microsecond precision.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md',
+                                      'quote': 'reported to **microsecond** precision'}],
+                    },
+                    {
+                        'title': 'Hallucinated rule',
+                        'statement': 'This one SHALL be dropped by evidence verification.',
+                        'evidence': [{'path': 'regulations/mifid-ii.md', 'quote': 'NOT IN THE SOURCE'}],
+                    },
+                ]})
+        elif 'coverage matcher' in system:
+            # the walk: match each extracted requirement against the specs
+            out = []
+            for line in user.splitlines():
+                m = re.match(r'^(\d+)\. \[', line)
+                if not m:
+                    continue
+                i = int(m.group(1))
+                if 'no later than' in line:
+                    out.append({'index': i, 'coverage': 'full',
+                                'document': 'requirements/REQ-042.md',
+                                'note': '(mock) REQ-042 states the same deadline.'})
+                elif 'microsecond' in line:
+                    out.append({'index': i, 'coverage': 'partial',
+                                'document': 'specs/txn-report.md',
+                                'note': '(mock) the spec names the field but not the precision.'})
+                else:
+                    out.append({'index': i, 'coverage': 'none', 'document': '', 'note': ''})
+            reply = json.dumps({'matches': out})
+        elif 'remediation author' in system:
+            # remedy/create: draft the document of the family being asked for.
+            # The server enforces the folder, the family's `type:` and the
+            # typed links; the mock only supplies plausible content.
+            if 'work item document' in system:
+                reply = json.dumps({
+                    'path': 'work-items/WI-timestamp-precision.md',
+                    'content': ('---\ntitle: Raise execution-timestamp precision\n'
+                                'type: Work Item\nstatus: backlog\n---\n\n'
+                                '# Raise execution-timestamp precision\n\n'
+                                '(mock) Emit microsecond execution timestamps end to end.\n\n'
+                                '- [ ] update the OMS transform\n- [ ] re-validate the mapping\n'),
+                })
+            elif 'requirement document' in system:
+                # plain string split, not a regex: `([^.]+)\.` backtracks
+                # polynomially on a prompt full of "Write this document: "
+                # without a period (CodeQL py/polynomial-redos)
+                _, found, rest = system.partition('Write this document: ')
+                # first sentence, and never past the line: without a period a
+                # naive split would swallow the rest of the prompt as a title
+                title = rest.split('.', 1)[0].splitlines()[0].strip() if found else ''
+                title = title or 'Extracted requirement'
+                reply = json.dumps({
+                    'path': 'requirements/REQ-mock.md',
+                    'content': ('---\ntitle: ' + title + '\ntype: Requirement\nstatus: draft\n'
+                                'priority: should\n---\n\n# ' + title + '\n\n'
+                                '> (mock) The system SHALL satisfy "' + title + '".\n'),
+                })
+            else:
+                reply = json.dumps({
+                    'path': 'changes/2026-08-timestamp-precision.md',
+                    'content': ('---\ntitle: RTS 22 microsecond timestamps\n'
+                                'type: Change Record\nstatus: triage\nsource: regulatory\n---\n\n'
+                                '# RTS 22 microsecond timestamps\n\n'
+                                '(mock) The amendment tightens execution-timestamp precision to '
+                                'microseconds; the affected documents must follow.\n'),
+                })
+        elif 'specquill linker' in system:
+            # linker: one canned missing link that holds in the demo fixture
+            # (venue.md implements REQ-051/070 but not REQ-063)
+            reply = json.dumps({'proposals': [{
+                'from': 'specs/venue.md',
+                'field': 'implements',
+                'to': 'requirements/REQ-063.md',
+                'reason': '(mock) the venue spec realizes partial-fill venue '
+                          'resolution but does not declare REQ-063.',
+            }]})
+        elif 'coverage-gap auditor' in system:
+            # gap sweep: one canned uncovered capability, evidence quoting the
+            # demo regulations source VERBATIM (unverified quotes get dropped)
+            reply = json.dumps({'findings': [{
+                'anchor': 'regulations/gdpr.md#art-5-storage-limitation',
+                'severity': 'medium',
+                'title': '(mock) GDPR storage limitation has no requirement',
+                'detail': 'The regulations source constrains retention but no '
+                          'workspace document covers a retention requirement for reports.',
+                'suggestedPath': 'requirements/REQ-gdpr-retention.md',
+                'sourcePaths': ['regulations/gdpr.md'],
+                'evidence': [{'path': 'regulations/gdpr.md',
+                              'quote': 'kept for no longer than is necessary'}],
+            }]})
+        elif 'requirements reverse-engineer' in system:
+            # reverse engineering: draft the missing requirement document
+            reply = json.dumps({
+                'path': 'requirements/REQ-gdpr-retention.md',
+                'content': ('---\nid: REQ-gdpr-retention\ntitle: Report Data Retention\n'
+                            'type: requirement\nstatus: draft\npriority: should\n'
+                            'drivers: [regulations/gdpr.md]\n---\n\n'
+                            '# Report Data Retention\n\n'
+                            '(mock) Report data shall be kept for no longer than is necessary '
+                            'for the reporting purpose.\n\n'
+                            'Derived from ~regulations/gdpr.md (Art. 5 storage limitation).\n'),
+            })
+        elif 'source-drift auditor' in system and last['role'] != 'tool':
+            # first round: consult the source, so the run's activity feed shows
+            # real tool use (the drift engine narrates every call)
+            tool_call = {'name': 'read_file',
+                         'arguments': json.dumps({'path': '~regulations/regulations/mifid-ii.md'})}
+            reply = ''
+        elif 'source-drift auditor' in system:
+            # second round: the findings. Evidence quotes the demo regulations
+            # source VERBATIM (the server drops unverified quotes)
+            anchor = re.search(r'^id:\s*(\S+)', user, re.M)
+            reply = json.dumps({'findings': [{
+                'anchor': anchor.group(1) if anchor else 'REQ-042',
+                'source': 'regulations',
+                'kind': 'outdated-requirement',
+                'severity': 'high',
+                'title': '(mock) timestamp precision drifted vs RTS 22 amendment',
+                'detail': 'The 2026-06 amendment requires microsecond execution '
+                          'timestamps; this document still allows coarser precision.',
+                'sourcePaths': ['regulations/mifid-ii.md'],
+                'evidence': [{'path': 'regulations/mifid-ii.md',
+                              'quote': 'reported to **microsecond** precision'}],
+            }, {
+                'anchor': (anchor.group(1) if anchor else 'REQ-042') + '#amendments',
+                'source': 'regulations',
+                'kind': 'new-requirement',
+                'severity': 'medium',
+                'title': '(mock) amendment tracking has no requirement',
+                'detail': 'The regulation records dated amendments that must be tracked, '
+                          'but no requirement states how amendments are picked up.',
+                'suggestedPath': 'requirements/REQ-amendment-tracking.md',
+                'sourcePaths': ['regulations/mifid-ii.md'],
+                'evidence': [{'path': 'regulations/mifid-ii.md',
+                              'quote': 'Execution timestamps must be captured'}],
+            }]})
+        elif body.get('tools') and last['role'] == 'tool':
             name = ''
             for m in reversed(body['messages']):
                 if m['role'] == 'assistant' and m.get('tool_calls'):

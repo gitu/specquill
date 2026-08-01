@@ -37,6 +37,29 @@ type SpeccyConfig struct {
 	Instructions string `yaml:"instructions"`
 }
 
+// DriftConfig tunes source-drift detection per workspace. Everything is
+// optional — an absent block means: all selected references, all documents,
+// the implicit forge target, the built-in doc cap.
+type DriftConfig struct {
+	Instructions string   `yaml:"instructions"` // appended to the drift system prompt
+	References   []string `yaml:"references"`   // restrict to these selected references (default: all)
+	Paths        []string `yaml:"paths"`        // default run scope (folders or files; default: every doc)
+	// Targets SELECTS work-item destinations from the server's
+	// work_item_targets catalog (catalog mode) — it can never mint access. In
+	// forge-PAT mode an entry may instead be an owner/repo path on the forge
+	// host, filed with the caller's own PAT.
+	Targets []string `yaml:"targets"`
+	MaxDocs int      `yaml:"max_docs"` // optional hard cap per run (0 = uncapped, large scopes just loop)
+	// Report is this project's standing alignment report document, written
+	// PROJECT-relative (a monorepo project's report lands under its own
+	// content_root, beside the .specquill/config.yml that declares it).
+	// Default: reports/alignment-{date}.md (api.defaultDriftReportPath) —
+	// the {date}/{yyyy}/{mm}/{dd} tokens expand at run time, so a day's runs
+	// continue one report and the next day starts fresh; a path without them
+	// is one standing report. A run may target another one.
+	Report string `yaml:"report"`
+}
+
 // ManifestEntry declares one workspace in a repository's ROOT
 // .specquill/config.yml — the REQ-025 manifest. Name is the stable identity
 // component (the `owner/repo#name` spelling); Root the workspace subfolder,
@@ -53,6 +76,7 @@ type Config struct {
 	References []Reference  `yaml:"references"`
 	Sources    []SourceDef  `yaml:"sources"` // forge-PAT mode source definitions
 	Speccy     SpeccyConfig `yaml:"speccy"`
+	Drift      DriftConfig  `yaml:"drift"`
 	// Projects, when present, makes this file a workspace MANIFEST: each
 	// entry is an openable subproject (REQ-025.1). Without it the repository
 	// root is the single workspace and this file is its workspace config.

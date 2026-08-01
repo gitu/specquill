@@ -165,6 +165,225 @@ export function useForgeRequest(repo: string | undefined, branch: string | undef
   });
 }
 
+// ---------------------------------------------------------------- source drift
+
+export interface DriftEvidence { path: string; quote: string }
+export type DriftMode = 'drift' | 'gaps' | 'extract';
+export interface DriftFinding {
+  fingerprint: string; docPath: string; anchor: string; source: string;
+  // coverage gaps (docPath '') carry where the missing doc should live and
+  // the reverse-engineered draft once one was created
+  suggestedPath: string; draftPath: string;
+  // the in-repo change/work-item document created to remedy it
+  remedyPath: string; remedyKind: string;
+  documents: { kind: string; path: string }[]; // every document created for it
+  kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string;
+  evidence: DriftEvidence[]; status: 'open' | 'dismissed' | 'filed';
+  workItemUrl: string; workItemTarget: string; updatedAt: number;
+}
+export interface DriftRun {
+  // 'interrupted' = the server restarted mid-run; the units it had already
+  // checked stand, and `resumable` says the rest can be picked up
+  id: number; mode: DriftMode; status: 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted';
+  error: string;
+  scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
+  headSha: string; startedAt: number; finishedAt: number;
+  activity: string[];             // live per-unit narration of the run
+  reportPath: string;             // git-native run report doc ('' = none)
+  reportBranch: string;
+  focus: string; resumedFrom: number; resumable: boolean;
+}
+export interface DriftTarget { name: string; kind: string; project: string }
+export interface DriftResp {
+  enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
+  sources: string[]; // the references a gaps run would sweep
+  reports: string[]; // existing report docs a run can continue (incl. the default)
+  defaultReport: string; // the project's standing report (its drift.report:)
+  // the analyzed application inventories persisted beside the report
+  extractions: { source: string; path: string }[];
+}
+
+/** Latest source-drift run + live findings; polls while a run is in flight. */
+export function useDrift(repo: string | undefined, branch: string) {
+  return useQuery({
+    queryKey: ['drift', repo, branch],
+    queryFn: () => api<DriftResp>(`/api/repos/${repo}/drift?branch=${encodeURIComponent(branch)}`),
+    enabled: !!repo,
+    refetchInterval: (q) => (q.state.data?.run?.status === 'running' ? 2_500 : false),
+  });
+}
+
+export function useRunDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // `branch` overrides the hook's branch: the caller may have just been
+    // moved onto their workspace branch and the run must target THAT one
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string; resume?: number }) =>
+      api<{ runId: number; docsTotal: number; mode: DriftMode; resumedFrom: number }>(
+        `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
+        { method: 'POST', body: JSON.stringify(body) }),
+    // prefix key: a run started on a freshly switched branch must refresh too
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo] }),
+  });
+}
+
+export interface PlannedDoc {
+  kind: string; title: string; path: string; purpose: string;
+  field?: string; linkTargets?: string[];
+}
+
+/** Propose WHICH documents to create for a finding (read-only). */
+export function usePlanDocuments(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (fingerprint: string) =>
+      api<{ rationale: string; documents: PlannedDoc[] }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/plan?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+  });
+}
+
+/** Draft and write a planned SET of documents, wired together. */
+export function useCreateDocuments(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, documents }: { fingerprint: string; documents: PlannedDoc[] }) =>
+      api<{ created: { kind: string; path: string }[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/create?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ documents }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
+  });
+}
+
+/** Create the in-repo change record / work item that tracks fixing a finding. */
+export function useRemedyFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, kind }: { fingerprint: string; kind: 'change' | 'work_item' }) =>
+      api<{ path: string; kind: string; branch: string; linked?: string; existing?: boolean }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/remedy?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ kind }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the remedy doc (and possibly the affected doc) are worktree saves
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
+  });
+}
+
+export interface FocusArea { name: string; reason: string; sources: string[] }
+
+/** Ask where to aim the next gap sweep (read-only: no run, no writes). */
+export function useFocusAreas(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (sources?: string[]) =>
+      api<{ areas: FocusArea[] }>(
+        `/api/repos/${repo}/drift/focus?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ sources: sources ?? [] }) }),
+  });
+}
+
+/** Reverse-engineer the missing requirement doc from a coverage-gap finding. */
+export function useDraftRequirement(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint }: { fingerprint: string }) =>
+      api<{ path: string; branch: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/draft?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the draft is an uncommitted save on resp.branch
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
+  });
+}
+
+export function useCancelDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean }>(`/api/repos/${repo}/drift/cancel?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export function useDismissFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, reopen }: { fingerprint: string; reopen?: boolean }) =>
+      api<{ status: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/dismiss?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ reopen: !!reopen }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export interface FileFindingResp {
+  url: string; created: boolean; target: string;
+  backlinked: boolean; backlinkBranch?: string; backlinkError?: string;
+}
+
+/** File a finding as a work item; the backlink save may touch an open doc. */
+export function useFileFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, target }: { fingerprint: string; target: string; docPath: string }) =>
+      api<FileFindingResp>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/file?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ target }) }),
+    onSuccess: (resp, { docPath }) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the backlink is a worktree save — refresh an open editor instead of
+      // letting it stale into a baseSha conflict
+      const wb = resp.backlinkBranch ?? branch;
+      qc.invalidateQueries({ queryKey: ['file', repo, wb, docPath] });
+      qc.invalidateQueries({ queryKey: ['status', repo, wb] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, wb] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------- linker
+
+export interface LinkProposal { from: string; field: string; to: string; reason?: string }
+
+/** Ask the AI for missing typed links between documents (nothing is written). */
+export function useProposeLinks(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: () =>
+      api<{ proposals: LinkProposal[]; dropped: number }>(
+        `/api/repos/${repo}/linker/propose?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+  });
+}
+
+/** Write accepted link proposals into the from-docs' frontmatter (drafts). */
+export function useApplyLinks(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ links, branch: on }: { links: LinkProposal[]; branch?: string }) =>
+      api<{ applied: LinkProposal[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/linker/apply?branch=${encodeURIComponent(on || branch)}`,
+        { method: 'POST', body: JSON.stringify({ links }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+    },
+  });
+}
+
 // ---------------------------------------------------------------- mutations
 
 export function useWorktreeDiff(repo: string | undefined, branch: string, enabled: boolean) {

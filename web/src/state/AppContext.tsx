@@ -180,10 +180,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // remembered per-project branch on reloads
   useEffect(() => {
     if (!repos.data || !writable?.id) return;
-    const m = pathname.match(/^\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
+    // read the LIVE url, not the closured one: navigate() pushes history
+    // synchronously while useLocation's update lands a render later, so a
+    // branch switch right after a programmatic nav (Speccy's "Review on
+    // <branch>") would rewrite the path this effect last SAW — sending the
+    // user back to the view they came from instead of the file they opened
+    const live = window.location;
+    const m = live.pathname.match(/^\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
     if (!m) return;
     const cur = m[2] ? decodeURIComponent(m[2]) : '';
-    const sp = new URLSearchParams(search);
+    const sp = new URLSearchParams(live.search);
     const legacy = sp.has('branch') && !sp.has('invite'); // pre-path-form link
     if (cur === effBranch && !legacy) return;
     if (legacy) sp.delete('branch');

@@ -33,6 +33,7 @@ verifies: [tests/report_spec.py]
 ---
 
 Body links [the spec](../specs/report.md) and [gone](/missing.md).
+Syntax shown as prose is not a link: `+"`[example](/never-a-link.md)`"+`
 
 `+"```md\n[fenced](/never.md)\n```\n")
 	// the standard flat drivers form (the {type, ref} maps above are legacy);
@@ -86,7 +87,8 @@ x
 	if got := req.Links["drivers"]; len(got) != 2 || got[0] != "regulations/mifid.md#art-26" || got[1] != "Ops T+1 settlement SLA" {
 		t.Fatalf("drivers refs: %v", req.Links)
 	}
-	// body refs: relative resolved, fenced ignored, broken still listed
+	// body refs: relative resolved, fenced AND code-span examples ignored,
+	// broken still listed
 	if len(req.References) != 2 || req.References[0] != "specs/report.md" || req.References[1] != "missing.md" {
 		t.Fatalf("references: %v", req.References)
 	}

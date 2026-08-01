@@ -195,7 +195,7 @@ export function buildRefTree(paths: string[]): RefDir {
 
 // ---------------------------------------------------------------- properties
 
-export interface PropItem { text: string; style: string; openPath?: string }
+export interface PropItem { text: string; style: string; openPath?: string; href?: string }
 export interface PropRow { key: string; rawKey: string; items: PropItem[] }
 
 // property-schema `values` colors — the second row aliases the css-var names
@@ -225,6 +225,8 @@ export function buildProps(fm: string | undefined, schema: PropertySchema | unde
     'display:inline-flex;align-items:center;padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:600;text-transform:capitalize;background:' + c.bg + ';color:' + c.fg;
   const linkStyle = "color:var(--prod);cursor:pointer;text-decoration:underline;text-decoration-color:var(--prod-line);font-family:'JetBrains Mono',monospace;font-size:12px";
   const linkItem = (t: string): PropItem => {
+    // external URLs (work-items backlinks et al.) open in a new tab
+    if (/^https?:\/\//.test(String(t))) return { text: t, style: linkStyle, href: t };
     const pm = String(t).match(/([\w-]+\/[\w.\/-]+\.(?:md|excalidraw|mermaid))/);
     if (pm) return { text: t, style: linkStyle, openPath: pm[1] };
     return { text: t, style: chip('var(--surface-2)', 'var(--text-2)', true) };

@@ -251,7 +251,7 @@ func TestForgeAPIBaseExactHost(t *testing.T) {
 		"https://ghe.internal:8443":     "https://ghe.internal:8443/api/v3",
 	}
 	for base, want := range cases {
-		if got := forgeAPIBase("github", base); got != want {
+		if got := ForgeAPIBase("github", base); got != want {
 			t.Errorf("github %s → %q, want %q", base, got, want)
 		}
 	}
@@ -261,7 +261,7 @@ func TestForgeAPIBaseExactHost(t *testing.T) {
 		"https://gitlab.example.com/": "https://gitlab.example.com/api/v4",
 		"https://git.internal:8443":   "https://git.internal:8443/api/v4",
 	} {
-		if got := forgeAPIBase("gitlab", base); got != want {
+		if got := ForgeAPIBase("gitlab", base); got != want {
 			t.Errorf("gitlab %s → %q, want %q", base, got, want)
 		}
 	}
