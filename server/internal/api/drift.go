@@ -595,6 +595,14 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	// the link graph rides along: each doc is audited WITH its linked
 	// documents inlined, so the check sees the chain around it
 	idx := buildLinkIndex(files, linkFieldNames(files))
+	srcNames := make([]string, 0, len(sources))
+	for _, src := range sources {
+		srcNames = append(srcNames, "~"+src.Name)
+	}
+	log.Printf("drift [%s@%s]: run %d start — mode=%s units=%d sources=%s report=%s%s%s",
+		repo.ID, branch, runID, body.Mode, len(units), strings.Join(srcNames, ","),
+		reportPath, map[bool]string{true: " on " + reportBranch, false: " (none)"}[reportBranch != ""],
+		map[bool]string{true: " focus=" + strconv.Quote(body.Focus), false: ""}[body.Focus != ""])
 	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx,
 		driftCfg.Instructions, body.Report, body.Focus)
 	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode,
@@ -608,6 +616,7 @@ func (s *Server) postDriftCancel(w http.ResponseWriter, r *http.Request, repo *p
 		jsonError(w, http.StatusNotFound, "no drift run in progress")
 		return
 	}
+	log.Printf("drift [%s@%s]: run cancelled by %s", repo.ID, branch, auth.UserFrom(r.Context()).Email)
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
@@ -674,6 +683,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	defer cancel()
 	defer s.drift.release(key)
 
+	runStarted := time.Now().Unix()
 	dropped := 0
 	var docErrs []string
 	var activity []string
@@ -756,6 +766,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 					} else {
 						note(fmt.Sprintf("  ✓ %d requirement%s in %d group%s → %s",
 							reqs, plural(reqs), len(groups), plural(len(groups)), path))
+						log.Printf("drift [%s@%s]: extracted ~%s → %s (%d requirement(s), %d group(s))",
+							repo.ID, branch, unit, path, reqs, len(groups))
 						extracted = append(extracted, map[string]string{"source": unit, "path": path})
 						exJSON, _ := json.Marshal(extracted)
 						_ = s.store.SetDriftRunExtractions(runID, string(exJSON))
@@ -807,6 +819,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				word = "gap"
 			}
 			took := time.Since(started).Round(time.Millisecond)
+			log.Printf("drift [%s@%s]: run %d [%d/%d] %s → %d %s(s), %d dropped (%s)",
+				repo.ID, branch, runID, i+1, len(units), unit, len(findings), word, droppedDoc, took)
 			if n := len(findings); n == 0 {
 				note(fmt.Sprintf("  ✓ clean (%s)", took))
 			} else {
@@ -857,6 +871,9 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	if err := s.store.FinishDriftRun(runID, status, errMsg); err != nil {
 		log.Printf("drift [%s@%s]: finish run: %v", repo.ID, branch, err)
 	}
+	log.Printf("drift [%s@%s]: run %d %s in %s — %d finding(s) live, %d dropped%s",
+		repo.ID, branch, runID, status, time.Since(time.Unix(runStarted, 0)).Round(time.Second),
+		live, dropped, map[bool]string{true: fmt.Sprintf(", %d unit(s) failed", len(docErrs)), false: ""}[len(docErrs) > 0])
 	if rb := s.writeDriftReport(runID, repo, branch, true); rb != "" {
 		s.publish("save", repo.Key(), rb)
 	}
@@ -1170,7 +1187,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 	msgs := ai.DriftPrompt(doc, content, linked, extracted, instructions, names)
 
 	var reply strings.Builder
-	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+	_, _, err := s.ai.StreamTools(ai.WithLabel(ctx, "drift "+doc), msgs, specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
 		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
 	if err != nil {
@@ -1242,7 +1259,7 @@ func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, bran
 	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, focus, instructions)
 
 	var reply strings.Builder
-	_, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+	_, _, err := s.ai.StreamTools(ai.WithLabel(ctx, "gaps ~"+sourceName), msgs, specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
 		func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil })
 	if err != nil {
@@ -1340,7 +1357,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 	if src == nil {
 		return nil, 0, fmt.Errorf("unknown source")
 	}
-	ask := func(msgs []ai.Message, out any) error {
+	ask := func(askCtx context.Context, msgs []ai.Message, out any) error {
 		tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
 			files: files, publish: func() {}}
 		var specs []ai.ToolSpec
@@ -1350,7 +1367,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 			}
 		}
 		var reply strings.Builder
-		if _, _, err := s.ai.StreamTools(ctx, msgs, specs, tb.exec,
+		if _, _, err := s.ai.StreamTools(askCtx, msgs, specs, tb.exec,
 			func(delta string) error { reply.WriteString(delta); return nil },
 			func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil },
 		); err != nil {
@@ -1367,7 +1384,8 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 			Paths   []string `json:"paths"`
 		} `json:"areas"`
 	}
-	if err := ask(ai.SurveyPrompt(sourceName, instructions), &survey); err != nil {
+	if err := ask(ai.WithLabel(ctx, "extract survey ~"+sourceName),
+		ai.SurveyPrompt(sourceName, instructions), &survey); err != nil {
 		return nil, 0, fmt.Errorf("survey: %w", err)
 	}
 	areas := survey.Areas[:0:0]
@@ -1396,7 +1414,8 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 		var out struct {
 			Requirements []extractedRequirement `json:"requirements"`
 		}
-		if err := ask(ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, instructions), &out); err != nil {
+		if err := ask(ai.WithLabel(ctx, "extract area "+a.Name),
+			ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, instructions), &out); err != nil {
 			note("    ✗ " + a.Name + ": " + err.Error()) // one bad area never sinks the source
 			continue
 		}
@@ -1426,7 +1445,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 // workspace document already states it. Best-effort per batch: a failed batch
 // leaves its requirements unmatched rather than failing the extraction.
 func (s *Server) matchExtracted(ctx context.Context, groups []extractedGroup, files map[string]string,
-	ask func([]ai.Message, any) error, note func(string), instructions string) {
+	ask func(context.Context, []ai.Message, any) error, note func(string), instructions string) {
 	type ref struct{ g, r int }
 	var flat []ref
 	for gi := range groups {
@@ -1461,7 +1480,8 @@ func (s *Server) matchExtracted(ctx context.Context, groups []extractedGroup, fi
 				Note     string `json:"note"`
 			} `json:"matches"`
 		}
-		if err := ask(ai.MatchPrompt(items.String(), docIndex, instructions), &out); err != nil {
+		if err := ask(ai.WithLabel(ctx, fmt.Sprintf("match %d-%d", start+1, end)),
+			ai.MatchPrompt(items.String(), docIndex, instructions), &out); err != nil {
 			note("    ✗ matching failed: " + err.Error())
 			continue
 		}
@@ -1652,7 +1672,7 @@ func (s *Server) postDriftFocus(w http.ResponseWriter, r *http.Request, repo *pr
 		}
 	}
 	var reply strings.Builder
-	_, _, err = s.ai.StreamTools(r.Context(),
+	_, _, err = s.ai.StreamTools(ai.WithLabel(r.Context(), "focus areas"),
 		ai.FocusPrompt(b.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), instructions),
 		specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
@@ -1692,6 +1712,8 @@ func (s *Server) postDriftFocus(w http.ResponseWriter, r *http.Request, repo *pr
 			"name": name, "reason": strings.TrimSpace(a.Reason), "sources": names,
 		})
 	}
+	log.Printf("drift [%s@%s]: proposed %d focus area(s) over %d source(s)",
+		repo.ID, branch, len(areas), len(sources))
 	jsonOK(w, map[string]any{"areas": areas})
 }
 
@@ -1779,7 +1801,8 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		"detail": finding.Detail, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
 	})
 	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
-	reply, err := s.ai.Complete(r.Context(), ai.ReversePrompt(string(findingJSON), excerpts.String(), guidance))
+	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "reverse-engineer "+finding.Fingerprint),
+		ai.ReversePrompt(string(findingJSON), excerpts.String(), guidance))
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
@@ -1828,6 +1851,7 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		return
 	}
 	s.refreshDriftReport(repo, branch)
+	log.Printf("drift [%s@%s]: drafted %s for %s on %s", repo.ID, branch, path, finding.Fingerprint, writeBranch)
 	s.publish("save", repo.Key(), writeBranch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, map[string]any{"path": path, "branch": writeBranch})
@@ -1950,8 +1974,9 @@ func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *p
 	}
 	kindLabel := strings.ReplaceAll(body.Kind, "_", " ")
 	guidance := modelRules(files) + workspaceVocabulary(files) + ai.AuthoringRules(files, instructions)
-	reply, err := s.ai.Complete(r.Context(), ai.RemedyPrompt(kindLabel, entity.Folder, linkNote,
-		string(findingJSON), targetExcerpt, example, guidance))
+	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "remedy "+body.Kind),
+		ai.RemedyPrompt(kindLabel, entity.Folder, linkNote,
+			string(findingJSON), targetExcerpt, example, guidance))
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
@@ -2011,6 +2036,9 @@ func (s *Server) postDriftRemedy(w http.ResponseWriter, r *http.Request, repo *p
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("drift [%s@%s]: %s remedy for %s → %s on %s (%s)",
+		repo.ID, branch, body.Kind, finding.Fingerprint, path, writeBranch,
+		map[bool]string{true: linked, false: "no typed link"}[linked != ""])
 	s.refreshDriftReport(repo, branch)
 	s.publish("save", repo.Key(), writeBranch)
 	s.publish("drift", repo.Key(), branch)
@@ -2187,8 +2215,9 @@ func (s *Server) postDriftPlan(w http.ResponseWriter, r *http.Request, repo *pro
 		"detail": finding.Detail, "document": finding.DocPath, "anchor": finding.Anchor,
 		"source": "~" + finding.Source, "suggestedPath": finding.SuggestedPath, "evidence": evidence,
 	})
-	reply, err := s.ai.Complete(r.Context(), ai.PlanPrompt(string(findingJSON), target,
-		fam.String(), lt.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), guidance))
+	reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "plan "+finding.Fingerprint),
+		ai.PlanPrompt(string(findingJSON), target,
+			fam.String(), lt.String(), strings.Join(resolveDriftScope(files, nil, nil), "\n"), guidance))
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
@@ -2206,6 +2235,8 @@ func (s *Server) postDriftPlan(w http.ResponseWriter, r *http.Request, repo *pro
 		jsonError(w, http.StatusBadGateway, "the plan proposed no document this workspace can create")
 		return
 	}
+	log.Printf("drift [%s@%s]: planned %d document(s) for %s (model proposed %d)",
+		repo.ID, branch, len(docs), finding.Fingerprint, len(plan.Documents))
 	jsonOK(w, map[string]any{"rationale": strings.TrimSpace(plan.Rationale), "documents": docs})
 }
 
@@ -2294,8 +2325,9 @@ func (s *Server) postDriftCreate(w http.ResponseWriter, r *http.Request, repo *p
 				"]` — do not write link fields yourself."
 		}
 		kindLabel := strings.ReplaceAll(d.Kind, "_", " ")
-		reply, err := s.ai.Complete(r.Context(), ai.RemedyPrompt(kindLabel, entities[d.Kind].Folder,
-			note, string(findingJSON), "", example, guidance))
+		reply, err := s.ai.Complete(ai.WithLabel(r.Context(), "create "+d.Kind+" "+d.Path),
+			ai.RemedyPrompt(kindLabel, entities[d.Kind].Folder,
+				note, string(findingJSON), "", example, guidance))
 		if err != nil {
 			failures = append(failures, d.Path+": "+err.Error())
 			continue
@@ -2356,6 +2388,13 @@ func (s *Server) postDriftCreate(w http.ResponseWriter, r *http.Request, repo *p
 			break
 		}
 	}
+	made := make([]string, 0, len(created))
+	for _, c := range created {
+		made = append(made, c["kind"]+":"+c["path"])
+	}
+	log.Printf("drift [%s@%s]: created %d document(s) for %s on %s — %s%s",
+		repo.ID, branch, len(created), finding.Fingerprint, writeBranch, strings.Join(made, ", "),
+		map[bool]string{true: fmt.Sprintf(" (%d failed)", len(failures)), false: ""}[len(failures) > 0])
 	s.refreshDriftReport(repo, branch)
 	s.publish("save", repo.Key(), writeBranch)
 	s.publish("drift", repo.Key(), branch)
@@ -2551,6 +2590,8 @@ func (s *Server) postDriftFile(w http.ResponseWriter, r *http.Request, repo *pro
 	if backlinkErr != "" {
 		out["backlinkError"] = backlinkErr
 	}
+	log.Printf("drift [%s@%s]: filed %s on %s → %s (created=%v, backlink=%v)",
+		repo.ID, branch, finding.Fingerprint, target.name, itemURL, created, backlinked)
 	s.refreshDriftReport(repo, branch)
 	s.publish("drift", repo.Key(), branch)
 	jsonOK(w, out)

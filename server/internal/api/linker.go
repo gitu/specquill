@@ -10,6 +10,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -388,7 +389,8 @@ func (s *Server) postLinkerPropose(w http.ResponseWriter, r *http.Request, repo 
 		}
 	}
 	var reply strings.Builder
-	_, _, err = s.ai.StreamTools(r.Context(), ai.LinkerPrompt(b.String(), modelRules(files)), specs, tb.exec,
+	_, _, err = s.ai.StreamTools(ai.WithLabel(r.Context(), "linker propose"),
+		ai.LinkerPrompt(b.String(), modelRules(files)), specs, tb.exec,
 		func(delta string) error { reply.WriteString(delta); return nil },
 		func(ai.ToolCall, string, error) error { return nil })
 	if err != nil {
@@ -418,6 +420,8 @@ func (s *Server) postLinkerPropose(w http.ResponseWriter, r *http.Request, repo 
 		}
 		proposals = append(proposals, p)
 	}
+	log.Printf("linker [%s@%s]: proposed %d link(s) over %d document(s) (%d dropped by validation)",
+		repo.ID, branch, len(proposals), len(docs), dropped)
 	jsonOK(w, map[string]any{"proposals": proposals, "dropped": dropped})
 }
 
@@ -489,5 +493,7 @@ func (s *Server) postLinkerApply(w http.ResponseWriter, r *http.Request, repo *p
 	if len(applied) > 0 {
 		s.publish("save", repo.Key(), writeBranch)
 	}
+	log.Printf("linker [%s@%s]: applied %d link(s) on %s%s", repo.ID, branch, len(applied), writeBranch,
+		map[bool]string{true: fmt.Sprintf(" (%d failed: %s)", len(failures), strings.Join(failures, "; ")), false: ""}[len(failures) > 0])
 	jsonOK(w, map[string]any{"applied": applied, "failures": failures, "branch": writeBranch})
 }

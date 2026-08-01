@@ -326,3 +326,21 @@ from the code.
   `scripts/mock-forge.py` (:8992) is the keyless GitLab mock for exercising
   PAT mode; `web/e2e/patlogin.spec.ts` self-skips unless the target server
   reports a `forge` provider.
+
+## Server logs
+
+Beyond the `METHOD /path duration` request line, the server narrates the work
+itself — read `/tmp/…` or journald when a run "does nothing":
+
+- **`ai: <model> [<label>] complete|tool loop in <dur> (rounds, tools, sizes)`**
+  — every model call, with WHAT it was for. The label rides on the context
+  (`ai.WithLabel`, `internal/ai/label.go`): `drift specs/x.md`,
+  `extract survey ~src`, `extract area <name>`, `match 1-8`, `gaps ~src`,
+  `plan <fp>`, `create <kind> <path>`, `remedy <kind>`, `linker propose`,
+  `focus areas`, `speccy chat|draft`. Sizes only — prompts carry workspace
+  content and never enter the log.
+- **`drift [<repo>@<branch>]: run N …`** — start (mode, units, sources,
+  report + branch, focus), one line per unit (findings, dropped, duration),
+  and the finish (status, live findings, dropped, failed units). Plus every
+  action: filed, drafted, remedy, created, extracted, planned, cancelled.
+- **`linker [<repo>@<branch>]:`** — proposed/applied counts and validation drops.

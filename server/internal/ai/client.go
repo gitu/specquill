@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -156,8 +157,10 @@ func (c *Client) QuickComplete(ctx context.Context, msgs []Message) (string, err
 }
 
 func (c *Client) complete(ctx context.Context, model string, msgs []Message) (string, error) {
+	started := time.Now()
 	res, err := c.request(ctx, c.chatBody(model, msgs, false))
 	if err != nil {
+		log.Printf("ai: %s%s complete failed after %s: %v", model, labelOf(ctx), since(started), err)
 		return "", err
 	}
 	defer res.Body.Close()
@@ -172,10 +175,33 @@ func (c *Client) complete(ctx context.Context, model string, msgs []Message) (st
 		return "", err
 	}
 	if len(out.Choices) == 0 {
+		log.Printf("ai: %s%s complete returned no choices after %s", model, labelOf(ctx), since(started))
 		return "", fmt.Errorf("ai provider returned no choices")
 	}
-	return out.Choices[0].Message.Content, nil
+	reply := out.Choices[0].Message.Content
+	// sizes, never content: prompts carry workspace material
+	log.Printf("ai: %s%s complete in %s (prompt %s → reply %s)",
+		model, labelOf(ctx), since(started), size(msgLen(msgs)), size(len(reply)))
+	return reply, nil
 }
+
+// msgLen is the prompt size a call carries, for the log.
+func msgLen(msgs []Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)
+	}
+	return n
+}
+
+func size(n int) string {
+	if n < 1024 {
+		return fmt.Sprintf("%dB", n)
+	}
+	return fmt.Sprintf("%.1fKB", float64(n)/1024)
+}
+
+func since(t time.Time) time.Duration { return time.Since(t).Round(time.Millisecond) }
 
 // ExtractJSON tolerantly pulls a JSON object out of a model reply that may be
 // wrapped in code fences or prose.
