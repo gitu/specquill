@@ -35,10 +35,15 @@ export function setFmValue(fm: string, key: string, value: unknown): string {
   return doc.toString({ lineWidth: 0, flowCollectionPadding: false }).replace(/\n$/, '');
 }
 
-/** Local calendar date as YYYY-MM-DD — the workspace's frontmatter date format. */
+/**
+ * Calendar date as YYYY-MM-DD — the workspace's frontmatter date format, in
+ * UTC. Frontmatter dates are committed to git, so they must not depend on the
+ * editor's timezone: the server maintains them the same way (mdfm.Touch), and
+ * a browser-local date would make the two disagree around midnight.
+ */
 export function todayStr(now = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+  return `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`;
 }
 
 /**

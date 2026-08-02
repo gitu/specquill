@@ -84,3 +84,20 @@ func TestTouchLeavesFmLessDocsAlone(t *testing.T) {
 		t.Errorf("fm-less doc changed: %q err=%v", out, err)
 	}
 }
+
+// Dates land in git, so they are the SAME date for everyone: Touch reads the
+// clock in UTC, never in whatever zone the server happens to run in.
+func TestTouchDatesAreUTC(t *testing.T) {
+	// 00:30 in Tokyo is still the previous day in UTC
+	tokyo := time.FixedZone("JST", 9*3600)
+	out, err := Touch("---\ntitle: A\n---\n\nbody\n", true,
+		time.Date(2026, 7, 30, 0, 30, 0, 0, tokyo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"created: 2026-07-29", "updated: 2026-07-29"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q — dates must be UTC, not the server's local day:\n%s", want, out)
+		}
+	}
+}

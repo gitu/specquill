@@ -144,8 +144,9 @@ export function generateId(pattern: string, taken: Set<string>, title?: string):
         case 'hex': return Array.from({ length: parseInt(n || '4', 10) }, () => pick('0123456789abcdef'.split(''))).join('');
         case 'adj': return pick(ADJECTIVES);
         case 'word': return pick(NOUNS);
-        case 'yy': return String(new Date().getFullYear()).slice(2);
-        case 'yyyy': return String(new Date().getFullYear());
+        // UTC like every other date that lands in git (see frontmatter.todayStr)
+        case 'yy': return String(new Date().getUTCFullYear()).slice(2);
+        case 'yyyy': return String(new Date().getUTCFullYear());
         case 'slug': return slugify(title || '') || pick(ADJECTIVES) + '-' + pick(NOUNS);
         default: return '';
       }

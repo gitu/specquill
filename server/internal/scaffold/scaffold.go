@@ -248,7 +248,7 @@ func Add(dir, family, name string) (string, error) {
 		}
 		slug := strings.ToLower(strings.Join(strings.Fields(name), "-"))
 		if fam == "changes" {
-			slug = time.Now().Format("2006-01") + "-" + slug
+			slug = time.Now().UTC().Format("2006-01") + "-" + slug // UTC: the name lands in git
 		}
 		rel = t.Dir + "/" + slug + ".md"
 		if t.Starter != "" {

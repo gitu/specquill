@@ -308,6 +308,20 @@ from the code.
   was removed in July 2026.
 - **Byte fidelity**: untouched documents save byte-identical; only real user
   edits normalize markdown.
+- **UTC in git, local on screen** (Aug 2026): every timestamp that lands in a
+  file is UTC — frontmatter `created`/`updated` (`mdfm.Touch` AND the client's
+  `lib/frontmatter.todayStr`, which must agree or a save flips the date back
+  and forth), report/extraction body lines (marked ` UTC` / `Z`), the run
+  activity feed, `{date}`-style report paths, `{yy}`/`{yyyy}` id tokens and
+  the `changes/` slug prefix. Otherwise the same edit carries a different date
+  per author and diffs against itself around midnight. Everything DISPLAYED is
+  the reader's clock: run times come from epochs (`toLocaleString`), the
+  stored feed stamps are converted back for display (`lib/feed.localizeFeed` —
+  the run's `startedAt` supplies the day, and a line before it has crossed UTC
+  midnight), and git author dates (`%aI`, the author's own offset) are
+  regrouped onto the reader's day by `lib/derive.localDay`. The exceptions are
+  deliberate: `derive.todayISO` and `history.sinceDays` stay LOCAL — they are
+  the user's "today" for the timeline and the history window, not stored data.
 - **Sketches**: `*.excalidraw.png` — PNGs with the excalidraw scene embedded
   (export-embed-scene), natively viewable anywhere, editable in the modal via
   `loadFromBlob`/`exportToBlob`. Legacy `*.excalidraw` JSON still supported.

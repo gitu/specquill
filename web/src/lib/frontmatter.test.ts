@@ -72,10 +72,17 @@ describe('setFmValue', () => {
 });
 
 describe('touchUpdated', () => {
-  const now = new Date(2026, 6, 29); // 2026-07-29 local
+  const now = new Date('2026-07-29T12:00:00Z');
 
-  it('formats today as local YYYY-MM-DD', () => {
+  it('formats today as UTC YYYY-MM-DD', () => {
     expect(todayStr(now)).toBe('2026-07-29');
+  });
+
+  // the date is committed to git — it must be the same day for every editor,
+  // and match what the server writes (mdfm.Touch)
+  it('takes the UTC day, not the browser-local one', () => {
+    expect(todayStr(new Date('2026-07-30T00:30:00+09:00'))).toBe('2026-07-29');
+    expect(todayStr(new Date('2026-07-29T23:30:00-05:00'))).toBe('2026-07-30');
   });
 
   it('bumps a stale updated date and preserves neighbours', () => {

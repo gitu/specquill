@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { sx } from '../lib/sx';
-import { daysAgo } from '../lib/derive';
+import { daysAgo, localDay } from '../lib/derive';
 import { useApp } from '../state/AppContext';
 
 interface HistoryEntry { sha: string; author: string; email: string; date: string; subject: string }
@@ -57,7 +57,7 @@ export function HistoryDrawer({ path, onClose }: { path: string; onClose: () => 
                 <div style={sx("display:flex;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3);margin-top:3px")}>
                   <span>{e.sha.slice(0, 7)}</span>
                   <span style={sx('color:var(--text-2)')}>{e.author}</span>
-                  <span>{daysAgo(e.date.slice(0, 10))}</span>
+                  <span>{daysAgo(localDay(e.date))}</span>
                 </div>
               </div>
             ))}
