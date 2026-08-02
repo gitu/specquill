@@ -396,9 +396,10 @@ export function EditorView() {
   useEffect(() => {
     const el = barRef.current;
     if (!el) return;
+    setBarW(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return; // jsdom: one-time read
     const ro = new ResizeObserver(() => setBarW(el.clientWidth));
     ro.observe(el);
-    setBarW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
   // bumped when a sketch is saved (editor OR speccy) so embedded previews

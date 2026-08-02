@@ -116,12 +116,13 @@ export function Rail() {
             <span style={sx('flex:1')}>Theme</span>
             <span style={sx('display:inline-flex;border:1px solid var(--border-2);border-radius:6px;overflow:hidden')}>
               {THEMES.map((t) => (
-                <span key={t.mode} onClick={() => app.setThemeMode(t.mode)}
+                <button key={t.mode} type="button" onClick={() => app.setThemeMode(t.mode)}
+                  aria-pressed={t.mode === app.themeMode}
                   title={t.mode === 'system' ? `System (${app.systemTheme})` : t.label}
-                  style={sx('width:24px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11.5px;cursor:pointer;user-select:none;' +
-                    (t.mode === app.themeMode ? 'background:var(--surface-2);color:var(--text)' : 'color:var(--text-3)'))}>
+                  style={sx('width:24px;height:20px;padding:0;border:none;display:flex;align-items:center;justify-content:center;font-family:inherit;font-size:11.5px;cursor:pointer;user-select:none;' +
+                    (t.mode === app.themeMode ? 'background:var(--surface-2);color:var(--text)' : 'background:transparent;color:var(--text-3)'))}>
                   {t.glyph}
-                </span>
+                </button>
               ))}
             </span>
           </div>
