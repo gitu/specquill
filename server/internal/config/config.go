@@ -183,7 +183,17 @@ type AIConfig struct {
 	// fast one-shot model for small tasks (commit messages, titles);
 	// empty = fall back to Model
 	QuickModel string `yaml:"quick_model"`
-	APIKeyEnv  string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
+	// Models an alignment recipe may name per stage, beyond the two tiers
+	// above. An ALLOWLIST, not a fallback chain: recipes are user content
+	// committed to a repository, so which models they can point this server
+	// at is deployment policy, and an id outside this set fails validation
+	// before the run starts.
+	Models []string `yaml:"models"`
+	// MaxCallsPerRun caps the model calls one alignment run may make
+	// (0 = the ai package's default of 500). A recipe multiplies stages by
+	// items by units; this is what stops an author's typo becoming an hour.
+	MaxCallsPerRun int    `yaml:"max_calls_per_run"`
+	APIKeyEnv      string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
 	// ReasoningEffort is passed through as `reasoning_effort` when set.
 	// OpenAI reasoning models (gpt-5.x) default it on /chat/completions and
 	// then REFUSE function tools — set "none" there so the chat tools work.

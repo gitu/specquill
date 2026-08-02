@@ -12,8 +12,8 @@ type DriftRun struct {
 	ID                int64
 	RepoKey           string
 	Branch            string
-	Mode              string // drift (per-doc verify) | gaps (per-source coverage)
-	Status            string // running | ok | error | cancelled | interrupted
+	Mode              string // the recipe slug: drift | gaps | extract | a project's own
+	Status            string // running | ok | error | cancelled | interrupted | capped
 	Error             string
 	ScopeJSON         string // resolved doc list, frozen at start
 	DocsTotal         int
@@ -27,8 +27,17 @@ type DriftRun struct {
 	SourcesJSON       string // reference names this run was restricted to (for resume)
 	Focus             string // gaps: the area this sweep was aimed at (for resume)
 	ResumedFrom       int64  // the run this one picked up where it stopped (0 = fresh)
-	StartedAt         int64
-	FinishedAt        int64
+	// RecipeJSON is the resolved pipeline this run executes, frozen at start —
+	// what makes it reproducible and resumable after the recipe document is
+	// edited underneath it.
+	RecipeJSON string
+	// StageStateJSON checkpoints the IN-FLIGHT unit's completed stages and
+	// their output, so a resume re-enters where it stopped instead of redoing
+	// the whole unit. Pruned when a unit completes.
+	StageStateJSON string
+	AICalls        int // model calls spent, against ai.max_calls_per_run
+	StartedAt      int64
+	FinishedAt     int64
 }
 
 // DriftFinding is one verified divergence between a document and a source.
@@ -68,10 +77,12 @@ func (s *Store) CreateDriftRun(run DriftRun) (int64, error) {
 	}
 	res, err := s.exec(`INSERT INTO drift_runs
 		(repo_key, branch, mode, status, scope_json, docs_total, head_sha,
-		 report_path, report_branch, sources_json, focus, resumed_from, started_at)
-		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 report_path, report_branch, sources_json, focus, resumed_from,
+		 recipe_json, stage_state_json, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA,
-		run.ReportPath, run.ReportBranch, run.SourcesJSON, run.Focus, run.ResumedFrom, time.Now().Unix())
+		run.ReportPath, run.ReportBranch, run.SourcesJSON, run.Focus, run.ResumedFrom,
+		run.RecipeJSON, run.StageStateJSON, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -84,6 +95,29 @@ func (s *Store) UpdateDriftRunProgress(id int64, docsDone, dropped int, activity
 	_, err := s.exec(`UPDATE drift_runs SET docs_done = ?, dropped_unverified = ?, activity_json = ? WHERE id = ?`,
 		docsDone, dropped, activityJSON, id)
 	return err
+}
+
+// SetDriftRunStageState checkpoints the in-flight unit's stage progress. The
+// blob is deliberately small: the runner prunes it the moment a unit finishes,
+// so at most one unit's intermediate output is ever stored.
+func (s *Store) SetDriftRunStageState(id int64, stateJSON string) error {
+	_, err := s.exec(`UPDATE drift_runs SET stage_state_json = ? WHERE id = ?`, stateJSON, id)
+	return err
+}
+
+// AddDriftRunAICalls charges model calls to a run and returns the new total,
+// so the worker can stop at the deployment's ceiling. Read-after-write in one
+// statement: the store is single-connection, so this cannot interleave.
+func (s *Store) AddDriftRunAICalls(id int64, n int) (int, error) {
+	if _, err := s.exec(`UPDATE drift_runs SET ai_calls = ai_calls + ? WHERE id = ?`, n, id); err != nil {
+		return 0, err
+	}
+	var total int
+	err := s.queryRow(`SELECT ai_calls FROM drift_runs WHERE id = ?`, id).Scan(&total)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return total, err
 }
 
 // SetDriftRunExtractions records the application inventories a run persisted.
@@ -185,20 +219,26 @@ func (s *Store) DriftRunResumedBy(id int64) (int64, error) {
 
 const driftRunSelect = `SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
 		docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
-		extractions_json, sources_json, focus, resumed_from, started_at, finished_at
+		extractions_json, sources_json, focus, resumed_from, recipe_json, stage_state_json,
+		ai_calls, started_at, finished_at
 	FROM drift_runs`
 
 func (s *Store) scanDriftRun(row *sql.Row, r *DriftRun) error {
 	return row.Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON,
 		&r.DocsTotal, &r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON,
 		&r.ReportPath, &r.ReportBranch, &r.ExtractionsJSON, &r.SourcesJSON, &r.Focus,
-		&r.ResumedFrom, &r.StartedAt, &r.FinishedAt)
+		&r.ResumedFrom, &r.RecipeJSON, &r.StageStateJSON, &r.AICalls, &r.StartedAt, &r.FinishedAt)
 }
 
 // Resumable reports whether a run stopped with work left — the server
-// restarted under it, the user cancelled it, or it failed midway. Its
-// remaining units are scope[DocsDone:]: the worker is sequential, so
-// DocsDone is exactly how far it got.
+// restarted under it, the user cancelled it, it hit the call ceiling
+// (`capped`), or it failed midway. Its remaining units are scope[DocsDone:]:
+// the worker is sequential, so DocsDone is exactly how far it got.
+//
+// Note this stays correct for per-stage resume without changing: a unit
+// interrupted mid-recipe leaves DocsDone at the units BEFORE it, so the
+// partial unit is already in the remainder. StageStateJSON only makes
+// re-entering it cheap.
 func (r *DriftRun) Resumable() bool {
 	return r.Status != "running" && r.Status != "ok" && r.DocsDone < r.DocsTotal
 }

@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,6 +33,7 @@ import (
 	"specquill/server/internal/mdfm"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
+	"specquill/server/internal/recipe"
 	"specquill/server/internal/store"
 	"specquill/server/internal/tracker"
 )
@@ -533,7 +535,12 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		// extraction and a drift check all narrow to it.
 		Sources []string `json:"sources"`
 		Focus   string   `json:"focus"`
-		Report  string   `json:"report"` // report doc to create/continue; default: the standing report
+		// Recipe names the pipeline to run: a built-in (drift | gaps | extract)
+		// or a project recipe slug from .specquill/alignment/. It is the same
+		// field as Mode — the built-in modes ARE recipes — and exists so a
+		// client can say what it means.
+		Recipe string `json:"recipe"`
+		Report string `json:"report"` // report doc to create/continue; default: the standing report
 		// Resume picks up a run that stopped with units left (the server
 		// restarted, the user cancelled it): everything it was configured
 		// with is inherited and only its unchecked units are run.
@@ -572,12 +579,14 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			_ = json.Unmarshal([]byte(prior.SourcesJSON), &body.Sources)
 		}
 	}
+	// `recipe:` and `mode:` are the same field under two names: the built-in
+	// modes ARE recipes, so an old client asking for mode=gaps and a new one
+	// asking for recipe=gaps take the identical path.
+	if body.Recipe != "" {
+		body.Mode = body.Recipe
+	}
 	if body.Mode == "" {
 		body.Mode = "drift"
-	}
-	if body.Mode != "drift" && body.Mode != "gaps" && body.Mode != "extract" {
-		jsonError(w, http.StatusBadRequest, "mode must be drift, gaps or extract")
-		return
 	}
 	branch := branchQ
 	files, err := repo.Snapshot(branch)
@@ -589,8 +598,27 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	if cfg := inRepoConfig(repo, branch); cfg != nil {
 		driftCfg = cfg.Drift
 	}
-	if body.Report == "" { // the project's own current report
-		body.Report = driftReportPath(driftCfg)
+	// the pipeline this run executes: a shipped one, or the project's own from
+	// .specquill/alignment/ on THIS branch (worktree edits included)
+	rec, err := s.resolveRecipe(body.Mode, files)
+	if err != nil {
+		jsonError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if err := rec.ValidateModels(s.ai.AllowedModels()); err != nil {
+		jsonError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	rec = rec.Clone()
+	if rec.Instructions == "" {
+		rec.Instructions = driftCfg.Instructions
+	}
+	if body.Report == "" { // the recipe's own report, else the project's current one
+		if rec.Report.Path != "" {
+			body.Report = resolveReportTokens(rec.Report.Path, time.Now())
+		} else {
+			body.Report = driftReportPath(driftCfg)
+		}
 	} else {
 		body.Report = resolveReportTokens(body.Report, time.Now())
 	}
@@ -604,9 +632,14 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			"no reference sources selected — drift needs references in .specquill/config.yml")
 		return
 	}
-	if len(body.Sources) > 0 { // restrict this run to the named references
+	// the run request narrows the references, else the recipe's own default
+	pickSources := body.Sources
+	if len(pickSources) == 0 {
+		pickSources = rec.Sources
+	}
+	if len(pickSources) > 0 {
 		want := map[string]bool{}
-		for _, n := range body.Sources {
+		for _, n := range pickSources {
 			want[strings.TrimPrefix(strings.TrimSpace(n), "~")] = true
 		}
 		kept := sources[:0:0]
@@ -626,15 +659,20 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	if len(body.Focus) > 200 {
 		body.Focus = body.Focus[:200]
 	}
-	// units: the docs to verify (drift) or the sources to sweep (gaps)
+	// units: what the run iterates, and its resume granularity. The recipe
+	// says which — documents to verify, or sources to work through.
 	var units []string
-	if body.Mode == "gaps" || body.Mode == "extract" {
+	if rec.Units == recipe.UnitsSources {
 		for _, src := range sources {
 			units = append(units, src.Name)
 		}
 		sort.Strings(units)
 	} else {
-		units = resolveDriftScope(files, body.Paths, driftCfg.Paths)
+		scope := body.Paths
+		if len(scope) == 0 {
+			scope = rec.Paths // the recipe's own default scope
+		}
+		units = resolveDriftScope(files, scope, driftCfg.Paths)
 		// a pre-existing doc chosen as the report target leaves the scope
 		// even before it carries the engine markers
 		for i, u := range units {
@@ -716,11 +754,28 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		runSources = append(runSources, src.Name)
 	}
 	sourcesJSON, _ := json.Marshal(runSources)
+	// the RESOLVED recipe is frozen onto the run: editing the recipe document
+	// underneath a run — or resuming one days later — must not change what it
+	// is executing
+	recipeJSON, err := json.Marshal(rec)
+	if err != nil {
+		s.drift.release(key)
+		cancel()
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// resume inherits the partial unit's stage checkpoint, so it re-enters
+	// where it stopped instead of redoing the whole unit
+	stageState := ""
+	if prior != nil {
+		stageState = prior.StageStateJSON
+	}
 	runID, err := s.store.CreateDriftRun(store.DriftRun{
 		RepoKey: repo.Key(), Branch: branch, Mode: body.Mode, ScopeJSON: string(scopeJSON),
 		DocsTotal: len(units), HeadSHA: headSHA,
 		ReportPath: reportPath, ReportBranch: reportBranch,
 		SourcesJSON: string(sourcesJSON), Focus: body.Focus, ResumedFrom: resumedFrom,
+		RecipeJSON: string(recipeJSON), StageStateJSON: stageState,
 	})
 	if err != nil {
 		s.drift.release(key)
@@ -735,14 +790,15 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	for _, src := range sources {
 		srcNames = append(srcNames, "~"+src.Name)
 	}
-	log.Printf("drift [%s@%s]: run %d start — mode=%s units=%d sources=%s report=%s%s%s%s",
-		repo.ID, branch, runID, body.Mode, len(units), strings.Join(srcNames, ","),
+	log.Printf("drift [%s@%s]: run %d start — recipe=%s stages=%d units=%d sources=%s report=%s%s%s%s",
+		repo.ID, branch, runID, rec.Slug, len(rec.Stages), len(units), strings.Join(srcNames, ","),
 		reportPath, map[bool]string{true: " on " + reportBranch, false: " (none)"}[reportBranch != ""],
 		map[bool]string{true: " focus=" + strconv.Quote(body.Focus), false: ""}[body.Focus != ""],
 		map[bool]string{true: fmt.Sprintf(" resuming run %d", resumedFrom), false: ""}[resumedFrom > 0])
-	go s.driftWorker(ctx, cancel, key, runID, body.Mode, repo, branch, units, files, sources, idx,
-		driftCfg.Instructions, body.Report, body.Focus, resumedFrom)
+	go s.driftWorker(ctx, cancel, key, runID, rec, repo, branch, units, files, sources, idx,
+		body.Report, body.Focus, resumedFrom, stageState)
 	jsonOK(w, map[string]any{"runId": runID, "docsTotal": len(units), "mode": body.Mode,
+		"recipe": rec.Slug, "stages": len(rec.Stages),
 		"sources": len(sources), "focus": body.Focus, "resumedFrom": resumedFrom})
 }
 
@@ -809,15 +865,74 @@ func (s *Server) driftSources(r *http.Request, repo *project.Project, branch str
 	return out
 }
 
+// resolveRecipe finds the pipeline a run asked for: a shipped one, or the
+// project's own from .specquill/alignment/ on the request's branch (worktree
+// edits included, like every other in-repo config).
+func (s *Server) resolveRecipe(slug string, files map[string]string) (*recipe.Recipe, error) {
+	if rec, ok := recipe.Builtin(slug); ok {
+		return rec, nil
+	}
+	recipes, _, errs := recipe.LoadAll(files)
+	for _, rec := range recipes {
+		if rec.Slug == slug {
+			return rec, nil
+		}
+	}
+	// a recipe that IS there but does not parse deserves its own message —
+	// "unknown recipe" would send the author looking in the wrong place
+	if msg, ok := errs[slug]; ok {
+		return nil, fmt.Errorf("recipe %s does not load: %s", slug, msg)
+	}
+	known := append([]string{}, recipe.BuiltinSlugs...)
+	for _, rec := range recipes {
+		known = append(known, rec.Slug)
+	}
+	return nil, fmt.Errorf("unknown recipe %q — available: %s", slug, strings.Join(known, ", "))
+}
+
+// recipeToolbox builds the read-only toolbox one stage runs with, narrowed to
+// the source files its filter keeps.
+//
+// The filtering happens HERE, on the snapshot the tools read, rather than in
+// the prompt: list_files, search and read_file then cannot reach an excluded
+// file at all. Asking a model to please ignore the test directory is not the
+// same thing.
+func (s *Server) recipeToolbox(rc *runContext, filter recipe.FileFilter,
+	note func(string)) (*speccyToolbox, []ai.ToolSpec, error) {
+	sources := rc.sources
+	if !filter.Empty() {
+		sources = make([]ai.GroundingSource, 0, len(rc.sources))
+		for _, src := range rc.sources {
+			kept := filter.Apply(src.Files)
+			if len(kept) != len(src.Files) {
+				note(fmt.Sprintf("    · ~%s filtered to %d of %d files",
+					src.Name, len(kept), len(src.Files)))
+			}
+			sources = append(sources, ai.GroundingSource{Name: src.Name, Files: kept})
+		}
+	}
+	tb := &speccyToolbox{repo: rc.repo, branch: rc.branch, writable: false,
+		sources: sources, files: rc.files, publish: func() {}}
+	// read tools only — ask_user has no human to halt for in a background run
+	var specs []ai.ToolSpec
+	for _, spec := range tb.specs(rc.files) {
+		if spec.Name != "ask_user" {
+			specs = append(specs, spec)
+		}
+	}
+	return tb, specs, nil
+}
+
 // ---------------------------------------------------------------- worker
 
-// driftWorker checks the scope one unit (document / source) per AI loop,
-// persisting findings incrementally. Per-unit failures are recorded and the
-// run continues; only cancellation stops it early.
+// driftWorker runs the recipe over the scope one unit (document / source) at a
+// time, persisting findings incrementally. Per-unit failures are recorded and
+// the run continues; cancellation and the model-call ceiling stop it early,
+// both leaving it resumable.
 func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key string, runID int64,
-	mode string, repo *project.Project, branch string, units []string, files map[string]string,
-	sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string,
-	resumedFrom int64) {
+	rec *recipe.Recipe, repo *project.Project, branch string, units []string, files map[string]string,
+	sources []ai.GroundingSource, idx *linkIndex, reportPath, focus string,
+	resumedFrom int64, stageState string) {
 	defer cancel()
 	defer s.drift.release(key)
 
@@ -827,8 +942,9 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	var activity []string
 	var extracted []map[string]string
 	status := "ok"
+	perSource := rec.Units == recipe.UnitsSources
 	label := func(unit string) string {
-		if mode == "gaps" {
+		if perSource {
 			return "~" + unit
 		}
 		return unit
@@ -863,16 +979,23 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	}
 	sort.Strings(srcNames)
 	var line string
-	switch mode {
+	switch rec.Slug {
 	case "extract":
 		line = fmt.Sprintf("▸ analyzing %d application source%s into extracted requirements",
 			len(units), plural(len(units)))
 	case "gaps":
 		line = fmt.Sprintf("▸ gap analysis over %d source%s (%s)",
 			len(units), plural(len(units)), strings.Join(srcNames, ", "))
-	default:
+	case "drift":
 		line = fmt.Sprintf("▸ drift check of %d document%s against %s",
 			len(units), plural(len(units)), strings.Join(srcNames, ", "))
+	default: // a project's own recipe says what it is
+		unitNoun := "document"
+		if perSource {
+			unitNoun = "source"
+		}
+		line = fmt.Sprintf("▸ %s over %d %s%s (%s)", rec.Name,
+			len(units), unitNoun, plural(len(units)), strings.Join(srcNames, ", "))
 	}
 	if focus != "" { // every mode can be aimed at one area
 		line += " · focus: " + focus
@@ -882,6 +1005,41 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		note(fmt.Sprintf("▸ picking up run %d where it stopped", resumedFrom))
 	}
 	persist(0)
+
+	// the run's shared execution context: everything a unit's stages need that
+	// does not change between them
+	ceiling := s.ai.MaxCallsPerRun()
+	var state unitState
+	if stageState != "" {
+		_ = json.Unmarshal([]byte(stageState), &state)
+	}
+	rc := &runContext{
+		repo: repo, branch: branch, rec: rec, files: files, sources: sources, idx: idx,
+		focus: focus, report: reportPath,
+		docIndex: strings.Join(resolveDriftScope(files, nil, nil), "\n"),
+		spend: func(n int) error {
+			total, err := s.store.AddDriftRunAICalls(runID, n)
+			if err == nil && total > ceiling {
+				return errCallCeiling
+			}
+			return err
+		},
+		save: func(st *unitState) error {
+			raw, err := json.Marshal(st)
+			if err != nil {
+				return err
+			}
+			if len(raw) > maxStageStateBytes {
+				// overshooting costs a redo of this unit on resume, never a
+				// failure — so drop the checkpoint rather than the run
+				return s.store.SetDriftRunStageState(runID, "")
+			}
+			return s.store.SetDriftRunStageState(runID, string(raw))
+		},
+	}
+	if state.Unit != "" {
+		rc.state = &state
+	}
 	// how far the run actually got: a cancelled or interrupted run must NOT
 	// report every unit done, or its remaining work looks finished and it
 	// cannot be picked up (store.DriftRun.Resumable)
@@ -898,10 +1056,17 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		persist(i)
 		s.publish("drift", repo.Key(), branch)
 		started := time.Now()
-		switch mode {
-		case "extract":
+		// the toolbox is rebuilt per stage: a stage may narrow which source
+		// files its tools can even see, and that filter has to bind the tools
+		// themselves, not just the prompt
+		rc.note = liveNote(i)
+		rc.tools = func(filter recipe.FileFilter) (*speccyToolbox, []ai.ToolSpec, error) {
+			return s.recipeToolbox(rc, filter, liveNote(i))
+		}
+		switch rec.Output {
+		case recipe.OutputExtraction:
 			var groups []extractedGroup
-			groups, droppedDoc, err = s.driftCheckExtract(ctx, repo, branch, unit, files, sources, instructions, focus, liveNote(i))
+			groups, droppedDoc, err = s.runRecipeExtraction(ctx, rc, unit)
 			if err == nil {
 				reqs := 0
 				for _, g := range groups {
@@ -927,10 +1092,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 						reqs, plural(reqs), len(groups), plural(len(groups))))
 				}
 			}
-		case "gaps":
-			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, reportPath, focus, liveNote(i))
 		default:
-			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, reportPath, focus, liveNote(i))
+			findings, droppedDoc, err = s.runRecipeFindings(ctx, rc, unit)
 		}
 		dropped += droppedDoc
 		if err != nil {
@@ -938,10 +1101,17 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				status = "cancelled"
 				break
 			}
+			// the ceiling is a budget, not a fault: the units already checked
+			// stand and the rest can be picked up
+			if errors.Is(err, errCallCeiling) {
+				status = "capped"
+				note(fmt.Sprintf("▪ reached the model-call ceiling (%d) — the rest can be picked up", ceiling))
+				break
+			}
 			log.Printf("drift [%s@%s]: %s: %v", repo.ID, branch, unit, err)
 			docErrs = append(docErrs, unit+": "+err.Error())
 			note("  ✗ " + err.Error())
-		} else if mode == "extract" {
+		} else if rec.Output == recipe.OutputExtraction {
 			if droppedDoc > 0 {
 				note(fmt.Sprintf("    ✗ %d requirement%s dropped — evidence not found in the source",
 					droppedDoc, plural(droppedDoc)))
@@ -956,8 +1126,11 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 					log.Printf("drift [%s@%s]: persist %s: %v", repo.ID, branch, f.Fingerprint, err)
 				}
 			}
-			// scope-aware reconciliation: only THIS unit's stale findings resolve
-			if mode == "gaps" {
+			// scope-aware reconciliation: only THIS unit's stale findings
+			// resolve, so a scoped run never clears what it did not re-check.
+			// A per-source recipe's findings carry no doc path — they are keyed
+			// by the source instead.
+			if perSource {
 				err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep)
 			} else {
 				err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep)
@@ -966,7 +1139,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, unit, err)
 			}
 			word := "finding"
-			if mode == "gaps" {
+			if rec.Slug == "gaps" {
 				word = "gap"
 			}
 			took := time.Since(started).Round(time.Millisecond)
@@ -978,7 +1151,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 				note(fmt.Sprintf("  ✓ %d %s%s (%s)", n, word, plural(n), took))
 				for _, f := range findings {
 					where := f.Anchor
-					if f.Kind == "coverage-gap" {
+					if f.DocPath == "" {
 						where = "~" + f.Source + "/" + f.Anchor
 					}
 					line := fmt.Sprintf("    ⚠ %s %s @ %s — %s", f.Severity, f.Kind, where, f.Title)
@@ -994,6 +1167,11 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			}
 		}
 		done = i + 1
+		// the unit is finished: drop its stage checkpoint. Only the IN-FLIGHT
+		// unit's state is ever stored, which is what keeps the blob bounded
+		// however long the run is.
+		rc.state = nil
+		_ = s.store.SetDriftRunStageState(runID, "")
 		persist(done)
 		// the in-repo report follows along — every completed unit updates it
 		s.writeDriftReport(runID, repo, branch, false)
@@ -1310,142 +1488,82 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 	return b.String()
 }
 
-// driftCheckDoc runs one document through the audit loop and returns its
-// verified findings plus the count dropped by evidence verification. The
-// doc's linked documents ride along as context (idx may be nil).
-func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branch, doc string,
-	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string,
-	note func(string)) ([]store.DriftFinding, int, error) {
-	content, ok := files[doc]
-	if !ok {
-		return nil, 0, fmt.Errorf("not in snapshot")
+// runRecipeUnit executes the run's recipe for ONE unit and turns the terminal
+// stage's items into verified findings.
+//
+// This replaced driftCheckDoc and driftCheckGaps: both were the same function
+// with a different prompt and a different anchor rule, and both of those now
+// live in the recipe (internal/recipe/builtin). What stayed in code is the part
+// that must never be a recipe's choice — evidence verification, fingerprinting
+// and de-duplication.
+func (s *Server) runRecipeFindings(ctx context.Context, rc *runContext, unit string) ([]store.DriftFinding, int, error) {
+	rc.dropped = 0
+	produced, err := s.runUnit(ctx, rc, unit)
+	if err != nil {
+		return nil, rc.dropped, err
 	}
-	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
-		files: files, publish: func() {}}
-	// read tools only — ask_user has no human to halt for in a background run
-	var specs []ai.ToolSpec
-	for _, spec := range tb.specs(files) {
-		if spec.Name != "ask_user" {
-			specs = append(specs, spec)
-		}
-	}
-	names := make([]string, 0, len(sources))
-	for _, src := range sources {
-		names = append(names, src.Name)
-	}
-	sort.Strings(names)
-	linked := ""
-	if idx != nil {
-		linked = idx.linkedBlock(files, doc)
-	}
-	extracted := ""
-	for _, n := range names { // the analyzed baseline, when the app was extracted
-		if b := extractionContext(files, reportPath, n); b != "" {
-			extracted += "\n## ~" + n + "\n" + b + "\n"
-		}
-	}
-	if extracted != "" {
-		note("    · using extracted requirements as the baseline")
-	}
-	msgs := ai.DriftPrompt(doc, content, linked, extracted, focus, instructions, names)
-
-	var out struct {
-		Findings []modelFinding `json:"findings"`
-	}
-	if err := s.askJSON(ai.WithLabel(ctx, "drift "+doc), msgs, specs, tb.exec, note, &out); err != nil {
-		return nil, 0, err
+	rec := rc.rec
+	// gaps-style recipes anchor findings on the SOURCE and carry no doc path;
+	// drift-style ones audit a document
+	docPath := ""
+	if rec.Units == recipe.UnitsDocs {
+		docPath = unit
 	}
 	var findings []store.DriftFinding
-	dropped := 0
 	seen := map[string]bool{}
-	for _, f := range out.Findings {
-		if !verifyEvidence(f, sources) {
-			dropped++
+	for _, item := range recipeFindings(rec, produced) {
+		f := toModelFinding(item.Fields)
+		if rec.Units == recipe.UnitsSources {
+			f.Source = unit // the unit's source, whatever the model claims
+		}
+		anchor := strings.TrimSpace(f.Anchor)
+		// an anchor IS the finding's identity across re-runs — one without it
+		// would get a new fingerprint every time and never stay dismissed.
+		// (The evidence was already checked as the stage produced it.)
+		if anchor == "" {
+			rc.dropped++
 			continue
 		}
-		kind := normDriftKind(f.Kind)
-		anchor := strings.TrimSpace(f.Anchor)
-		fp := driftFingerprint(doc, f.Source, kind, anchor)
+		kind := rec.NormKind(f.Kind)
+		fp := driftFingerprint(docPath, f.Source, kind, anchor)
 		if seen[fp] {
 			continue
 		}
 		seen[fp] = true
+		suggested := cleanDocPath(f.SuggestedPath)
+		if suggested == "" {
+			if k, ok := rec.Kind(kind); ok {
+				suggested = cleanDocPath(k.SuggestedPath)
+			}
+		}
+		severity := normDriftSeverity(f.Severity)
+		if f.Severity == "" {
+			if k, ok := rec.Kind(kind); ok && k.Severity != "" {
+				severity = k.Severity
+			}
+		}
 		evidence, _ := json.Marshal(f.Evidence)
 		findings = append(findings, store.DriftFinding{
-			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp,
-			DocPath: doc, SuggestedPath: cleanDocPath(f.SuggestedPath),
+			RepoKey: rc.repo.Key(), Branch: rc.branch, Fingerprint: fp,
+			DocPath: docPath, SuggestedPath: suggested,
 			Anchor: anchor, Source: f.Source, Kind: kind,
-			Severity: normDriftSeverity(f.Severity), Title: strings.TrimSpace(f.Title),
+			Severity: severity, Title: strings.TrimSpace(f.Title),
 			Detail: strings.TrimSpace(f.Detail), EvidenceJSON: string(evidence),
 		})
 	}
-	return findings, dropped, nil
+	return findings, rc.dropped, nil
 }
 
-// driftCheckGaps sweeps one reference source for capabilities no workspace
-// document covers (gap analysis). Findings are anchored to the SOURCE and
-// carry no doc_path — reverse engineering (postDriftDraft) creates the
-// missing document from them.
-func (s *Server) driftCheckGaps(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions, reportPath, focus string,
-	note func(string)) ([]store.DriftFinding, int, error) {
-	var src *ai.GroundingSource
-	for i := range sources {
-		if sources[i].Name == sourceName {
-			src = &sources[i]
-			break
-		}
-	}
-	if src == nil {
-		return nil, 0, fmt.Errorf("unknown source")
-	}
-	tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
-		files: files, publish: func() {}}
-	var specs []ai.ToolSpec
-	for _, spec := range tb.specs(files) {
-		if spec.Name != "ask_user" {
-			specs = append(specs, spec)
-		}
-	}
-	docs := resolveDriftScope(files, nil, nil)
-	extracted := extractionContext(files, reportPath, sourceName)
-	if extracted != "" {
-		note("    · using extracted requirements as the baseline")
-	}
-	msgs := ai.GapPrompt(sourceName, strings.Join(docs, "\n"), extracted, focus, instructions)
-
-	var out struct {
-		Findings []modelFinding `json:"findings"`
-	}
-	if err := s.askJSON(ai.WithLabel(ctx, "gaps ~"+sourceName), msgs, specs, tb.exec, note, &out); err != nil {
-		return nil, 0, err
-	}
-	var findings []store.DriftFinding
-	droppedCount := 0
-	seen := map[string]bool{}
-	for _, f := range out.Findings {
-		f.Source = sourceName // the sweep's source, whatever the model claims
-		anchor := strings.TrimSpace(f.Anchor)
-		if anchor == "" || !verifyEvidence(f, sources) {
-			droppedCount++
-			continue
-		}
-		fp := driftFingerprint("", sourceName, "coverage-gap", anchor)
-		if seen[fp] {
-			continue
-		}
-		seen[fp] = true
-		evidence, _ := json.Marshal(f.Evidence)
-		findings = append(findings, store.DriftFinding{
-			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp,
-			DocPath: "", SuggestedPath: cleanDocPath(f.SuggestedPath),
-			Anchor: anchor, Source: sourceName, Kind: "coverage-gap",
-			Severity: normDriftSeverity(f.Severity), Title: strings.TrimSpace(f.Title),
-			Detail: strings.TrimSpace(f.Detail), EvidenceJSON: string(evidence),
-		})
-	}
-	return findings, droppedCount, nil
+// toModelFinding reads the finding shape out of a stage item. A recipe may name
+// its own kinds, but the SHAPE is the engine's: evidence quotes are what make a
+// finding checkable, so they are not negotiable.
+func toModelFinding(fields map[string]any) modelFinding {
+	raw, _ := json.Marshal(fields)
+	var f modelFinding
+	_ = json.Unmarshal(raw, &f)
+	return f
 }
+
 
 // ---------------------------------------------------------------- extraction
 
@@ -1489,177 +1607,52 @@ type extractedGroup struct {
 	Requirements []extractedRequirement `json:"requirements"`
 }
 
-// driftCheckExtract analyzes ONE application source by divide and conquer:
-// survey it into capability areas, extract each area's requirements on its
-// own AI loop, then walk the results in batches and match them against the
-// workspace's documents. Evidence is verified exactly like a finding's.
-func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions, focus string,
-	note func(string)) ([]extractedGroup, int, error) {
-	var src *ai.GroundingSource
-	for i := range sources {
-		if sources[i].Name == sourceName {
-			src = &sources[i]
-			break
-		}
+// runRecipeExtraction executes an `output: extraction` recipe for ONE source
+// and returns the grouped inventory, with every requirement's evidence verified
+// exactly like a finding's.
+//
+// This replaced driftCheckExtract and matchExtracted. The divide-and-conquer
+// shape they hardcoded — survey the application into areas, extract each area
+// on its own loop, walk the results in batches and match them against the
+// specs — is now three stages in builtin/extract.md, and the engine no longer
+// knows that shape at all.
+func (s *Server) runRecipeExtraction(ctx context.Context, rc *runContext, sourceName string) ([]extractedGroup, int, error) {
+	rc.dropped = 0
+	produced, err := s.runUnit(ctx, rc, sourceName)
+	if err != nil {
+		return nil, rc.dropped, err
 	}
-	if src == nil {
-		return nil, 0, fmt.Errorf("unknown source")
-	}
-	ask := func(askCtx context.Context, msgs []ai.Message, out any) error {
-		tb := &speccyToolbox{repo: repo, branch: branch, writable: false, sources: sources,
-			files: files, publish: func() {}}
-		var specs []ai.ToolSpec
-		for _, spec := range tb.specs(files) {
-			if spec.Name != "ask_user" {
-				specs = append(specs, spec)
-			}
-		}
-		return s.askJSON(askCtx, msgs, specs, tb.exec, note, out)
-	}
-
-	// ---- divide: survey the application into areas
-	var survey struct {
-		Areas []struct {
-			Name    string   `json:"name"`
-			Summary string   `json:"summary"`
-			Paths   []string `json:"paths"`
-		} `json:"areas"`
-	}
-	if err := ask(ai.WithLabel(ctx, "extract survey ~"+sourceName),
-		ai.SurveyPrompt(sourceName, focus, instructions), &survey); err != nil {
-		return nil, 0, fmt.Errorf("survey: %w", err)
-	}
-	areas := survey.Areas[:0:0]
-	for _, a := range survey.Areas {
-		if strings.TrimSpace(a.Name) != "" {
-			areas = append(areas, a)
-		}
-	}
-	if len(areas) == 0 {
-		if focus != "" { // aiming at an area the source has nothing in is an answer, not a failure
-			note("  ▸ nothing in ~" + sourceName + " belongs to “" + focus + "”")
-			return nil, 0, nil
-		}
-		return nil, 0, fmt.Errorf("survey returned no areas")
-	}
-	if len(areas) > maxExtractAreas {
-		note(fmt.Sprintf("    · %d areas surveyed — capped at %d", len(areas), maxExtractAreas))
-		areas = areas[:maxExtractAreas]
-	}
-	note(fmt.Sprintf("  ▸ divided ~%s into %d area%s", sourceName, len(areas), plural(len(areas))))
-
-	// ---- conquer: one extraction pass per area
-	dropped := 0
-	var groups []extractedGroup
-	for i, a := range areas {
-		if ctx.Err() != nil {
-			return groups, dropped, ctx.Err()
-		}
-		note(fmt.Sprintf("  ▸ area %d/%d: %s", i+1, len(areas), a.Name))
-		var out struct {
-			Requirements []extractedRequirement `json:"requirements"`
-		}
-		if err := ask(ai.WithLabel(ctx, "extract area "+a.Name),
-			ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, focus, instructions), &out); err != nil {
-			note("    ✗ " + a.Name + ": " + err.Error()) // one bad area never sinks the source
-			continue
-		}
-		kept := make([]extractedRequirement, 0, len(out.Requirements))
-		for _, r := range out.Requirements {
-			if strings.TrimSpace(r.Statement) == "" ||
-				!verifyEvidence(modelFinding{Source: sourceName, Evidence: r.Evidence}, sources) {
-				dropped++
+	groups := recipeGroups(rc.rec, produced)
+	out := make([]extractedGroup, 0, len(groups))
+	for _, g := range groups {
+		kept := make([]extractedRequirement, 0, len(g.Requirements))
+		for _, r := range g.Requirements {
+			// the evidence was checked as the stage produced it; a statement-less
+			// requirement is the one thing only this shape can judge
+			if strings.TrimSpace(r.Statement) == "" {
+				rc.dropped++
 				continue
 			}
-			r.Coverage, r.CoveredBy, r.Note = "none", "", ""
-			kept = append(kept, r)
-		}
-		note(fmt.Sprintf("    ✓ %d requirement%s", len(kept), plural(len(kept))))
-		if len(kept) > 0 {
-			groups = append(groups, extractedGroup{Name: strings.TrimSpace(a.Name),
-				Summary: strings.TrimSpace(a.Summary), Requirements: kept})
-		}
-	}
-
-	// ---- match: walk the extracted requirements against the specs
-	s.matchExtracted(ctx, groups, files, ask, note, instructions)
-	return groups, dropped, nil
-}
-
-// matchExtracted walks every extracted requirement in batches and asks which
-// workspace document already states it. Best-effort per batch: a failed batch
-// leaves its requirements unmatched rather than failing the extraction.
-func (s *Server) matchExtracted(ctx context.Context, groups []extractedGroup, files map[string]string,
-	ask func(context.Context, []ai.Message, any) error, note func(string), instructions string) {
-	type ref struct{ g, r int }
-	var flat []ref
-	for gi := range groups {
-		for ri := range groups[gi].Requirements {
-			flat = append(flat, ref{gi, ri})
-		}
-	}
-	if len(flat) == 0 {
-		return
-	}
-	docIndex := strings.Join(resolveDriftScope(files, nil, nil), "\n")
-	matched := 0
-	for start := 0; start < len(flat); start += matchBatchSize {
-		if ctx.Err() != nil {
-			return
-		}
-		end := start + matchBatchSize
-		if end > len(flat) {
-			end = len(flat)
-		}
-		var items strings.Builder
-		for i, f := range flat[start:end] {
-			r := groups[f.g].Requirements[f.r]
-			fmt.Fprintf(&items, "%d. [%s] %s\n", i+1, groups[f.g].Name, r.Statement)
-		}
-		note(fmt.Sprintf("  ▸ matching %d-%d of %d against the specs", start+1, end, len(flat)))
-		var out struct {
-			Matches []struct {
-				Index    int    `json:"index"`
-				Coverage string `json:"coverage"`
-				Document string `json:"document"`
-				Note     string `json:"note"`
-			} `json:"matches"`
-		}
-		if err := ask(ai.WithLabel(ctx, fmt.Sprintf("match %d-%d", start+1, end)),
-			ai.MatchPrompt(items.String(), docIndex, instructions), &out); err != nil {
-			note("    ✗ matching failed: " + err.Error())
-			continue
-		}
-		for _, m := range out.Matches {
-			if m.Index < 1 || m.Index > end-start {
-				continue
+			// a match naming a document that does not exist is no match
+			if r.CoveredBy != "" {
+				if _, ok := rc.files[cleanDocPath(r.CoveredBy)]; !ok {
+					r.Coverage, r.CoveredBy = "none", ""
+				}
 			}
-			f := flat[start+m.Index-1]
-			r := &groups[f.g].Requirements[f.r]
-			doc := cleanDocPath(m.Document)
-			if _, ok := files[doc]; !ok { // only a real document counts
-				doc = ""
-			}
-			switch strings.ToLower(strings.TrimSpace(m.Coverage)) {
-			case "full":
-				r.Coverage = "full"
-			case "partial":
-				r.Coverage = "partial"
-			default:
-				r.Coverage, doc = "none", ""
-			}
-			if doc == "" && r.Coverage != "none" { // a claim without a document is no claim
+			if r.Coverage != "none" && r.CoveredBy == "" {
 				r.Coverage = "none"
 			}
-			r.CoveredBy, r.Note = doc, strings.TrimSpace(m.Note)
-			if r.Coverage != "none" {
-				matched++
-			}
+			r.Note = strings.TrimSpace(r.Note)
+			kept = append(kept, r)
+		}
+		if len(kept) > 0 {
+			g.Requirements = kept
+			out = append(out, g)
 		}
 	}
-	note(fmt.Sprintf("  ✓ matched %d of %d requirement%s to documents", matched, len(flat), plural(len(flat))))
+	return out, rc.dropped, nil
 }
+
 
 // writeExtraction persists a source's inventory beside the alignment report,
 // preserving whatever the human wrote outside the engine block.
@@ -2829,12 +2822,20 @@ func (s *Server) claimWorkspace(r *http.Request, repo *project.Project) (string,
 // full model call to redo. Transport blips are handled a layer down, in
 // ai.Client's own retry.
 func (s *Server) askJSON(ctx context.Context, msgs []ai.Message, specs []ai.ToolSpec, exec ai.ToolExec, note func(string), out any) error {
+	return s.askJSONWith(ctx, s.ai, msgs, specs, exec, note, out)
+}
+
+// askJSONWith is askJSON against a NAMED model: an alignment recipe may pick a
+// model per stage (a cheap one to survey, a thinking-class one to judge), and
+// the JSON-repair behaviour must be identical whichever it picks.
+func (s *Server) askJSONWith(ctx context.Context, client *ai.Client, msgs []ai.Message,
+	specs []ai.ToolSpec, exec ai.ToolExec, note func(string), out any) error {
 	if note == nil {
 		note = func(string) {}
 	}
 	for attempt := 0; ; attempt++ {
 		var reply strings.Builder
-		if _, _, err := s.ai.StreamTools(ctx, msgs, specs, exec,
+		if _, _, err := client.StreamTools(ctx, msgs, specs, exec,
 			func(delta string) error { reply.WriteString(delta); return nil },
 			func(tc ai.ToolCall, _ string, execErr error) error { note(toolNote(tc, execErr)); return nil },
 		); err != nil {

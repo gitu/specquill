@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -155,5 +156,78 @@ func TestRetryAfterHeaderIsHonoured(t *testing.T) {
 		if got := retryAfter(err); got != tc.want {
 			t.Errorf("Retry-After %q → %v, want %v", tc.header, got, tc.want)
 		}
+	}
+}
+
+// WithModel is the seam that lets an alignment recipe pick a model per stage.
+// It must not mutate the receiver — every other call site keeps the tier it
+// was configured with.
+func TestWithModelCopiesRatherThanMutating(t *testing.T) {
+	c := New(config.AIConfig{BaseURL: "http://x", Model: "main-1", QuickModel: "quick-1"})
+	other := c.WithModel("special-1")
+	if c.Model() != "main-1" {
+		t.Fatalf("receiver mutated: %q", c.Model())
+	}
+	if other.Model() != "special-1" {
+		t.Fatalf("override not applied: %q", other.Model())
+	}
+	// tier aliases resolve; a no-op override returns the same client
+	if got := c.WithModel("quick").Model(); got != "quick-1" {
+		t.Errorf(`WithModel("quick") = %q`, got)
+	}
+	for _, id := range []string{"", "default", "main-1"} {
+		if c.WithModel(id) != c {
+			t.Errorf("WithModel(%q) should be a no-op", id)
+		}
+	}
+}
+
+func TestWithModelReachesTheRequestBody(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = body.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	c := New(config.AIConfig{BaseURL: srv.URL, Model: "main-1"})
+	if _, err := c.WithModel("special-1").Complete(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if got != "special-1" {
+		t.Fatalf("provider saw model %q", got)
+	}
+}
+
+// The allowlist is what a recipe may name: both tiers plus ai.models, deduped.
+func TestModelsAllowlist(t *testing.T) {
+	c := New(config.AIConfig{
+		BaseURL: "http://x", Model: "main-1", QuickModel: "quick-1",
+		Models: []string{"extra-1", "main-1"},
+	})
+	want := []string{"main-1", "quick-1", "extra-1"}
+	got := c.Models()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	allowed := c.AllowedModels()
+	if !allowed["extra-1"] || allowed["nope"] {
+		t.Fatalf("allowlist wrong: %v", allowed)
+	}
+	if c.MaxCallsPerRun() != defaultMaxCallsPerRun {
+		t.Errorf("default ceiling: %d", c.MaxCallsPerRun())
+	}
+	if n := New(config.AIConfig{MaxCallsPerRun: 42}).MaxCallsPerRun(); n != 42 {
+		t.Errorf("configured ceiling: %d", n)
 	}
 }

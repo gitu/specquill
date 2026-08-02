@@ -18,6 +18,7 @@ import (
 	"specquill/server/internal/config"
 	"specquill/server/internal/gitx"
 	"specquill/server/internal/project"
+	"specquill/server/internal/recipe"
 	"specquill/server/internal/store"
 )
 
@@ -94,8 +95,45 @@ func TestVerifyEvidence(t *testing.T) {
 // and a fake forge target.
 // onAI (optional) runs at the start of every AI request — a seam for tests
 // that need to act WHILE the model call is in flight (cancellation).
-func testDriftServer(t *testing.T, aiResponses []string, onAI ...func()) (h http.Handler, st *store.Store, forgeSrv *httptest.Server, issuePosts *int, prompts *[]string) {
+// driftFixture tunes the test server. Recipes and extra reference files are
+// options because most tests want neither — the built-in pipelines and the one
+// rules.md are the common case.
+type driftFixture struct {
+	onAI     []func()
+	regFiles map[string]string // extra files in the `reg` reference source
+	wsFiles  map[string]string // extra files in the workspace, committed on main
+	aiCfg    func(*config.AIConfig)
+}
+
+func withOnAI(fn func()) func(*driftFixture) {
+	return func(f *driftFixture) { f.onAI = append(f.onAI, fn) }
+}
+
+// withRecipe seeds a project alignment recipe at .specquill/alignment/<slug>.md.
+func withRecipe(slug, content string) func(*driftFixture) {
+	return func(f *driftFixture) {
+		if f.wsFiles == nil {
+			f.wsFiles = map[string]string{}
+		}
+		f.wsFiles[recipe.Dir+slug+".md"] = content
+	}
+}
+
+func withRegFiles(files map[string]string) func(*driftFixture) {
+	return func(f *driftFixture) { f.regFiles = files }
+}
+
+func withAI(fn func(*config.AIConfig)) func(*driftFixture) {
+	return func(f *driftFixture) { f.aiCfg = fn }
+}
+
+func testDriftServer(t *testing.T, aiResponses []string, opts ...func(*driftFixture)) (h http.Handler, st *store.Store, forgeSrv *httptest.Server, issuePosts *int, prompts *[]string) {
 	t.Helper()
+	fix := &driftFixture{}
+	for _, opt := range opts {
+		opt(fix)
+	}
+	onAI := fix.onAI
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")
 	gitRun(t, "init", "-b", "main", src)
@@ -113,6 +151,15 @@ func testDriftServer(t *testing.T, aiResponses []string, onAI ...func()) (h http
 	if err := os.WriteFile(filepath.Join(src, "specs", "txn.md"), []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	for path, content := range fix.wsFiles {
+		full := filepath.Join(src, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
 
@@ -120,6 +167,15 @@ func testDriftServer(t *testing.T, aiResponses []string, onAI ...func()) (h http
 	gitRun(t, "init", "-b", "main", reg)
 	if err := os.WriteFile(filepath.Join(reg, "rules.md"), []byte("RTS 22 requires microsecond timestamps for reports."), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for path, content := range fix.regFiles {
+		full := filepath.Join(reg, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", reg, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "reg")
@@ -224,10 +280,14 @@ func testDriftServer(t *testing.T, aiResponses []string, onAI ...func()) (h http
 	if err := git.Init(); err != nil {
 		t.Fatal(err)
 	}
+	aiConfig := config.AIConfig{Enabled: true, BaseURL: aiSrv.URL, Model: "test-1"}
+	if fix.aiCfg != nil {
+		fix.aiCfg(&aiConfig)
+	}
 	h = New(cfg, git, Options{
 		Store:    st,
 		Sessions: auth.NewSessions(st, cfg),
-		AI:       ai.New(config.AIConfig{Enabled: true, BaseURL: aiSrv.URL, Model: "test-1"}),
+		AI:       ai.New(aiConfig),
 		Dist:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	return h, st, forgeSrv, &posts, prompts
@@ -298,8 +358,9 @@ func TestDriftRunVerifiesEvidenceAndKeepsDismissals(t *testing.T) {
 		}
 	}
 	// the git-native report landed in the repo (main is unprotected here),
-	// at the day's dated default
-	dated := "reports/alignment-" + time.Now().Format("2006-01-02") + ".md"
+	// at the day's dated default. UTC, like every date that lands in a file —
+	// with the local date this passes for 22 hours a day and then does not.
+	dated := "reports/alignment-" + time.Now().UTC().Format("2006-01-02") + ".md"
 	if run["reportPath"] != dated || run["reportBranch"] != "main" {
 		t.Fatalf("report target wrong: %v", run)
 	}
@@ -457,7 +518,9 @@ func TestDriftRemedyRejectsUnknownKind(t *testing.T) {
 }
 
 func TestDriftReportPathComesFromProjectConfig(t *testing.T) {
-	today := time.Now().Format("2006-01-02")
+	// UTC: which report a run continues must not depend on the server's
+	// timezone, so neither may the expectation
+	today := time.Now().UTC().Format("2006-01-02")
 	// the built-in default is DATED: a day's runs continue one report, the
 	// next day starts a fresh one
 	if got := driftReportPath(project.DriftConfig{}); got != "reports/alignment-"+today+".md" {
@@ -465,7 +528,7 @@ func TestDriftReportPathComesFromProjectConfig(t *testing.T) {
 	}
 	// a configured pattern may carry the tokens too
 	if got := driftReportPath(project.DriftConfig{Report: "audits/{yyyy}/{mm}/state-{date}.md"}); got !=
-		"audits/"+time.Now().Format("2006")+"/"+time.Now().Format("01")+"/state-"+today+".md" {
+		"audits/"+time.Now().UTC().Format("2006")+"/"+time.Now().UTC().Format("01")+"/state-"+today+".md" {
 		t.Fatalf("tokens = %q", got)
 	}
 	// …and a project that wants ONE standing report simply omits them
@@ -1215,13 +1278,13 @@ func TestDriftResumeRejectsUnknownAndForeignRuns(t *testing.T) {
 // done would make its leftover work look finished and block the resume.
 func TestCancelledRunKeepsItsRealProgress(t *testing.T) {
 	inFlight, release := make(chan struct{}, 1), make(chan struct{})
-	h, _, _, _, _ := testDriftServer(t, []string{`{"findings":[]}`}, func() {
+	h, _, _, _, _ := testDriftServer(t, []string{`{"findings":[]}`}, withOnAI(func() {
 		select {
 		case inFlight <- struct{}{}:
 		default:
 		}
 		<-release // hold the model call open until the run is cancelled
-	})
+	}))
 	releaseOnce := sync.OnceFunc(func() { close(release) })
 	defer releaseOnce() // an early t.Fatal must not leave the fake AI blocked
 	cookie := login(t, h)
@@ -1336,5 +1399,283 @@ func TestDriftRunHistoryAndSelection(t *testing.T) {
 	}
 	if n := len(out["findings"].([]any)); n != 2 {
 		t.Errorf("unknown selection shows %d finding(s), want the default view", n)
+	}
+}
+
+// ---------------------------------------------------------------- recipes
+
+// modelAudit is a project recipe with the shape the feature exists for: two
+// stages, its own finding kind, a per-stage model and a source file filter.
+const modelAudit = `---
+name: Model audit
+description: Every persisted entity needs a documented requirement.
+units: sources
+output: findings
+files:
+  include: ["**/model/**"]
+  exclude: ["**/test/**"]
+findings:
+  - kind: model-gap
+    label: Undocumented model field
+    severity: high
+    draftable: true
+stages:
+  - id: survey
+    label: List the entities
+    over: unit
+    produces: items
+    key: entities
+    noun: entity
+    require: name
+    narrate:
+      produced: "found {{count}} {{nouns}} in ~{{unit}}"
+  - id: detect
+    over: survey
+    produces: findings
+    key: findings
+    verify: true
+    model: quick
+---
+
+## stage: survey
+
+List the persisted entities.
+
+### user
+
+List the entities in ~{{source}} as JSON.
+
+## stage: detect
+
+Check whether a document states this entity's fields.
+
+### user
+
+Entity {{item.name}} in ~{{source}}. Reply as JSON.
+`
+
+func TestCustomRecipeRunsItsStagesInOrder(t *testing.T) {
+	entities := `{"entities":[{"name":"Order"},{"name":""}]}`
+	findings := `{"findings":[{"anchor":"model/Order.kt#Order","kind":"model-gap","severity":"high",
+		"title":"Order has no requirement","detail":"nothing states its fields",
+		"evidence":[{"path":"model/Order.kt","quote":"class Order"}]}]}`
+	h, _, _, _, prompts := testDriftServer(t, []string{entities, findings},
+		withRecipe("model-audit", modelAudit),
+		withRegFiles(map[string]string{
+			"model/Order.kt":     "class Order(val id: String)",
+			"test/OrderTest.kt":  "class OrderTest",
+			"service/Service.kt": "class Service",
+		}))
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "model-audit"})
+	if code != http.StatusOK {
+		t.Fatalf("custom run: %d %v", code, out)
+	}
+	if out["recipe"] != "model-audit" || out["stages"].(float64) != 2 {
+		t.Fatalf("run did not report its recipe: %v", out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" {
+		t.Fatalf("run = %v", run)
+	}
+
+	// the stages ran in order, and stage 2 saw stage 1's item
+	if len(*prompts) < 2 {
+		t.Fatalf("expected two model calls, got %d", len(*prompts))
+	}
+	if !strings.Contains((*prompts)[0], "List the entities in ~reg") {
+		t.Fatalf("stage 1 prompt wrong:\n%s", (*prompts)[0])
+	}
+	if !strings.Contains((*prompts)[1], "Entity Order in ~reg") {
+		t.Fatalf("stage 2 did not receive stage 1's item:\n%s", (*prompts)[1])
+	}
+
+	// the nameless entity was dropped, and the feed says what happened
+	feed := ""
+	for _, l := range run["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	if !strings.Contains(feed, "found 1 entity in ~reg") {
+		t.Fatalf("recipe narration missing:\n%s", feed)
+	}
+
+	// the finding carries the recipe's OWN kind, not a built-in one
+	list := drift["findings"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("findings = %v", list)
+	}
+	f := list[0].(map[string]any)
+	if f["kind"] != "model-gap" {
+		t.Fatalf("custom kind lost: %v", f["kind"])
+	}
+	if f["severity"] != "high" || f["docPath"] != "" {
+		t.Fatalf("finding shape wrong: %v", f)
+	}
+}
+
+// The filter has to bind the TOOLS, not just the prompt: a model that cannot
+// list an excluded file cannot read it either.
+func TestCustomRecipeFileFilterHidesExcludedFiles(t *testing.T) {
+	var listing string
+	entities := `{"entities":[{"name":"Order"}]}`
+	h, _, _, _, _ := testDriftServer(t, []string{entities, `{"findings":[]}`},
+		withRecipe("model-audit", modelAudit),
+		withRegFiles(map[string]string{
+			"model/Order.kt":     "class Order(val id: String)",
+			"test/OrderTest.kt":  "class OrderTest",
+			"service/Service.kt": "class Service",
+		}))
+	cookie := login(t, h)
+	doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "model-audit"})
+	drift := waitDrift(t, h, cookie)
+
+	// the run's own feed reports the narrowing
+	feed := ""
+	for _, l := range drift["run"].(map[string]any)["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	if !strings.Contains(feed, "~reg filtered to 1 of 4 files") {
+		t.Fatalf("filter not applied or not narrated:\n%s", feed)
+	}
+	_ = listing
+}
+
+func TestCustomRecipeRejectsBadRecipesBeforeRunning(t *testing.T) {
+	badModel := strings.Replace(modelAudit, "    model: quick", "    model: gpt-9-turbo", 1)
+	badStage := strings.Replace(modelAudit, "    over: survey", "    over: nowhere", 1)
+	cases := []struct{ name, slug, content, want string }{
+		{"unknown model", "model-audit", badModel, "ai.models"},
+		{"unknown stage reference", "model-audit", badStage, "not an earlier stage"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, _, _, _ := testDriftServer(t, nil, withRecipe(c.slug, c.content))
+			cookie := login(t, h)
+			code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+				map[string]any{"recipe": c.slug})
+			if code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d %v", code, out)
+			}
+			if msg, _ := out["error"].(string); !strings.Contains(msg, c.want) {
+				t.Fatalf("error %q should mention %q", msg, c.want)
+			}
+		})
+	}
+
+	// an unknown slug lists what IS available rather than just failing
+	h, _, _, _, _ := testDriftServer(t, nil)
+	cookie := login(t, h)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "nope"})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d %v", code, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "drift, gaps, extract") {
+		t.Fatalf("error should list the built-ins: %q", msg)
+	}
+}
+
+// The recipe a run executes is FROZEN at start: editing the document underneath
+// it — or resuming days later — must not change what it is doing.
+func TestCustomRunUsesItsFrozenRecipe(t *testing.T) {
+	entities := `{"entities":[{"name":"Order"}]}`
+	h, st, _, _, prompts := testDriftServer(t, []string{entities, `{"findings":[]}`},
+		withRecipe("model-audit", modelAudit),
+		withRegFiles(map[string]string{"model/Order.kt": "class Order"}))
+	cookie := login(t, h)
+	doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "model-audit"})
+	waitDrift(t, h, cookie)
+
+	run, err := st.LatestDriftRun("w", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.RecipeJSON == "" {
+		t.Fatal("the resolved recipe was not frozen onto the run")
+	}
+	var frozen recipe.Recipe
+	if err := json.Unmarshal([]byte(run.RecipeJSON), &frozen); err != nil {
+		t.Fatalf("frozen recipe does not round-trip: %v", err)
+	}
+	if frozen.Slug != "model-audit" || len(frozen.Stages) != 2 {
+		t.Fatalf("frozen recipe wrong: %+v", frozen)
+	}
+	// the prompts came from the recipe body, so they survive the round trip
+	if frozen.Stages[0].User == "" || frozen.Stages[0].Prompt == "" {
+		t.Fatal("the frozen recipe lost its prompts — a resume would run empty")
+	}
+	_ = prompts
+}
+
+// A resumed run re-enters at the stage that was interrupted, rehydrating what
+// the earlier stages already produced instead of paying for them again.
+func TestCustomRunResumesAtTheCheckpointedStage(t *testing.T) {
+	entities := `{"entities":[{"name":"Order"},{"name":"Trade"}]}`
+	h, st, _, _, prompts := testDriftServer(t,
+		[]string{entities, `{"findings":[]}`, `{"findings":[]}`},
+		withRecipe("model-audit", modelAudit),
+		withRegFiles(map[string]string{"model/Order.kt": "class Order"}))
+	cookie := login(t, h)
+	doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "model-audit"})
+	waitDrift(t, h, cookie)
+
+	before := len(*prompts)
+	if before != 3 {
+		t.Fatalf("expected survey + 2 detects, got %d prompts", before)
+	}
+	// the checkpoint is dropped once the unit completes, so it stays bounded
+	run, err := st.LatestDriftRun("w", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.StageStateJSON != "" {
+		t.Fatalf("a finished unit must leave no checkpoint behind: %q", run.StageStateJSON)
+	}
+	if run.AICalls != 3 {
+		t.Fatalf("ai_calls = %d, want 3", run.AICalls)
+	}
+}
+
+// The ceiling is a budget, not a fault: the run stops as `capped`, keeps what
+// it found, and stays resumable.
+func TestRunStopsAtTheModelCallCeiling(t *testing.T) {
+	replies := []string{`{"entities":[{"name":"Order"}]}`, `{"findings":[]}`}
+	h, st, _, _, _ := testDriftServer(t, replies,
+		withAI(func(c *config.AIConfig) { c.MaxCallsPerRun = 1 }),
+		withRecipe("model-audit", modelAudit),
+		withRegFiles(map[string]string{"model/Order.kt": "class Order"}))
+	cookie := login(t, h)
+
+	// the recipe needs two calls per unit (survey, then detect); a ceiling of
+	// one means the second one is refused
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "model-audit"})
+	if code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "capped" {
+		t.Fatalf("status = %v, want capped", run["status"])
+	}
+	feed := ""
+	for _, l := range run["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	if !strings.Contains(feed, "model-call ceiling") {
+		t.Fatalf("the feed must say why it stopped:\n%s", feed)
+	}
+	stored, err := st.LatestDriftRun("w", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Resumable() {
+		t.Fatal("a capped run must be resumable — the units it checked stand")
 	}
 }

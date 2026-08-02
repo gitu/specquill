@@ -101,8 +101,8 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_key           TEXT NOT NULL,
   branch             TEXT NOT NULL,
-  mode               TEXT NOT NULL DEFAULT 'drift', -- drift (per-doc verify) | gaps (per-source coverage)
-  status             TEXT NOT NULL,               -- running | ok | error | cancelled | interrupted
+  mode               TEXT NOT NULL DEFAULT 'drift', -- the recipe slug: drift | gaps | extract | a project's own
+  status             TEXT NOT NULL,               -- running | ok | error | cancelled | interrupted | capped
   error              TEXT NOT NULL DEFAULT '',
   scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list (gaps: source list)
   docs_total         INT NOT NULL DEFAULT 0,
@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS drift_runs (
   sources_json       TEXT NOT NULL DEFAULT '[]',  -- reference names this run was restricted to (resume)
   focus              TEXT NOT NULL DEFAULT '',    -- gaps: the area the sweep was aimed at (resume)
   resumed_from       INT NOT NULL DEFAULT 0,      -- the run this one picked up where it stopped
+  -- the RESOLVED recipe, frozen at start: a run stays reproducible and
+  -- resumable after its recipe document is edited underneath it
+  recipe_json        TEXT NOT NULL DEFAULT '',
+  -- per-stage checkpoint for the IN-FLIGHT unit only (pruned when a unit
+  -- completes, so it is bounded by one unit's intermediate output): a resume
+  -- re-enters at the stage that was interrupted instead of redoing the unit
+  stage_state_json   TEXT NOT NULL DEFAULT '',
+  ai_calls           INT NOT NULL DEFAULT 0,      -- model calls spent (against ai.max_calls_per_run)
   started_at         BIGINT NOT NULL,
   finished_at        BIGINT NOT NULL DEFAULT 0
 );
