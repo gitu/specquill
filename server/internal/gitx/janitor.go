@@ -21,7 +21,7 @@ func LockDataDir(dataDir string) (release func(), err error) {
 	}
 	if err := lockFile(f); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("data dir %s is locked by another specquill instance", dataDir)
+		return nil, fmt.Errorf("lock data dir %s (another specquill instance running?): %w", dataDir, err)
 	}
 	return func() { _ = f.Close() }, nil
 }

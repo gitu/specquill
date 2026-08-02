@@ -1,13 +1,14 @@
-//go:build !windows
+//go:build unix
 
 package gitx
 
 import (
 	"os"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // lockFile takes a non-blocking exclusive lock, held until f is closed.
 func lockFile(f *os.File) error {
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	return unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 }
