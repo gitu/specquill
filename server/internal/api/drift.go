@@ -183,9 +183,25 @@ var driftKindSet = map[string]bool{
 	"coverage-gap":    true,
 }
 
-// draftableKinds are the findings whose remedy is a NEW document, so the
-// reverse-engineer action applies to them.
-func draftableKind(k string) bool { return k == "coverage-gap" || k == "new-requirement" }
+// draftableKind reports whether a finding's remedy is a NEW document, so the
+// reverse-engineer action applies to it.
+//
+// A recipe declares this per kind, so the answer comes from the RUN that found
+// it — a project's own recipe names its own kinds and says which of them
+// propose a document. Gate the action on this, NEVER on an empty doc path:
+// drift's `new-requirement` findings do name a document and are draftable all
+// the same.
+func (s *Server) draftableKind(f *store.DriftFinding) bool {
+	if run, err := s.store.DriftRunByID(f.RunID); err == nil && run.RecipeJSON != "" {
+		var rec recipe.Recipe
+		if json.Unmarshal([]byte(run.RecipeJSON), &rec) == nil && len(rec.Findings) > 0 {
+			return rec.Draftable(f.Kind)
+		}
+	}
+	// a finding from before recipes were frozen onto runs, or a run since
+	// pruned: fall back to the kinds the built-ins declare
+	return f.Kind == "coverage-gap" || f.Kind == "new-requirement"
+}
 
 func normDriftKind(k string) string {
 	k = strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(k)), " ", "-"), "_", "-")
@@ -468,8 +484,29 @@ func driftRunWire(run *store.DriftRun) map[string]any {
 	var scope, activity []string
 	_ = json.Unmarshal([]byte(run.ScopeJSON), &scope)
 	_ = json.Unmarshal([]byte(run.ActivityJSON), &activity)
+	// the run's frozen recipe, so the page can label a custom finding kind with
+	// the words the recipe gave it rather than showing a raw slug
+	var kinds []map[string]any
+	recipeName := run.Mode
+	if run.RecipeJSON != "" {
+		var rec recipe.Recipe
+		if json.Unmarshal([]byte(run.RecipeJSON), &rec) == nil {
+			if rec.Name != "" {
+				recipeName = rec.Name
+			}
+			for _, k := range rec.Findings {
+				kinds = append(kinds, map[string]any{
+					"kind": k.Kind, "label": k.Label, "draftable": k.Draftable,
+				})
+			}
+		}
+	}
+	if kinds == nil {
+		kinds = []map[string]any{}
+	}
 	return map[string]any{
 		"id": run.ID, "mode": run.Mode, "status": run.Status, "error": run.Error, "scope": scope,
+		"recipeName": recipeName, "kinds": kinds, "aiCalls": run.AICalls,
 		"docsTotal": run.DocsTotal, "docsDone": run.DocsDone,
 		"droppedUnverified": run.DroppedUnverified, "headSha": run.HeadSHA,
 		"activity": activity, "reportPath": run.ReportPath, "reportBranch": run.ReportBranch,
@@ -1869,9 +1906,9 @@ func (s *Server) postDriftDraft(w http.ResponseWriter, r *http.Request, repo *pr
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !draftableKind(finding.Kind) {
+	if !s.draftableKind(finding) {
 		jsonError(w, http.StatusBadRequest,
-			"only coverage-gap and new-requirement findings propose a new document to draft")
+			"this finding's kind does not propose a new document to draft")
 		return
 	}
 	// idempotent: an existing draft is returned, a discarded one is redrafted

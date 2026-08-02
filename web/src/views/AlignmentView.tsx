@@ -56,7 +56,7 @@ export function AlignmentView() {
                 </select>
               </div>
               <div style={sx('padding:11px 14px;font-size:11.5px;color:var(--text-2);display:flex;flex-direction:column;gap:5px')}>
-                <Meta k="mode" v={driftModeLabel(run.mode)} />
+                <Meta k="recipe" v={run.recipeName || driftModeLabel(run.mode)} />
                 <Meta k="status" v={running ? `running · ${run.docsDone}/${run.docsTotal}` : run.status} />
                 <Meta k="started" v={new Date(run.startedAt * 1000).toLocaleString()} />
                 <Meta k="scope" v={`${run.scope?.length ?? 0} ${run.mode === 'drift'
@@ -65,6 +65,7 @@ export function AlignmentView() {
                 {run.focus !== '' && <Meta k="focus" v={run.focus} />}
                 {run.headSha !== '' && <Meta k="checked at" v={run.headSha.slice(0, 10)} />}
                 {run.droppedUnverified > 0 && <Meta k="dropped" v={`${run.droppedUnverified} unverified`} />}
+                {run.aiCalls > 0 && <Meta k="model calls" v={String(run.aiCalls)} />}
                 {run.resumedFrom > 0 && <Meta k="resumed" v={`picked up run ${run.resumedFrom}`} />}
               </div>
             </div>

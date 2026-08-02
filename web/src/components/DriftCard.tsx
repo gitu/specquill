@@ -6,7 +6,8 @@ import { localizeFeed } from '../lib/feed';
 import { projectPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import {
-  DriftFinding, DriftMode, useCancelDrift, useDismissFinding, useDraftRequirement, useDrift,
+  AlignmentRecipe, DriftFinding, DriftMode, DriftRun, RecipeCheck, useAlignmentRecipes, useCancelDrift,
+  useCheckRecipe, useDismissFinding, useDraftRequirement, useDrift,
   FocusArea, PlannedDoc, useCreateDocuments, useFileFinding, useFocusAreas, usePlanDocuments,
   useRemedyFinding, useRunDrift, useTree,
 } from '../api/hooks';
@@ -37,8 +38,12 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
   const cancel = useCancelDrift(repo, branch);
   const { ensureWritableBranch } = useWorkspace();
   const suggest = useFocusAreas(repo, branch);
+  const recipes = useAlignmentRecipes(repo, branch);
+  const check = useCheckRecipe(repo, branch);
   const qc = useQueryClient();
+  // the mode IS a recipe slug: the three built-ins are recipes like any other
   const [mode, setMode] = useState<DriftMode>('drift');
+  const [dryRun, setDryRun] = useState<RecipeCheck | null>(null);
   // folder prefixes (trailing '/') and/or exact document paths; [] = everything
   const [scope, setScope] = useState<string[]>([]);
   const [docFilter, setDocFilter] = useState('');
@@ -63,6 +68,15 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
   const toggle = (list: string[], v: string) =>
     (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
+  const all = recipes.data?.recipes ?? [];
+  const custom = all.filter((r) => !r.builtin);
+  const activeRecipe: AlignmentRecipe | undefined = all.find((r) => r.slug === mode);
+  const recipeErrors = Object.entries(recipes.data?.errors ?? {});
+  // WHICH units a run iterates is the recipe's call, not the mode's: drift
+  // walks documents, gaps and extraction walk sources, and a project recipe
+  // says for itself.
+  const unitsAreDocs = activeRecipe ? activeRecipe.units === 'docs' : mode === 'drift';
+
   const data = drift.data;
   if (!data?.enabled) return null;
   const shown = data.run;
@@ -71,7 +85,9 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
   const running = shown?.status === 'running';
   const active = data.activeRunId !== 0 && !running;
   const sources = data.sources ?? [];
-  const unitNoun = shown?.mode === 'drift' ? 'docs' : 'sources';
+  // what the SHOWN run was walking (its own recipe's call, not the picker's)
+  const shownScope = data.runs?.find((r) => r.id === shown?.id);
+  const unitNoun = (shown?.scope?.length ?? 0) > 0 && shown!.scope[0].endsWith('.md') ? 'docs' : 'sources';
 
   // never hardcode a path here: the standing report is the PROJECT's
   // (drift.report: in its .specquill/config.yml), reported by the server.
@@ -88,9 +104,10 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
         mode, report: reportTarget, branch: on,
         ...(pickSources.length ? { sources: pickSources } : {}),
         ...(focus.trim() ? { focus: focus.trim() } : {}),
-        ...(mode === 'drift' ? { paths: scope } : {}),
+        ...(unitsAreDocs ? { paths: scope } : {}),
       };
       await run.mutateAsync(body);
+      setDryRun(null);
       onSelectRun?.(0); // follow the run that was just started
       // the switch remounts this card's query against the new branch; that
       // mount fetch can land BEFORE the run row exists, and a card showing
@@ -165,7 +182,7 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
                   ? 'The server restarted during this run.'
                   : shown.status === 'cancelled' ? 'This run was stopped.' : 'This run failed part way.'}
                 {' '}
-                <strong>{shown.docsDone} of {shown.docsTotal}</strong> {shown.mode === 'drift' ? 'documents' : 'sources'} were
+                <strong>{shown.docsDone} of {shown.docsTotal}</strong> {unitNoun === 'docs' ? 'documents' : 'sources'} were
                 checked — the rest can be picked up.
               </div>
               <button data-drift-resume-start onClick={resume} disabled={run.isPending || active}
@@ -174,15 +191,62 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
               </button>
             </div>
           )}
-          <div style={sx('display:flex;gap:2px;background:var(--surface-2);border-radius:7px;padding:2px;width:fit-content')}>
-            <ModeSeg label="Drift" title="verify each document against the reference sources" active={mode === 'drift'} onClick={() => setMode('drift')} />
-            <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => setMode('gaps')} />
-            <ModeSeg label="Extract" title="analyze the application sources into a grouped requirement inventory, persisted beside the report" active={mode === 'extract'} onClick={() => setMode('extract')} />
+          {/* the three shipped pipelines stay one click away — they are
+              recipes now, but they are still what people reach for */}
+          <div style={sx('display:flex;align-items:center;gap:8px;flex-wrap:wrap')}>
+            <div style={sx('display:flex;gap:2px;background:var(--surface-2);border-radius:7px;padding:2px;width:fit-content')}>
+              <ModeSeg label="Drift" title="verify each document against the reference sources" active={mode === 'drift'} onClick={() => { setMode('drift'); setDryRun(null); }} />
+              <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => { setMode('gaps'); setDryRun(null); }} />
+              <ModeSeg label="Extract" title="analyze the application sources into a grouped requirement inventory, persisted beside the report" active={mode === 'extract'} onClick={() => { setMode('extract'); setDryRun(null); }} />
+            </div>
+            {/* …and the project's own pipelines from .specquill/alignment/ */}
+            {custom.length > 0 && (
+              <select data-drift-recipe value={custom.some((r) => r.slug === mode) ? mode : ''}
+                onChange={(e) => { if (e.target.value) { setMode(e.target.value); setDryRun(null); } }}
+                title="This project's own alignment recipes"
+                style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px")}>
+                <option value="">Project recipe…</option>
+                {custom.map((r) => <option key={r.slug} value={r.slug}>{r.name}</option>)}
+              </select>
+            )}
           </div>
 
-          {/* drift is the only mode whose units are documents — the others
-              work per source, and their unit picker IS the source row below */}
-          {mode === 'drift' && (
+          {/* a recipe that IS there but does not load must say so — otherwise
+              it is simply missing from the picker and nobody knows why */}
+          {recipeErrors.map(([slug, msg]) => (
+            <div key={slug} style={sx('margin-top:7px;padding:6px 9px;border:1px solid var(--reg);border-radius:7px;background:var(--reg-bg);font-size:10.5px;color:var(--reg);line-height:1.5')}>
+              {recipes.data?.dir}{slug}.md — {msg}
+            </div>
+          ))}
+
+          {/* what the selected recipe is and where it lives */}
+          {activeRecipe && !activeRecipe.builtin && (
+            <div style={sx('margin-top:8px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)')}>
+              <div style={sx('display:flex;align-items:baseline;gap:8px')}>
+                <span style={sx('font-size:11.5px;font-weight:600;flex:none')}>{activeRecipe.name}</span>
+                <span style={sx('font-size:10.5px;color:var(--text-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>
+                  {activeRecipe.description}
+                </span>
+                {/* a recipe is an ordinary document — edit it in the editor */}
+                <span onClick={() => navigate(projectPath(repo, '/editor/' + activeRecipe.path, branch))}
+                  style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--prod);cursor:pointer;flex:none")}>
+                  ✎ edit
+                </span>
+              </div>
+              <div style={sx("margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3)")}>
+                {activeRecipe.stages.map((st) => st.label || st.id).join(' → ')}
+                {activeRecipe.files.include?.length ? ' · files: ' + activeRecipe.files.include.join(', ') : ''}
+                {activeRecipe.files.describe ? ' · “' + activeRecipe.files.describe + '”' : ''}
+              </div>
+              {activeRecipe.warnings.map((wmsg, i) => (
+                <div key={i} style={sx('margin-top:4px;font-size:10px;color:var(--prod)')}>⚠ {wmsg}</div>
+              ))}
+            </div>
+          )}
+
+          {/* documents are the unit only when the recipe says so — a
+              per-source recipe's unit picker IS the source row below */}
+          {unitsAreDocs && (
             <div style={sx('margin-top:9px')}>
               <div style={sx('display:flex;flex-wrap:wrap;gap:5px;align-items:center')}>
                 <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>check</span>
@@ -223,7 +287,7 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
               them, a gaps sweep and an extraction work through them */}
           <div style={sx('display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>
-              {mode === 'extract' ? 'analyze' : mode === 'gaps' ? 'sweep' : 'against'}
+              {mode === 'extract' ? 'analyze' : unitsAreDocs ? 'against' : 'sweep'}
             </span>
             <ScopeChip label="All sources" active={pickSources.length === 0} onClick={() => setPickSources([])} />
             {sources.map((n) => (
@@ -237,10 +301,10 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
           <div style={sx('display:flex;align-items:center;gap:6px;margin-top:7px')}>
             <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>focus</span>
             <input value={focus} onChange={(e) => setFocus(e.target.value)}
-              placeholder={mode === 'drift' ? 'whole documents — or name an area to concentrate on'
+              placeholder={unitsAreDocs ? 'whole documents — or name an area to concentrate on'
                 : mode === 'extract' ? 'whole application — or name an area to analyze'
                 : 'whole source — or name an area to aim at'}
-              title={mode === 'drift' ? 'Restrict this check to one area; drift outside it is another check’s job'
+              title={unitsAreDocs ? 'Restrict this check to one area; drift outside it is another check’s job'
                 : mode === 'extract' ? 'Extract only this area of the application; the rest is another analysis’ job'
                 : 'Restrict this sweep to one area; gaps outside it are another sweep’s job'}
               style={sx('flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px')} />
@@ -294,14 +358,62 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
             </button>
             <span style={sx('font-size:10px;color:var(--text-3);flex:none')}>{reportExists ? 'continue' : 'create'}</span>
           </div>
+          {/* what this recipe would actually do, before it does it: a pipeline
+              multiplies stages by items by units, and that number is not
+              visible by reading the document */}
+          {dryRun && (
+            <div data-drift-dryrun style={sx('margin-top:9px;padding:8px 10px;border:1px solid ' +
+              (dryRun.ok ? 'var(--border)' : 'var(--reg)') + ';border-radius:8px;background:' +
+              (dryRun.ok ? 'var(--surface-2)' : 'var(--reg-bg)'))}>
+              {!dryRun.ok ? (
+                <div style={sx('font-size:11px;color:var(--reg);line-height:1.5')}>{dryRun.error}</div>
+              ) : (
+                <>
+                  <div style={sx('font-size:11px;color:var(--text-2)')}>
+                    {dryRun.units} {dryRun.unitKind === 'docs' ? 'document' : 'source'}{dryRun.units === 1 ? '' : 's'}
+                    {' · '}{dryRun.estimated ? '~' : ''}{dryRun.estimatedCalls} model call{dryRun.estimatedCalls === 1 ? '' : 's'}
+                    {dryRun.maxCallsPerRun > 0 && ` of ${dryRun.maxCallsPerRun}`}
+                  </div>
+                  <div style={sx("margin-top:5px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);line-height:1.6")}>
+                    {dryRun.stages.map((st) => (
+                      <div key={st.id}>
+                        {st.label || st.id}: {st.calls} call{st.calls === 1 ? '' : 's'}
+                        {st.files && ' · ' + Object.entries(st.files).map(([n, c]) => `~${n} ${c} file${c === 1 ? '' : 's'}`).join(', ')}
+                        {st.describeCalls ? ` · +${st.describeCalls} to select files` : ''}
+                      </div>
+                    ))}
+                  </div>
+                  {dryRun.note && (
+                    <div style={sx('margin-top:5px;font-size:10.5px;color:var(--prod);line-height:1.5')}>⚠ {dryRun.note}</div>
+                  )}
+                  {(dryRun.warnings ?? []).map((wmsg, i) => (
+                    <div key={i} style={sx('margin-top:4px;font-size:10px;color:var(--prod)')}>⚠ {wmsg}</div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
-              {summarize(mode, scopedCount, pickSources.length || sources.length, focus)}
+              {summarize(mode, scopedCount, pickSources.length || sources.length, focus, unitsAreDocs)}
             </span>
+            <button data-drift-dryrun-start onClick={() => {
+              setErr('');
+              check.mutate({
+                recipe: mode,
+                ...(pickSources.length ? { sources: pickSources } : {}),
+                ...(unitsAreDocs ? { paths: scope } : {}),
+              }, { onSuccess: setDryRun, onError: (e) => setErr(String((e as Error).message ?? e)) });
+            }} disabled={check.isPending}
+              title="What this recipe would read and how many model calls it would make — no run, no writes"
+              style={sx('height:26px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+              {check.isPending ? 'Checking…' : 'Dry run'}
+            </button>
             <button onClick={start} title={active ? 'a run is already in progress on this branch' : undefined}
-              disabled={run.isPending || active || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
+              disabled={run.isPending || active || (unitsAreDocs ? scopedCount === 0 : sources.length === 0)}
               style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
-              {mode === 'drift' ? 'Check drift' : mode === 'extract' ? 'Analyze app' : 'Find gaps'}
+              {mode === 'drift' ? 'Check drift' : mode === 'extract' ? 'Analyze app'
+                : mode === 'gaps' ? 'Find gaps' : 'Run ' + (activeRecipe?.name ?? mode)}
             </button>
           </div>
         </div>
@@ -427,8 +539,13 @@ export function DriftFindings({ repo, branch, runId = 0, onSelectRun }: {
       {findings.map((f) => {
         const sev = SEV[f.severity] ?? SEV.low;
         const gap = f.docPath === '';
-        // both kinds propose a NEW document, so both can be drafted
-        const proposes = gap || f.kind === 'new-requirement';
+        // WHICH kinds propose a new document is the recipe's declaration, not
+        // a property of the finding's shape — never gate this on an empty doc
+        // path, drift's `new-requirement` findings name one and are draftable
+        // all the same. Falling back to the built-in kinds keeps findings from
+        // before recipes were frozen onto runs actionable.
+        const declared = kindOf(data.run, f.kind);
+        const proposes = declared ? declared.draftable : (gap || f.kind === 'new-requirement');
         // the mutation hooks are shared by every row — isPending alone would
         // paint ALL rows as generating; variables names the one that is
         const drafting = draft.isPending && draft.variables?.fingerprint === f.fingerprint;
@@ -442,8 +559,12 @@ export function DriftFindings({ repo, branch, runId = 0, onSelectRun }: {
           <div key={f.fingerprint} data-drift-finding={f.kind} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
             <div style={sx('display:flex;align-items:center;gap:7px')}>
               <span style={sx(`flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:${sev.bg};color:${sev.fg}`)}>{sev.label}</span>
-              {gap && <span style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>gap</span>}
-              {f.kind === 'new-requirement' && <span style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>new</span>}
+              {/* a recipe's own kind wears the label the recipe gave it */}
+              {kindChip(data.run, f.kind, gap) && (
+                <span title={declared?.label} style={sx('flex:none;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--ai-bg);color:var(--ai)')}>
+                  {kindChip(data.run, f.kind, gap)}
+                </span>
+              )}
               <span style={sx('font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')} title={f.detail}>{f.title}</span>
             </div>
             {gap ? (
@@ -608,17 +729,36 @@ export function DriftFindings({ repo, branch, runId = 0, onSelectRun }: {
 }
 
 /** What the configured run would do, in one line above the start button. */
-function summarize(mode: DriftMode, docs: number, srcs: number, focus: string) {
+function summarize(mode: DriftMode, docs: number, srcs: number, focus: string, unitsAreDocs: boolean) {
   const s = (n: number) => (n === 1 ? '' : 's');
   const focused = focus.trim() ? ` · focused on “${focus.trim()}”` : '';
-  if (mode === 'drift') return `${docs} doc${s(docs)} in scope · against ${srcs} source${s(srcs)}${focused}`;
   if (mode === 'extract') return `${srcs} source${s(srcs)} → grouped requirement inventory${focused}`;
+  if (unitsAreDocs) return `${docs} doc${s(docs)} in scope · against ${srcs} source${s(srcs)}${focused}`;
   return `${srcs} source${s(srcs)}${focused || ' · uncovered capabilities'}`;
+}
+
+/** The kind a run's recipe declared, if it declared this one. */
+function kindOf(run: DriftRun | null, kind: string) {
+  return (run?.kinds ?? []).find((k) => k.kind === kind);
+}
+
+/**
+ * The short chip beside a finding's severity. The built-in kinds keep the
+ * words people know them by; a project recipe's kind gets its own slug, which
+ * is the only name anyone has for it.
+ */
+function kindChip(run: DriftRun | null, kind: string, gap: boolean) {
+  if (kind === 'coverage-gap') return 'gap';
+  if (kind === 'new-requirement') return 'new';
+  const declared = kindOf(run, kind);
+  if (declared) return declared.kind;
+  return gap ? 'gap' : '';
 }
 
 /** The human name of a run mode — the label the mode segments carry. */
 export function driftModeLabel(mode: DriftMode) {
-  return mode === 'gaps' ? 'gap analysis' : mode === 'extract' ? 'app analysis' : 'drift check';
+  return mode === 'gaps' ? 'gap analysis' : mode === 'extract' ? 'app analysis'
+    : mode === 'drift' ? 'drift check' : mode;
 }
 
 function ModeSeg({ label, title, active, onClick }: { label: string; title: string; active: boolean; onClick: () => void }) {

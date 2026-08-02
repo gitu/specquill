@@ -217,7 +217,15 @@ export function useForgeRequest(repo: string | undefined, branch: string | undef
 // ---------------------------------------------------------------- source drift
 
 export interface DriftEvidence { path: string; quote: string }
-export type DriftMode = 'drift' | 'gaps' | 'extract';
+/**
+ * A run's pipeline: the built-in slugs, or a project recipe's own slug from
+ * .specquill/alignment/. It is a string, not a union — the whole point of the
+ * recipe engine is that a project adds its own.
+ */
+export type DriftMode = string;
+/** One finding kind a recipe declares — how to label it, and whether it
+ *  proposes a NEW document (which gates the draft/plan/create actions). */
+export interface DriftKind { kind: string; label: string; draftable: boolean }
 export interface DriftFinding {
   fingerprint: string; runId: number; docPath: string; anchor: string; source: string;
   // coverage gaps (docPath '') carry where the missing doc should live and
@@ -233,10 +241,16 @@ export interface DriftFinding {
 export interface DriftRun {
   // 'interrupted' = the server restarted mid-run; the units it had already
   // checked stand, and `resumable` says the rest can be picked up
-  id: number; mode: DriftMode; status: 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted';
+  // 'capped' = the run spent the deployment's model-call budget; like
+  // 'interrupted' it is a stopping point, not a fault, and stays resumable
+  id: number; mode: DriftMode;
+  status: 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted' | 'capped';
   error: string;
   scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
   headSha: string; startedAt: number; finishedAt: number;
+  recipeName: string;   // the recipe's own name, for the run panel
+  kinds: DriftKind[];   // the finding kinds THIS run's recipe declares
+  aiCalls: number;      // model calls spent, against maxCallsPerRun
   activity: string[];             // live per-unit narration of the run
   reportPath: string;             // git-native run report doc ('' = none)
   reportBranch: string;
@@ -283,12 +297,66 @@ export function useRunDrift(repo: string | undefined, branch: string) {
   return useMutation({
     // `branch` overrides the hook's branch: the caller may have just been
     // moved onto their workspace branch and the run must target THAT one
-    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string; resume?: number }) =>
-      api<{ runId: number; docsTotal: number; mode: DriftMode; resumedFrom: number }>(
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; recipe?: string; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string; resume?: number }) =>
+      api<{ runId: number; docsTotal: number; mode: DriftMode; recipe: string; stages: number; resumedFrom: number }>(
         `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
         { method: 'POST', body: JSON.stringify(body) }),
     // prefix key: a run started on a freshly switched branch must refresh too
     onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo] }),
+  });
+}
+
+/** One alignment pipeline this branch offers: shipped, or the project's own. */
+export interface AlignmentRecipe {
+  slug: string; name: string; description: string;
+  builtin: boolean; path: string;           // path '' for the shipped ones
+  units: 'docs' | 'sources'; output: 'findings' | 'extraction';
+  model: string; sources: string[] | null; paths: string[] | null;
+  stages: { id: string; label: string; over: string; produces: string; batch: number; model: string }[];
+  findings: { kind: string; label: string; severity: string; draftable: boolean }[];
+  files: { include: string[] | null; exclude: string[] | null; describe: string };
+  warnings: string[];  // non-fatal problems worth showing the author
+}
+export interface RecipesResp {
+  dir: string;                       // where a project's own recipes live
+  recipes: AlignmentRecipe[];
+  errors: Record<string, string>;    // recipes that are there but do not load
+  models: string[];                  // what a recipe may name per stage
+  maxCallsPerRun: number;
+}
+
+/** The pipelines this branch offers. */
+export function useAlignmentRecipes(repo: string | undefined, branch: string) {
+  return useQuery({
+    queryKey: ['recipes', repo, branch],
+    queryFn: () => api<RecipesResp>(
+      `/api/repos/${repo}/alignment/recipes?branch=${encodeURIComponent(branch)}`),
+    enabled: !!repo,
+  });
+}
+
+export interface RecipeCheck {
+  ok: boolean; error?: string; warnings: string[] | null;
+  recipe?: AlignmentRecipe;
+  units: number; unitKind: string; unitList: string[]; sources: number;
+  stages: { id: string; label: string; over: string; produces: string;
+    callsPerUnit: number; calls: number; files?: Record<string, number>; describeCalls?: number }[];
+  estimatedCalls: number; estimated: boolean; maxCallsPerRun: number;
+  overCeiling?: boolean; note?: string;
+}
+
+/**
+ * Dry run: what a recipe would actually do, before it does it. A recipe
+ * multiplies stages by items by units, so the difference between a good one
+ * and a typo is measured in wall-clock — and you cannot see it by reading the
+ * document.
+ */
+export function useCheckRecipe(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (body: { recipe?: string; content?: string; sources?: string[]; paths?: string[] }) =>
+      api<RecipeCheck>(
+        `/api/repos/${repo}/alignment/recipes/validate?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify(body) }),
   });
 }
 
