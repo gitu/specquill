@@ -166,6 +166,7 @@ export function GraphView() {
     if (!g) return;
     if (raf.current || (alpha.current <= 0.02 && !drag.current)) return;
     const H = g.H;
+    const maxY = Math.max(2300, H + 120); // the canvas grows with dense columns
     const tick = () => {
       const a = alpha.current;
       const bs = [...bodies.current.values()].filter((b) => visible.has(b.id));
@@ -194,7 +195,7 @@ export function GraphView() {
         if (!p || !q) return;
         const dx = q.x - p.x, dy = q.y - p.y;
         const dist = Math.max(1, Math.hypot(dx, dy));
-        const f = Math.max(0, dist - 180) * 0.03 * a;
+        const f = Math.max(0, dist - 150) * 0.05 * a;
         const fx = (dx / dist) * f, fy = (dy / dist) * f;
         p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
       });
@@ -211,7 +212,7 @@ export function GraphView() {
         b.vx *= 0.72; b.vy *= 0.72;
         // generous bounds — the canvas grows to fit the arrangement
         b.x = Math.min(2300, Math.max(-40, b.x + b.vx));
-        b.y = Math.min(2300, Math.max(26, b.y + b.vy));
+        b.y = Math.min(maxY, Math.max(26, b.y + b.vy));
       });
       // hard de-overlap (position-based, NOT alpha-scaled): the soft forces
       // spread things out, this guarantees no two boxes end up stacked —
@@ -230,7 +231,7 @@ export function GraphView() {
             if (oy / minY <= ox / minX) {
               const s = (dy !== 0 ? Math.sign(dy) : (i % 2 ? 1 : -1)) * oy * 0.85;
               p.y -= s * (pFree / tot); q.y += s * (qFree / tot);
-              p.y = Math.min(2300, Math.max(26, p.y)); q.y = Math.min(2300, Math.max(26, q.y));
+              p.y = Math.min(maxY, Math.max(26, p.y)); q.y = Math.min(maxY, Math.max(26, q.y));
             } else {
               const s = (dx !== 0 ? Math.sign(dx) : 1) * ox * 0.85;
               p.x -= s * (pFree / tot); q.x += s * (qFree / tot);

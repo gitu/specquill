@@ -13,7 +13,7 @@ test('project switcher scopes the workspace to the selected project', async ({ p
   await expect(page.getByText('~regulations')).toBeVisible({ timeout: 10_000 });
 
   // switch to the SpecQuill product specs (monorepo subfolder project)
-  await page.getByTitle('Project').selectOption('specquill-docs');
+  await page.getByTitle('Project', { exact: true }).selectOption('specquill-docs');
   await expect(page.locator('aside').getByText('SPECQUILL-DOCS', { exact: true })).toBeVisible({ timeout: 10_000 });
 
   // paths are project-relative: the tree shows the families, never docs/specs/
@@ -26,7 +26,7 @@ test('project switcher scopes the workspace to the selected project', async ({ p
   await expect(page.getByText('it is its own proof')).toBeVisible();
 
   // switch back — the first project is untouched
-  await page.getByTitle('Project').selectOption('trading-specs');
+  await page.getByTitle('Project', { exact: true }).selectOption('trading-specs');
   await expect(page.locator('aside').getByText('TRADING-SPECS', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('REQ-042.md').first()).toBeVisible();
 });

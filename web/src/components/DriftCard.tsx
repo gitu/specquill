@@ -348,6 +348,15 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
         const gap = f.docPath === '';
         // both kinds propose a NEW document, so both can be drafted
         const proposes = gap || f.kind === 'new-requirement';
+        // the mutation hooks are shared by every row — isPending alone would
+        // paint ALL rows as generating; variables names the one that is
+        const drafting = draft.isPending && draft.variables?.fingerprint === f.fingerprint;
+        const planning = plan.isPending && plan.variables === f.fingerprint;
+        const remedying = remedy.isPending && remedy.variables?.fingerprint === f.fingerprint;
+        const creating = create.isPending && create.variables?.fingerprint === f.fingerprint;
+        const filing = file.isPending && file.variables?.fingerprint === f.fingerprint;
+        const busyAny = draft.isPending || plan.isPending || remedy.isPending || create.isPending || file.isPending;
+        const idle = (active: boolean) => (busyAny && !active ? ';opacity:.45;cursor:default' : '');
         return (
           <div key={f.fingerprint} data-drift-finding={f.kind} style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
             <div style={sx('display:flex;align-items:center;gap:7px')}>
@@ -386,13 +395,13 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                 ))}
               </details>
             )}
-            <KeepOpen show={draft.isPending || plan.isPending || remedy.isPending || create.isPending} />
+            <KeepOpen show={drafting || planning || remedying || creating} />
             <div style={sx('display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap')}>
               {proposes && !f.draftPath && (
-                <button onClick={() => doDraft(f)} disabled={draft.isPending}
+                <button onClick={() => doDraft(f)} disabled={busyAny}
                   title="Reverse-engineer the missing requirement document from the source evidence (AI draft, uncommitted)"
-                  style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
-                  {draft.isPending ? 'Drafting…' : 'Draft requirement'}
+                  style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none' + idle(drafting))}>
+                  {drafting ? 'Drafting…' : 'Draft requirement'}
                 </button>
               )}
               {(f.documents?.length ?? 0) > 0 ? (
@@ -410,20 +419,20 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                 </span>
               ) : (
                 <>
-                  <button onClick={() => doPlan(f)} disabled={plan.isPending}
+                  <button onClick={() => doPlan(f)} disabled={busyAny}
                     title="Propose which documents to create for this finding — the families this workspace has, linked as its model prescribes"
-                    style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
-                    {plan.isPending ? 'Planning…' : 'Plan documents'}
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--ai);border-radius:6px;background:var(--ai-bg);color:var(--ai);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none' + idle(planning))}>
+                    {planning ? 'Planning…' : 'Plan documents'}
                   </button>
-                  <button onClick={() => doRemedy(f, 'change')} disabled={remedy.isPending}
+                  <button onClick={() => doRemedy(f, 'change')} disabled={busyAny}
                     title="Draft a change record (WHY) in the workspace that drives updating the requirements"
-                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
-                    + Change
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none' + idle(remedying && remedy.variables?.kind === 'change'))}>
+                    {remedying && remedy.variables?.kind === 'change' ? 'Drafting…' : '+ Change'}
                   </button>
-                  <button onClick={() => doRemedy(f, 'work_item')} disabled={remedy.isPending}
+                  <button onClick={() => doRemedy(f, 'work_item')} disabled={busyAny}
                     title="Draft a work item (WHEN) in the workspace, linked to the affected document"
-                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
-                    + Work item
+                    style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none' + idle(remedying && remedy.variables?.kind === 'work_item'))}>
+                    {remedying && remedy.variables?.kind === 'work_item' ? 'Drafting…' : '+ Work item'}
                   </button>
                 </>
               )}
@@ -442,9 +451,9 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                     </select>
                   )}
                   {targets.length > 0 && (
-                    <button onClick={() => doFile(f)} disabled={file.isPending}
-                      style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
-                      File issue
+                    <button onClick={() => doFile(f)} disabled={busyAny}
+                      style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none' + idle(filing))}>
+                      {filing ? 'Filing…' : 'File issue'}
                     </button>
                   )}
                 </>
@@ -475,9 +484,9 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
                   );
                 })}
                 <div style={sx('display:flex;align-items:center;gap:7px;margin-top:8px')}>
-                  <button onClick={() => doCreate(f)} disabled={create.isPending}
-                    style={sx('height:24px;padding:0 11px;border:none;border-radius:6px;background:var(--ai);color:#fff;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer')}>
-                    {create.isPending ? 'Creating…' : `Create ${plans[f.fingerprint].documents.filter((d) => !drop[f.fingerprint + d.path]).length} document(s)`}
+                  <button onClick={() => doCreate(f)} disabled={busyAny}
+                    style={sx('height:24px;padding:0 11px;border:none;border-radius:6px;background:var(--ai);color:#fff;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer' + idle(creating))}>
+                    {creating ? 'Creating…' : `Create ${plans[f.fingerprint].documents.filter((d) => !drop[f.fingerprint + d.path]).length} document(s)`}
                   </button>
                   <button onClick={() => setPlans((m) => { const n = { ...m }; delete n[f.fingerprint]; return n; })}
                     style={sx('height:24px;padding:0 9px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer')}>
@@ -490,9 +499,19 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
         );
       })}
 
-      {!running && findings.length === 0 && data.run && data.run.status === 'ok' && (
+      {findings.length === 0 && (
         <div style={sx('padding:11px 14px;font-size:12px;color:var(--text-3)')}>
-          <span style={sx('color:var(--data)')}>✓</span> {data.run.mode === 'gaps' ? 'no coverage gaps found in the last run' : 'no drift found in the last run'}
+          {running ? (
+            <>run in progress — findings appear here as each {data.run!.mode === 'gaps' ? 'source' : 'doc'} finishes</>
+          ) : !data.run ? (
+            'no run yet — start a check above'
+          ) : data.run.status === 'ok' ? (
+            <><span style={sx('color:var(--data)')}>✓</span> {data.run.mode === 'gaps' ? 'no coverage gaps found in the last run'
+              : data.run.mode === 'extract' ? 'app analysis writes an extracted inventory document, not findings'
+              : 'no drift found in the last run'}</>
+          ) : (
+            `no findings from the last run (${data.run.status})`
+          )}
         </div>
       )}
 

@@ -6,7 +6,8 @@ import { expect, test } from '@playwright/test';
 
 test('the timeline buckets the fixture windows and deep-links a document', async ({ page }) => {
   await page.goto('/p/trading-specs/timed');
-  await expect(page.getByText('Timed dependencies', { exact: true }).first()).toBeVisible();
+  // scoped to main: the expanded rail carries the same label
+  await expect(page.locator('main').getByText('Timed dependencies', { exact: true }).first()).toBeVisible();
 
   // REQ-042 starts 2026-09-01 and its specs are not approved → pending, at risk
   const req042 = page.locator('[data-timed="requirements/REQ-042.md"]');

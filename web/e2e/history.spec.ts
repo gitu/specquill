@@ -13,7 +13,8 @@ const row = (page: import('@playwright/test').Page, subject: string) =>
 
 test('the feed classifies commits by family and explains one as a delta', async ({ page }) => {
   await page.goto('/p/trading-specs/history');
-  await expect(page.getByText('Change history', { exact: true })).toBeVisible();
+  // the expanded rail carries the same label — assert the view's own header
+  await expect(page.locator('main').getByText('Change history', { exact: true })).toBeVisible();
 
   // commits roll up in model terms, not as file counts
   const bound = row(page, 'req: bound the fills array');

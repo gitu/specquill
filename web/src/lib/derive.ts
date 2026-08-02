@@ -747,9 +747,10 @@ export function buildGraph(model: WorkspaceModel) {
   const colOf: Record<string, number> = {};
   cols.forEach((g, i) => { colOf[g] = i; });
   const nCols = cols.length;
-  const colX = cols.map((_, i) => (nCols > 1 ? 16 + Math.round((696 * i) / (nCols - 1)) : 364));
+  const spanX = Math.max(696, (nCols - 1) * 300);
+  const colX = cols.map((_, i) => (nCols > 1 ? 16 + Math.round((spanX * i) / (nCols - 1)) : 364));
   const colW = cols.map((_, i) => (i === nCols - 1 ? 176 : i === 0 ? 156 : 150));
-  const H = 540;
+  let H = 540; // grows with the densest column — layout() below
   const short = (ref: string) => ref.split('/').pop()!.split('#')[0].replace('.md', '');
   const dColor = (t: string) => (t === 'regulatory' ? 'var(--reg)' : t === 'product' ? 'var(--prod)' : t === 'technical' ? 'var(--text-2)'
     : model.driverDefs.find((d) => d.key === t)?.color || 'var(--text-2)');
@@ -788,10 +789,15 @@ export function buildGraph(model: WorkspaceModel) {
   if (colOf.how !== undefined) {
     fields.forEach((f) => push('field:' + f.name, colOf.how, { label: f.name, sub: f.drift ? '⚠ drift' : '', kind: 'field', drift: f.drift, go: f.map }));
   }
-  cols.forEach((_, c) => {
-    const col = nodes.filter((n) => n.col === c);
-    col.forEach((o, i) => scatter(o, c, i, col.length));
-  });
+  // seed every node with clear air around it: a fixed height packed dense
+  // columns tighter than a box is tall, and the simulation's de-overlap
+  // shoves turned that into the tangle — the auto-fit absorbs the bigger canvas
+  const layout = () => {
+    const byCol = cols.map((_, c) => nodes.filter((n) => n.col === c));
+    H = Math.max(540, Math.max(...byCol.map((col) => col.length)) * 78);
+    byCol.forEach((col, c) => col.forEach((o, i) => scatter(o, c, i, col.length)));
+  };
+  layout();
   const styleOf = (o: GraphNode & { color?: string; drift?: boolean }) => {
     const base = 'position:absolute;left:' + o.x + 'px;top:' + (o.y - 20) + 'px;width:' + o.w + 'px;padding:8px 10px;border-radius:9px;box-shadow:var(--shadow);';
     const group = entByKind[o.kind]?.group;
@@ -872,10 +878,10 @@ export function buildGraph(model: WorkspaceModel) {
         push(extID, 0, { label: '⇲ ' + short(ref.to), sub: '~' + srcName, kind: 'ext', go: ref.to });
       }
     });
-    // relayout + restyle the leftmost column with the new members
-    const col = nodes.filter((n) => n.col === 0);
-    col.forEach((o, i) => scatter(o, 0, i, col.length));
-    col.forEach((o) => styleOf(o));
+    // relayout everything: the externals can make col 0 the densest, and H
+    // (every column's spacing) follows the densest column
+    layout();
+    nodes.forEach((o) => styleOf(o));
     externals.forEach((ref) => edge('ext:' + ref.to, 'doc:' + ref.from, 'var(--border-2)', true));
   }
   return { nodes, edges, H, cols: cols as string[], stats: graphStats(nodes, cols as string[]) };

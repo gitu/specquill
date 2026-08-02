@@ -86,14 +86,14 @@ test('rapid switching between cached files always renders', async ({ page }) => 
 
 test('default view setting controls the root redirect', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
-  await page.getByTitle('Settings').click();
-  await page.getByRole('combobox').last().selectOption('graph');
+  // the preference lost its UI control (rail cleanup, 2026-08) but the stored
+  // per-user setting still governs the root redirect
+  await page.evaluate(() => localStorage.setItem('specquill-default-view', 'graph'));
   await page.goto('/');
   await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/graph/);
   await expect(page.getByText('Lineage · from links')).toBeVisible();
   // back to workspace default
-  await page.getByTitle('Settings').click();
-  await page.getByRole('combobox').last().selectOption('');
+  await page.evaluate(() => localStorage.removeItem('specquill-default-view'));
   await page.goto('/');
   await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/editor/);
 });
