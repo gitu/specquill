@@ -304,3 +304,62 @@ func TestReconciliationLeavesOtherRecipesAlone(t *testing.T) {
 		t.Errorf("another recipe's findings must survive: %v", got)
 	}
 }
+
+// A finding about a document that has been DELETED can never be reconciled the
+// normal way — that only happens when a run re-checks the document, and a
+// deleted one is never in scope again. It would otherwise sit on the page
+// forever, pointing at nothing, with actions that quietly do nothing.
+func TestOrphanedFindingsRetire(t *testing.T) {
+	s := OpenTest(t)
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "live", RunID: 1, DocPath: "specs/a.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "gone", RunID: 1, DocPath: "specs/deleted.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "gap", RunID: 1, Source: "api", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "other", Fingerprint: "elsewhere", RunID: 1, DocPath: "specs/deleted.md"},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.ResolveOrphanedDriftFindings("r", "main", []string{"specs/a.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("retired %d, want 1", n)
+	}
+	live, _ := s.DriftFindings("r", "main")
+	got := map[string]bool{}
+	for _, f := range live {
+		got[f.Fingerprint] = true
+	}
+	if got["gone"] {
+		t.Error("a finding about a deleted document should retire")
+	}
+	if !got["live"] {
+		t.Error("a finding about a live document must survive")
+	}
+	// source-anchored findings have no document to lose
+	if !got["gap"] {
+		t.Error("coverage gaps carry no doc_path and must never be retired this way")
+	}
+	// another branch's findings are its own business
+	other, _ := s.DriftFindings("r", "other")
+	if len(other) != 1 {
+		t.Errorf("another branch was touched: %v", other)
+	}
+}
+
+// An empty document set means the branch has no documents at all — every
+// doc-backed finding is orphaned, and the query must not degenerate into a
+// no-op WHERE clause.
+func TestOrphanedFindingsWithNoDocumentsLeft(t *testing.T) {
+	s := OpenTest(t)
+	if err := s.UpsertDriftFinding(DriftFinding{
+		RepoKey: "r", Branch: "main", Fingerprint: "x", RunID: 1, DocPath: "specs/a.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ResolveOrphanedDriftFindings("r", "main", nil); err != nil || n != 1 {
+		t.Fatalf("retired %d (err %v), want 1", n, err)
+	}
+}

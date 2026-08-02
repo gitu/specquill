@@ -306,6 +306,31 @@ func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep, k
 	return err
 }
 
+// ResolveOrphanedDriftFindings retires findings about documents that no longer
+// exist on the branch.
+//
+// Ordinary reconciliation can never reach them: it resolves a document's stale
+// findings when a run RE-CHECKS that document, and a deleted document is never
+// in scope again. So they linger forever — shown on the page, pointing at
+// nothing, with actions that quietly do nothing (a remedy has no document to
+// link to). `live` is the branch's current document set.
+func (s *Store) ResolveOrphanedDriftFindings(repoKey, branch string, live []string) (int64, error) {
+	args := []any{time.Now().Unix(), repoKey, branch}
+	q := `UPDATE drift_findings SET resolved_at = ?
+		WHERE repo_key = ? AND branch = ? AND doc_path != '' AND resolved_at = 0`
+	if len(live) > 0 {
+		q += ` AND doc_path NOT IN (?` + strings.Repeat(",?", len(live)-1) + `)`
+		for _, p := range live {
+			args = append(args, p)
+		}
+	}
+	res, err := s.exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // narrowByKinds limits a reconciliation to the kinds a recipe owns. An empty
 // list means "no restriction" — a run whose recipe declares nothing (an
 // extraction) reconciles nothing anyway.

@@ -106,11 +106,11 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('vs ~regulations').first()).toBeVisible();
 
-  // File a DOC-BACKED finding: this test asserts the work-items backlink
-  // lands in that document's frontmatter, so it must not pick a finding that
-  // has no document (a gap, or a project recipe's source-anchored kind —
-  // reconciliation deliberately leaves other recipes' findings alone).
-  await rows(page, 'outdated-requirement').first()
+  // File the finding for a NAMED document: this test asserts the work-items
+  // backlink lands in that document's frontmatter, so "the first finding" is
+  // not good enough — it could be a gap, a project recipe's source-anchored
+  // kind, or a finding about a document another suite left behind.
+  await rows(page, 'outdated-requirement').filter({ hasText: 'specs/txn-report.md' }).first()
     .getByRole('button', { name: 'File issue' }).click();
   await expect(page.getByText(/work item filed/).first()).toBeVisible({ timeout: 15_000 });
 
@@ -245,10 +245,10 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
 
   // "+ Work item" drafts the WHEN document and opens it in the editor. Scope
-  // to the drifted SPEC finding: the work item's `delivers:` link points at
-  // the document the finding is about, so a source-anchored finding (a gap, or
-  // a project recipe's own kind) would have nothing to link to.
-  await rows(page, 'outdated-requirement').first()
+  // to a NAMED spec: the work item's `delivers:` link points at the document
+  // the finding is about, so a source-anchored finding (a gap, or a project
+  // recipe's own kind) would have nothing to link to.
+  await rows(page, 'outdated-requirement').filter({ hasText: 'specs/txn-report.md' }).first()
     .getByRole('button', { name: '+ Work item' }).click();
   await expect(page).toHaveURL(/editor\/work-items\/WI-timestamp-precision\.md/, { timeout: 20_000 });
   await expect(page.getByText('Raise execution-timestamp precision').first()).toBeVisible({ timeout: 10_000 });
@@ -258,7 +258,7 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   const file = (await (await request.get(
     `/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('delivers:');
-  expect(file.content).toMatch(/specs\/(txn-report|venue)\.md/);
+  expect(file.content).toContain('specs/txn-report.md');
 
   // and the finding now carries the remedy instead of the create buttons
   const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {

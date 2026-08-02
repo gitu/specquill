@@ -107,6 +107,25 @@ func toolNote(tc ai.ToolCall, execErr error) string {
 	return "    · " + what
 }
 
+// singleLine collapses every whitespace run — newlines included — into single
+// spaces and caps the length.
+//
+// The run's `focus` is the ONE free-text field a request contributes to a
+// model prompt, and it lands in three places that are all structured by line:
+// the stage's focus note in the system prompt, the activity feed, and the
+// markdown report committed to the repository. A focus carrying newlines could
+// open its own "# heading" inside the system prompt (weakening the very
+// constraint it exists to impose) or break the report's list formatting.
+// Normalizing at intake means the stored value is already safe everywhere it
+// is later read — prompts, feed, report and resume.
+func singleLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if max > 0 && len(s) > max {
+		s = strings.TrimSpace(s[:max])
+	}
+	return s
+}
+
 // resolveReportTokens expands the date tokens a report path may carry, so a
 // configured pattern names a different document as time moves on. UTC, like
 // every other date this writes into the repo: which report a run continues
@@ -692,10 +711,7 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		}
 		sources = kept
 	}
-	body.Focus = strings.TrimSpace(body.Focus)
-	if len(body.Focus) > 200 {
-		body.Focus = body.Focus[:200]
-	}
+	body.Focus = singleLine(body.Focus, 200)
 	// units: what the run iterates, and its resume granularity. The recipe
 	// says which — documents to verify, or sources to work through.
 	var units []string
@@ -1040,6 +1056,17 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 	note(line)
 	if resumedFrom > 0 {
 		note(fmt.Sprintf("▸ picking up run %d where it stopped", resumedFrom))
+	}
+	// a run is the moment we hold the branch's document set, and the only
+	// chance to retire findings about documents that have since been deleted:
+	// normal reconciliation resolves a doc's stale findings when a run
+	// RE-CHECKS it, which a deleted document never is again
+	if n, err := s.store.ResolveOrphanedDriftFindings(repo.Key(), branch,
+		resolveDriftScope(files, nil, nil)); err != nil {
+		log.Printf("drift [%s@%s]: retire orphaned findings: %v", repo.ID, branch, err)
+	} else if n > 0 {
+		note(fmt.Sprintf("▸ retired %d finding%s about deleted document%s",
+			n, plural(int(n)), plural(int(n))))
 	}
 	persist(0)
 
@@ -1440,7 +1467,9 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 	fmt.Fprintf(&b, "- Status: %s\n", status)
 	fmt.Fprintf(&b, "- Scope: %d %s\n", len(scope), unitNoun)
 	if run.Focus != "" {
-		fmt.Fprintf(&b, "- Focus: %s\n", run.Focus)
+		// belt and braces: the value was normalized at intake, but this line
+		// is committed markdown and a stray newline would break the list
+		fmt.Fprintf(&b, "- Focus: %s\n", singleLine(run.Focus, 200))
 	}
 	if run.DroppedUnverified > 0 {
 		fmt.Fprintf(&b, "- Dropped: %d finding(s) whose evidence did not verify\n", run.DroppedUnverified)
