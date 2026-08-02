@@ -279,36 +279,56 @@ func (s *Store) UpsertDriftFinding(f DriftFinding) error {
 
 // ResolveDriftFindingsExcept marks a doc's findings resolved when the fresh
 // check no longer reports their fingerprint. Scope-aware reconciliation: it
-// touches ONE doc, so scoped runs never clear findings they did not re-check.
-func (s *Store) ResolveDriftFindingsExcept(repoKey, branch, docPath string, keep []string) error {
+// touches ONE doc, so scoped runs never clear findings they did not re-check —
+// and only the KINDS the running recipe declares, so two recipes auditing the
+// same document do not resolve each other's findings.
+func (s *Store) ResolveDriftFindingsExcept(repoKey, branch, docPath string, keep, kinds []string) error {
 	args := []any{time.Now().Unix(), repoKey, branch, docPath}
 	q := `UPDATE drift_findings SET resolved_at = ?
 		WHERE repo_key = ? AND branch = ? AND doc_path = ? AND resolved_at = 0`
-	if len(keep) > 0 {
-		q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
-		for _, fp := range keep {
-			args = append(args, fp)
-		}
-	}
+	q, args = narrowByKinds(q, args, kinds)
+	q, args = narrowByFingerprint(q, args, keep)
 	_, err := s.exec(q, args...)
 	return err
 }
 
-// ResolveGapFindingsExcept is the gaps-mode counterpart of
+// ResolveGapFindingsExcept is the per-source counterpart of
 // ResolveDriftFindingsExcept: coverage gaps have no doc_path, so a fresh
-// sweep of ONE source resolves that source's stale gaps only.
-func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep []string) error {
+// sweep of ONE source resolves that source's stale gaps only — again limited
+// to the running recipe's own kinds.
+func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep, kinds []string) error {
 	args := []any{time.Now().Unix(), repoKey, branch, source}
 	q := `UPDATE drift_findings SET resolved_at = ?
 		WHERE repo_key = ? AND branch = ? AND doc_path = '' AND source = ? AND resolved_at = 0`
-	if len(keep) > 0 {
-		q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
-		for _, fp := range keep {
-			args = append(args, fp)
-		}
-	}
+	q, args = narrowByKinds(q, args, kinds)
+	q, args = narrowByFingerprint(q, args, keep)
 	_, err := s.exec(q, args...)
 	return err
+}
+
+// narrowByKinds limits a reconciliation to the kinds a recipe owns. An empty
+// list means "no restriction" — a run whose recipe declares nothing (an
+// extraction) reconciles nothing anyway.
+func narrowByKinds(q string, args []any, kinds []string) (string, []any) {
+	if len(kinds) == 0 {
+		return q, args
+	}
+	q += ` AND kind IN (?` + strings.Repeat(",?", len(kinds)-1) + `)`
+	for _, k := range kinds {
+		args = append(args, k)
+	}
+	return q, args
+}
+
+func narrowByFingerprint(q string, args []any, keep []string) (string, []any) {
+	if len(keep) == 0 {
+		return q, args
+	}
+	q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
+	for _, fp := range keep {
+		args = append(args, fp)
+	}
+	return q, args
 }
 
 // SetDriftFindingDraft records the reverse-engineered draft document created

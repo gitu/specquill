@@ -1167,10 +1167,16 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			// resolve, so a scoped run never clears what it did not re-check.
 			// A per-source recipe's findings carry no doc path — they are keyed
 			// by the source instead.
+			// only THIS recipe's kinds: another recipe auditing the same
+			// document or source owns its own findings
+			kinds := make([]string, 0, len(rec.Findings))
+			for _, k := range rec.Findings {
+				kinds = append(kinds, k.Kind)
+			}
 			if perSource {
-				err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep)
+				err = s.store.ResolveGapFindingsExcept(repo.Key(), branch, unit, keep, kinds)
 			} else {
-				err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep)
+				err = s.store.ResolveDriftFindingsExcept(repo.Key(), branch, unit, keep, kinds)
 			}
 			if err != nil {
 				log.Printf("drift [%s@%s]: reconcile %s: %v", repo.ID, branch, unit, err)

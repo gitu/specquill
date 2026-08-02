@@ -113,7 +113,7 @@ func TestResolveDriftFindingsScopeAware(t *testing.T) {
 		}
 	}
 	// re-check of a.md keeps only a1 — b.md was out of scope and must survive
-	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", []string{"a1"}); err != nil {
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", []string{"a1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	live, err := s.DriftFindings("r", "main")
@@ -151,7 +151,7 @@ func TestGapFindingsReconcilePerSource(t *testing.T) {
 	}
 	// a fresh sweep of `api` keeps only g1 — other sources' gaps and
 	// doc-backed drift findings must survive
-	if err := s.ResolveGapFindingsExcept("r", "main", "api", []string{"g1"}); err != nil {
+	if err := s.ResolveGapFindingsExcept("r", "main", "api", []string{"g1"}, []string{"coverage-gap"}); err != nil {
 		t.Fatal(err)
 	}
 	live, err := s.DriftFindings("r", "main")
@@ -238,7 +238,7 @@ func TestListDriftRunsAndFindingCounts(t *testing.T) {
 		}
 	}
 	// a resolved finding is not what a past run is still worth
-	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil); err != nil {
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,5 +262,45 @@ func TestListDriftRunsAndFindingCounts(t *testing.T) {
 	}
 	if counts[newer] != 2 || counts[older] != 0 {
 		t.Errorf("counts = %v, want 2 live for run %d and none for the resolved one", counts, newer)
+	}
+}
+
+// Two recipes may audit the same document or source. Reconciliation is
+// limited to the KINDS the running recipe declares, so a custom pipeline's
+// findings survive a built-in run over the same unit — and vice versa.
+func TestReconciliationLeavesOtherRecipesAlone(t *testing.T) {
+	s := OpenTest(t)
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "d1", RunID: 1, DocPath: "a.md", Kind: "contradiction"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "m1", RunID: 2, DocPath: "a.md", Kind: "model-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "g1", RunID: 1, Source: "api", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "x1", RunID: 2, Source: "api", Kind: "unstated-deadline"},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a drift run over a.md reports nothing: it resolves ITS kind only
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil,
+		[]string{"contradiction", "new-requirement"}); err != nil {
+		t.Fatal(err)
+	}
+	// a gaps sweep of ~api likewise
+	if err := s.ResolveGapFindingsExcept("r", "main", "api", nil, []string{"coverage-gap"}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.DriftFindings("r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range live {
+		got[f.Fingerprint] = true
+	}
+	if got["d1"] || got["g1"] {
+		t.Errorf("the running recipe's own stale findings should resolve: %v", got)
+	}
+	if !got["m1"] || !got["x1"] {
+		t.Errorf("another recipe's findings must survive: %v", got)
 	}
 }

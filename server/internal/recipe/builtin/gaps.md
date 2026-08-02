@@ -15,6 +15,8 @@ stages:
     produces: findings
     key: findings
     verify: true       # evidence quotes are checked against the source; unverifiable findings are dropped
+    narrate:
+      context: "    · using extracted requirements as the baseline"
 ---
 
 The coverage sweep: one reference source at a time, reporting what the

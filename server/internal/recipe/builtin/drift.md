@@ -27,6 +27,8 @@ stages:
     produces: findings
     key: findings
     verify: true       # evidence quotes are checked against the source; unverifiable findings are dropped
+    narrate:
+      context: "    · using extracted requirements as the baseline"
 ---
 
 The baseline check: one document, audited against every selected reference

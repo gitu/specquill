@@ -455,6 +455,12 @@ func (s *Server) askStage(ctx context.Context, rc *runContext, unit string,
 	if err := rc.spend(1); err != nil {
 		return nil, err
 	}
+	// when the sources have been extracted, a stage that asks for that
+	// inventory is starting from an analyzed baseline rather than raw source
+	// text — worth saying, because it changes what the answer means
+	if line := rc.contextNote(st, unit); line != "" {
+		rc.note(line)
+	}
 	filter := rc.rec.FilterFor(st)
 	tb, specs, err := rc.tools(filter)
 	if err != nil {
@@ -489,6 +495,20 @@ func (s *Server) askStage(ctx context.Context, rc *runContext, unit string,
 		res = append(res, stageItem{Fields: m, Parent: -1})
 	}
 	return res, nil
+}
+
+// contextNote is the stage's line about the context it is working FROM, when
+// that context is actually present. Only the recipe knows what is worth
+// saying, so an undeclared `narrate: context` is silence.
+func (rc *runContext) contextNote(st *recipe.Stage, unit string) string {
+	if !strings.Contains(st.User, "{{extracted}}") && !strings.Contains(st.User, "{{#extracted}}") {
+		return ""
+	}
+	vars := rc.vars(unit, nil, -1)
+	if vars["extracted"] == "" {
+		return ""
+	}
+	return st.Line("context", "", vars)
 }
 
 // buildMessages renders the stage's system prompt (plus the recipe's
