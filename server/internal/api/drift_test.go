@@ -1250,3 +1250,91 @@ func TestCancelledRunKeepsItsRealProgress(t *testing.T) {
 		t.Error("a run stopped with units left must be resumable")
 	}
 }
+
+// The alignment page shows ONE run — the newest by default, any past one on
+// request. Asking for an older run narrows the findings to what it found; the
+// default view keeps every live finding, since a scoped run never resolved
+// the ones it did not re-check.
+func TestDriftRunHistoryAndSelection(t *testing.T) {
+	drifted := `{"findings":[
+		{"anchor":"REQ-1","source":"reg","kind":"contradiction","severity":"high",
+		 "title":"timestamp precision drifted","detail":"ms vs µs",
+		 "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]}
+	]}`
+	gap := `{"findings":[
+		{"anchor":"rules.md#retention","severity":"medium","title":"retention uncovered","detail":"d",
+		 "suggestedPath":"requirements/REQ-retention.md",
+		 "evidence":[{"path":"rules.md","quote":"microsecond timestamps"}]}
+	]}`
+	h, _, _, _, _ := testDriftServer(t, []string{drifted, gap})
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main", map[string]any{})
+	if code != http.StatusOK {
+		t.Fatalf("drift run: %d %v", code, out)
+	}
+	first := int64(out["runId"].(float64))
+	waitDrift(t, h, cookie)
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"mode": "gaps", "focus": "data retention"})
+	if code != http.StatusOK {
+		t.Fatalf("gaps run: %d %v", code, out)
+	}
+	second := int64(out["runId"].(float64))
+	drift := waitDrift(t, h, cookie)
+
+	// default: the newest run, every live finding, nothing in flight
+	if run := drift["run"].(map[string]any); int64(run["id"].(float64)) != second {
+		t.Fatalf("default run = %v, want the newest (%d)", run["id"], second)
+	}
+	if drift["activeRunId"].(float64) != 0 {
+		t.Errorf("activeRunId = %v with no run in flight", drift["activeRunId"])
+	}
+	if n := len(drift["findings"].([]any)); n != 2 {
+		t.Errorf("default view shows %d finding(s), want both runs'", n)
+	}
+	runs := drift["runs"].([]any)
+	if len(runs) != 2 {
+		t.Fatalf("run history = %v, want 2 entries", runs)
+	}
+	newest := runs[0].(map[string]any)
+	if int64(newest["id"].(float64)) != second || newest["mode"] != "gaps" {
+		t.Errorf("history must be newest first: %v", newest)
+	}
+	if newest["focus"] != "data retention" || newest["findings"].(float64) != 1 {
+		t.Errorf("history row lost the run's shape: %v", newest)
+	}
+	if older := runs[1].(map[string]any); int64(older["id"].(float64)) != first || older["mode"] != "drift" {
+		t.Errorf("older row = %v, want run %d", older, first)
+	}
+
+	// picking a past run narrows to what THAT run found
+	code, out = doJSON(t, h, cookie, "GET",
+		fmt.Sprintf("/api/repos/w/drift?branch=main&run=%d", first), nil)
+	if code != http.StatusOK {
+		t.Fatalf("select run: %d %v", code, out)
+	}
+	if run := out["run"].(map[string]any); int64(run["id"].(float64)) != first {
+		t.Fatalf("selected run = %v, want %d", run["id"], first)
+	}
+	list := out["findings"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want only run %d's finding, got %v", first, list)
+	}
+	if f := list[0].(map[string]any); f["title"] != "timestamp precision drifted" ||
+		int64(f["runId"].(float64)) != first {
+		t.Errorf("wrong finding for run %d: %v", first, f)
+	}
+
+	// a selection that does not exist here degrades to the newest run
+	code, out = doJSON(t, h, cookie, "GET", "/api/repos/w/drift?branch=main&run=99999", nil)
+	if code != http.StatusOK {
+		t.Fatalf("unknown run: %d %v", code, out)
+	}
+	if run := out["run"].(map[string]any); int64(run["id"].(float64)) != second {
+		t.Errorf("unknown selection = %v, want the newest run", run["id"])
+	}
+	if n := len(out["findings"].([]any)); n != 2 {
+		t.Errorf("unknown selection shows %d finding(s), want the default view", n)
+	}
+}

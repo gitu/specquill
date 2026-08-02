@@ -106,8 +106,11 @@ func toolNote(tc ai.ToolCall, execErr error) string {
 }
 
 // resolveReportTokens expands the date tokens a report path may carry, so a
-// configured pattern names a different document as time moves on.
+// configured pattern names a different document as time moves on. UTC, like
+// every other date this writes into the repo: which report a run continues
+// must not depend on the server's timezone.
 func resolveReportTokens(p string, now time.Time) string {
+	now = now.UTC()
 	r := strings.NewReplacer(
 		"{date}", now.Format("2006-01-02"),
 		"{yyyy}", now.Format("2006"),
@@ -334,11 +337,46 @@ func resolveDriftScope(files map[string]string, requested, configured []string) 
 func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
 	out := map[string]any{"enabled": s.ai != nil}
-	if run, err := s.store.LatestDriftRun(repo.Key(), branch); err == nil {
-		out["run"] = driftRunWire(run)
+	// the page shows ONE run: the newest by default, or the one asked for.
+	// A selection that no longer exists here (another branch, a reset store)
+	// degrades to the newest rather than breaking the page.
+	latest, latestErr := s.store.LatestDriftRun(repo.Key(), branch)
+	sel, picked := latest, false
+	if q := r.URL.Query().Get("run"); q != "" {
+		if id, err := strconv.ParseInt(q, 10, 64); err == nil {
+			if run, err := s.store.DriftRunByID(id); err == nil &&
+				run.RepoKey == repo.Key() && run.Branch == branch {
+				sel, picked = run, true
+			}
+		}
+	}
+	if latestErr == nil || picked {
+		out["run"] = driftRunWire(sel)
 	} else {
 		out["run"] = nil
+		sel = nil
 	}
+	// a run in flight is always the newest one (one worker per repo+branch) —
+	// the client polls on this even while looking at an older run
+	out["activeRunId"] = int64(0)
+	if latestErr == nil && latest.Status == "running" {
+		out["activeRunId"] = latest.ID
+	}
+	runs, err := s.store.ListDriftRuns(repo.Key(), branch, 30)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	counts, err := s.store.DriftFindingCountsByRun(repo.Key(), branch)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	wireRuns := make([]map[string]any, 0, len(runs))
+	for i := range runs {
+		wireRuns = append(wireRuns, driftRunSummaryWire(&runs[i], counts[runs[i].ID]))
+	}
+	out["runs"] = wireRuns
 	findings, err := s.store.DriftFindings(repo.Key(), branch)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -346,6 +384,11 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 	}
 	wireFindings := make([]map[string]any, 0, len(findings))
 	for _, f := range findings {
+		// the default view keeps every live finding — a scoped run never
+		// resolved the others. Asking for ONE run narrows to what it found.
+		if picked && f.RunID != sel.ID {
+			continue
+		}
 		wireFindings = append(wireFindings, driftFindingWire(f))
 	}
 	out["findings"] = wireFindings
@@ -388,12 +431,12 @@ func (s *Server) getDrift(w http.ResponseWriter, r *http.Request, repo *project.
 		}
 		sort.Strings(list)
 		out["reports"] = list
-		// the analyzed application inventories: what the last run recorded
+		// the analyzed application inventories: what the shown run recorded
 		// (it knows the branch it wrote them to — possibly the caller's
 		// workspace) plus any already present on this branch
 		extractions := []map[string]any{}
 		seen := map[string]bool{}
-		if run, err := s.store.LatestDriftRun(repo.Key(), branch); err == nil && run.ExtractionsJSON != "" {
+		if run := sel; run != nil && run.ExtractionsJSON != "" {
 			var rec []struct{ Source, Path string }
 			if json.Unmarshal([]byte(run.ExtractionsJSON), &rec) == nil {
 				for _, e := range rec {
@@ -433,11 +476,30 @@ func driftRunWire(run *store.DriftRun) map[string]any {
 	}
 }
 
+// driftRunSummaryWire is one row of the run picker: what a run was, how far it
+// got and what it left behind — without its scope or activity, which only the
+// run being looked at needs.
+func driftRunSummaryWire(run *store.DriftRun, findings int) map[string]any {
+	var sources []string
+	_ = json.Unmarshal([]byte(run.SourcesJSON), &sources)
+	if sources == nil {
+		sources = []string{}
+	}
+	return map[string]any{
+		"id": run.ID, "mode": run.Mode, "status": run.Status, "error": run.Error,
+		"docsTotal": run.DocsTotal, "docsDone": run.DocsDone,
+		"droppedUnverified": run.DroppedUnverified, "sources": sources, "focus": run.Focus,
+		"reportPath": run.ReportPath, "reportBranch": run.ReportBranch,
+		"resumedFrom": run.ResumedFrom, "resumable": run.Resumable(),
+		"startedAt": run.StartedAt, "finishedAt": run.FinishedAt, "findings": findings,
+	}
+}
+
 func driftFindingWire(f store.DriftFinding) map[string]any {
 	var evidence []driftEvidence
 	_ = json.Unmarshal([]byte(f.EvidenceJSON), &evidence)
 	return map[string]any{
-		"fingerprint": f.Fingerprint, "docPath": f.DocPath, "anchor": f.Anchor,
+		"fingerprint": f.Fingerprint, "runId": f.RunID, "docPath": f.DocPath, "anchor": f.Anchor,
 		"suggestedPath": f.SuggestedPath, "draftPath": f.DraftPath,
 		"remedyPath": f.RemedyPath, "remedyKind": f.RemedyKind,
 		"documents": func() []map[string]string {
@@ -467,7 +529,8 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 		Mode  string   `json:"mode"`
 		Paths []string `json:"paths"`
 		// Sources restricts which references this run touches (default: all
-		// selected); Focus aims a gaps sweep at one area.
+		// selected); Focus aims the run at one area — a gaps sweep, an
+		// extraction and a drift check all narrow to it.
 		Sources []string `json:"sources"`
 		Focus   string   `json:"focus"`
 		Report  string   `json:"report"` // report doc to create/continue; default: the standing report
@@ -781,8 +844,10 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		actJSON, _ := json.Marshal(activity)
 		_ = s.store.UpdateDriftRunProgress(runID, done, dropped, string(actJSON))
 	}
+	// UTC, marked as such: these lines are persisted verbatim into the report
+	// document. The SPA localizes them for display (lib/feed.ts).
 	note := func(line string) {
-		activity = append(activity, time.Now().Format("15:04:05")+" "+line)
+		activity = append(activity, time.Now().UTC().Format("15:04:05")+"Z "+line)
 	}
 	// live: tool calls land in the feed as they happen, not after the unit
 	liveNote := func(done int) func(string) {
@@ -797,20 +862,22 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		srcNames = append(srcNames, "~"+src.Name)
 	}
 	sort.Strings(srcNames)
-	if mode == "extract" {
-		note(fmt.Sprintf("▸ analyzing %d application source%s into extracted requirements",
-			len(units), plural(len(units))))
-	} else if mode == "gaps" {
-		line := fmt.Sprintf("▸ gap analysis over %d source%s (%s)",
+	var line string
+	switch mode {
+	case "extract":
+		line = fmt.Sprintf("▸ analyzing %d application source%s into extracted requirements",
+			len(units), plural(len(units)))
+	case "gaps":
+		line = fmt.Sprintf("▸ gap analysis over %d source%s (%s)",
 			len(units), plural(len(units)), strings.Join(srcNames, ", "))
-		if focus != "" {
-			line += " · focus: " + focus
-		}
-		note(line)
-	} else {
-		note(fmt.Sprintf("▸ drift check of %d document%s against %s",
-			len(units), plural(len(units)), strings.Join(srcNames, ", ")))
+	default:
+		line = fmt.Sprintf("▸ drift check of %d document%s against %s",
+			len(units), plural(len(units)), strings.Join(srcNames, ", "))
 	}
+	if focus != "" { // every mode can be aimed at one area
+		line += " · focus: " + focus
+	}
+	note(line)
 	if resumedFrom > 0 {
 		note(fmt.Sprintf("▸ picking up run %d where it stopped", resumedFrom))
 	}
@@ -834,7 +901,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		switch mode {
 		case "extract":
 			var groups []extractedGroup
-			groups, droppedDoc, err = s.driftCheckExtract(ctx, repo, branch, unit, files, sources, instructions, liveNote(i))
+			groups, droppedDoc, err = s.driftCheckExtract(ctx, repo, branch, unit, files, sources, instructions, focus, liveNote(i))
 			if err == nil {
 				reqs := 0
 				for _, g := range groups {
@@ -863,7 +930,7 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		case "gaps":
 			findings, droppedDoc, err = s.driftCheckGaps(ctx, repo, branch, unit, files, sources, instructions, reportPath, focus, liveNote(i))
 		default:
-			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, reportPath, liveNote(i))
+			findings, droppedDoc, err = s.driftCheckDoc(ctx, repo, branch, unit, files, sources, idx, instructions, reportPath, focus, liveNote(i))
 		}
 		dropped += droppedDoc
 		if err != nil {
@@ -883,6 +950,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 			keep := make([]string, 0, len(findings))
 			for _, f := range findings {
 				keep = append(keep, f.Fingerprint)
+				// the run that last found it — what the run picker scopes by
+				f.RunID = runID
 				if err := s.store.UpsertDriftFinding(f); err != nil {
 					log.Printf("drift [%s@%s]: persist %s: %v", repo.ID, branch, f.Fingerprint, err)
 				}
@@ -1025,8 +1094,8 @@ func runLogLine(run *store.DriftRun, findings []store.DriftFinding) string {
 			open++
 		}
 	}
-	line := fmt.Sprintf("- %s · %s · %d/%d %s · %s · %d finding%s live",
-		time.Unix(run.StartedAt, 0).Format("2006-01-02 15:04"), run.Mode,
+	line := fmt.Sprintf("- %sZ · %s · %d/%d %s · %s · %d finding%s live",
+		time.Unix(run.StartedAt, 0).UTC().Format("2006-01-02 15:04"), run.Mode,
 		run.DocsDone, run.DocsTotal, unitNoun, run.Status, open, plural(open))
 	if run.DroppedUnverified > 0 {
 		line += fmt.Sprintf(" · %d dropped", run.DroppedUnverified)
@@ -1127,8 +1196,12 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 	var b strings.Builder
 	mode := "drift check (documents verified against the reference sources)"
 	unitNoun := "documents"
-	if run.Mode == "gaps" {
+	switch run.Mode {
+	case "gaps":
 		mode = "gap analysis (reference sources swept for uncovered capabilities)"
+		unitNoun = "sources"
+	case "extract":
+		mode = "app analysis (application sources extracted into a requirement inventory)"
 		unitNoun = "sources"
 	}
 	status := run.Status
@@ -1142,9 +1215,12 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 		fmt.Fprintf(&b, " @ `%.10s`", run.HeadSHA)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "- Started: %s\n", time.Unix(run.StartedAt, 0).Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "- Started: %s UTC\n", time.Unix(run.StartedAt, 0).UTC().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&b, "- Status: %s\n", status)
 	fmt.Fprintf(&b, "- Scope: %d %s\n", len(scope), unitNoun)
+	if run.Focus != "" {
+		fmt.Fprintf(&b, "- Focus: %s\n", run.Focus)
+	}
 	if run.DroppedUnverified > 0 {
 		fmt.Fprintf(&b, "- Dropped: %d finding(s) whose evidence did not verify\n", run.DroppedUnverified)
 	}
@@ -1238,7 +1314,7 @@ func driftReportBlock(run *store.DriftRun, findings []store.DriftFinding, runLog
 // verified findings plus the count dropped by evidence verification. The
 // doc's linked documents ride along as context (idx may be nil).
 func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branch, doc string,
-	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath string,
+	files map[string]string, sources []ai.GroundingSource, idx *linkIndex, instructions, reportPath, focus string,
 	note func(string)) ([]store.DriftFinding, int, error) {
 	content, ok := files[doc]
 	if !ok {
@@ -1271,7 +1347,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 	if extracted != "" {
 		note("    · using extracted requirements as the baseline")
 	}
-	msgs := ai.DriftPrompt(doc, content, linked, extracted, instructions, names)
+	msgs := ai.DriftPrompt(doc, content, linked, extracted, focus, instructions, names)
 
 	var out struct {
 		Findings []modelFinding `json:"findings"`
@@ -1296,7 +1372,7 @@ func (s *Server) driftCheckDoc(ctx context.Context, repo *project.Project, branc
 		seen[fp] = true
 		evidence, _ := json.Marshal(f.Evidence)
 		findings = append(findings, store.DriftFinding{
-			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp, RunID: 0,
+			RepoKey: repo.Key(), Branch: branch, Fingerprint: fp,
 			DocPath: doc, SuggestedPath: cleanDocPath(f.SuggestedPath),
 			Anchor: anchor, Source: f.Source, Kind: kind,
 			Severity: normDriftSeverity(f.Severity), Title: strings.TrimSpace(f.Title),
@@ -1418,7 +1494,7 @@ type extractedGroup struct {
 // own AI loop, then walk the results in batches and match them against the
 // workspace's documents. Evidence is verified exactly like a finding's.
 func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, branch, sourceName string,
-	files map[string]string, sources []ai.GroundingSource, instructions string,
+	files map[string]string, sources []ai.GroundingSource, instructions, focus string,
 	note func(string)) ([]extractedGroup, int, error) {
 	var src *ai.GroundingSource
 	for i := range sources {
@@ -1451,7 +1527,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 		} `json:"areas"`
 	}
 	if err := ask(ai.WithLabel(ctx, "extract survey ~"+sourceName),
-		ai.SurveyPrompt(sourceName, instructions), &survey); err != nil {
+		ai.SurveyPrompt(sourceName, focus, instructions), &survey); err != nil {
 		return nil, 0, fmt.Errorf("survey: %w", err)
 	}
 	areas := survey.Areas[:0:0]
@@ -1461,6 +1537,10 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 		}
 	}
 	if len(areas) == 0 {
+		if focus != "" { // aiming at an area the source has nothing in is an answer, not a failure
+			note("  ▸ nothing in ~" + sourceName + " belongs to “" + focus + "”")
+			return nil, 0, nil
+		}
 		return nil, 0, fmt.Errorf("survey returned no areas")
 	}
 	if len(areas) > maxExtractAreas {
@@ -1481,7 +1561,7 @@ func (s *Server) driftCheckExtract(ctx context.Context, repo *project.Project, b
 			Requirements []extractedRequirement `json:"requirements"`
 		}
 		if err := ask(ai.WithLabel(ctx, "extract area "+a.Name),
-			ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, instructions), &out); err != nil {
+			ai.ExtractPrompt(sourceName, a.Name, a.Summary, a.Paths, focus, instructions), &out); err != nil {
 			note("    ✗ " + a.Name + ": " + err.Error()) // one bad area never sinks the source
 			continue
 		}
@@ -1621,7 +1701,7 @@ func extractionBlock(source, headSHA string, groups []extractedGroup) string {
 		fmt.Fprintf(&b, " @ `%.10s`", headSHA)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "- Extracted: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "- Extracted: %s UTC\n", time.Now().UTC().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&b, "- %d requirement(s) across %d area(s)\n", total, len(groups))
 	fmt.Fprintf(&b, "- Coverage: %d fully stated by a document, %d partially, %d not covered\n",
 		full, partial, total-full-partial)

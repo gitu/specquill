@@ -219,7 +219,7 @@ export function useForgeRequest(repo: string | undefined, branch: string | undef
 export interface DriftEvidence { path: string; quote: string }
 export type DriftMode = 'drift' | 'gaps' | 'extract';
 export interface DriftFinding {
-  fingerprint: string; docPath: string; anchor: string; source: string;
+  fingerprint: string; runId: number; docPath: string; anchor: string; source: string;
   // coverage gaps (docPath '') carry where the missing doc should live and
   // the reverse-engineered draft once one was created
   suggestedPath: string; draftPath: string;
@@ -242,9 +242,19 @@ export interface DriftRun {
   reportBranch: string;
   focus: string; resumedFrom: number; resumable: boolean;
 }
+/** One row of the run history: a run's shape, without its scope or activity. */
+export interface DriftRunSummary {
+  id: number; mode: DriftMode; status: DriftRun['status']; error: string;
+  docsTotal: number; docsDone: number; droppedUnverified: number;
+  sources: string[]; focus: string; reportPath: string; reportBranch: string;
+  resumedFrom: number; resumable: boolean; startedAt: number; finishedAt: number;
+  findings: number; // its live findings — what the run is still worth
+}
 export interface DriftTarget { name: string; kind: string; project: string }
 export interface DriftResp {
   enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
+  runs: DriftRunSummary[]; // the branch's run history, newest first
+  activeRunId: number;     // the run in flight (0 = none), whichever one is shown
   sources: string[]; // the references a gaps run would sweep
   reports: string[]; // existing report docs a run can continue (incl. the default)
   defaultReport: string; // the project's standing report (its drift.report:)
@@ -252,13 +262,19 @@ export interface DriftResp {
   extractions: { source: string; path: string }[];
 }
 
-/** Latest source-drift run + live findings; polls while a run is in flight. */
-export function useDrift(repo: string | undefined, branch: string) {
+/**
+ * One source-drift run + its findings, plus the branch's run history. `runId`
+ * picks which run to look at (0 = the newest, and keep following it); asking
+ * for an older one narrows the findings to what THAT run found. Polls while a
+ * run is in flight — including while an older run is on screen.
+ */
+export function useDrift(repo: string | undefined, branch: string, runId = 0) {
   return useQuery({
-    queryKey: ['drift', repo, branch],
-    queryFn: () => api<DriftResp>(`/api/repos/${repo}/drift?branch=${encodeURIComponent(branch)}`),
+    queryKey: ['drift', repo, branch, runId],
+    queryFn: () => api<DriftResp>(`/api/repos/${repo}/drift?branch=${encodeURIComponent(branch)}` +
+      (runId ? `&run=${runId}` : '')),
     enabled: !!repo,
-    refetchInterval: (q) => (q.state.data?.run?.status === 'running' ? 2_500 : false),
+    refetchInterval: (q) => (q.state.data?.activeRunId ? 2_500 : false),
   });
 }
 

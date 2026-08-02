@@ -121,6 +121,57 @@ func (s *Store) DriftRunByID(id int64) (*DriftRun, error) {
 	return r, err
 }
 
+// ListDriftRuns returns the recent runs of a repo+branch, newest first. It
+// deliberately leaves out the heavy per-run blobs (scope, activity, extractions):
+// the run picker only needs each run's shape, and the one being looked at is
+// loaded in full by DriftRunByID.
+func (s *Store) ListDriftRuns(repoKey, branch string, limit int) ([]DriftRun, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := s.query(`SELECT id, mode, status, error, docs_total, docs_done,
+			dropped_unverified, report_path, report_branch, sources_json, focus,
+			resumed_from, started_at, finished_at
+		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT ?`,
+		repoKey, branch, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DriftRun{}
+	for rows.Next() {
+		r := DriftRun{RepoKey: repoKey, Branch: branch}
+		if err := rows.Scan(&r.ID, &r.Mode, &r.Status, &r.Error, &r.DocsTotal, &r.DocsDone,
+			&r.DroppedUnverified, &r.ReportPath, &r.ReportBranch, &r.SourcesJSON, &r.Focus,
+			&r.ResumedFrom, &r.StartedAt, &r.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DriftFindingCountsByRun counts the live findings each run produced, so the
+// run picker can say what a past run is still worth.
+func (s *Store) DriftFindingCountsByRun(repoKey, branch string) (map[int64]int, error) {
+	rows, err := s.query(`SELECT run_id, COUNT(*) FROM drift_findings
+		WHERE repo_key = ? AND branch = ? AND resolved_at = 0 GROUP BY run_id`, repoKey, branch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // DriftRunResumedBy reports which run already picked up id (0 = none), so the
 // same remaining units are not run twice.
 func (s *Store) DriftRunResumedBy(id int64) (int64, error) {

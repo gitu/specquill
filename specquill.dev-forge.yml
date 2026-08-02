@@ -46,8 +46,13 @@ session:
   ttl: 1h                           # no -dev TTL bypass here; the SPA re-logins silently anyway
   cookie_secure: false              # plain http in dev
 
+
 ai:
   enabled: true
-  base_url: http://127.0.0.1:11434/v1
-  model: qwen2.5:7b
-  quick_model: qwen2.5:7b
+  base_url: https://api.openai.com/v1
+  model: gpt-5.6-terra
+  quick_model: gpt-5.4-mini
+  api_key_env: SPECQUILL_AI_KEY
+  reasoning_effort: "medium"
+
+

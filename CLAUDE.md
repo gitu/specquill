@@ -133,7 +133,7 @@ from the code.
   run scope.
 - **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
   `views/AlignmentView.tsx`, rail icon. `DriftControls` (run controls) and
-  the last-run panel sit compact side by side; below them a TABBED
+  the run panel sit compact side by side; below them a TABBED
   FULL-WIDTH panel switches between `DriftFindings` and the run activity —
   findings need the width for their paths, evidence and actions, and the log
   needs it to stay unwrapped. The Overview keeps only the compact
@@ -141,13 +141,17 @@ from the code.
   **drift** —
   scoped per-document AI runs verify docs against the selected references —
   and **gaps** — per-source sweeps report capabilities no document covers.
-  Any run may be RESTRICTED to a subset of the project's references
-  (`sources:` on the run request, 422 when none match) and a gaps sweep may
-  be AIMED at one area (`focus:`, a hard constraint in the prompt — out-of-
-  area gaps are another sweep's job); `POST .../drift/focus` proposes where
-  to aim next from the extracted inventories (read-only: no run, no writes),
-  and the card offers those as clickable chips that set both the focus and
-  its sources
+  EVERY mode is steerable the same three ways, and the controls show all
+  three regardless of mode: which references it touches (`sources:`, 422 when
+  none match — drift verifies against them, gaps/extract work through them),
+  which units it covers (`paths:` in drift mode — folder prefixes AND exact
+  document paths, both resolved by `resolveDriftScope`) and one area to
+  concentrate on (`focus:`, a hard constraint in the prompt of the drift, gap
+  AND survey/extract passes — out-of-area findings are another run's job; a
+  focused survey that returns no areas is an answer, not a failure);
+  `POST .../drift/focus` proposes where to aim next from the extracted
+  inventories (read-only: no run, no writes), and the card offers those as
+  clickable chips that set both the focus and its sources
   (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
   path). Drift ALSO proposes documents that don't exist yet: kind
   `new-requirement` (the source mandates something in the audited doc's
@@ -372,6 +376,20 @@ from the code.
   the tab does not stop it, findings and the report are written per unit, and
   the card picks it back up on return — the card SAYS so while running,
   because nothing else would tell the user.
+- **The page shows ONE run, and WHICH one is the user's choice**:
+  `GET /drift?run=<id>` (default = the newest; an id from another branch or a
+  reset store degrades to the newest instead of 404ing, so a stale selection
+  never breaks the page). The payload carries `runs` — the compact history,
+  newest first, each row with its live finding count — and `activeRunId`; the
+  client polls on THAT, so a run in flight keeps updating while the user
+  looks back at an older one. Picking a past run narrows the findings to its
+  `run_id` (the worker stamps it on every upsert, so a re-found finding
+  belongs to the run that last saw it); the DEFAULT view keeps every live
+  finding, because a scoped run never resolved the ones it did not re-check.
+  Selection lives in `AlignmentView` (`runId` state, 0 = follow the newest)
+  and is passed into `DriftControls`/`DriftFindings` — starting or resuming a
+  run snaps it back to 0. While another run is active the start button is
+  disabled (a second one would 409) with a "Follow it" banner instead.
 - Boot closes what the previous process left behind: `MarkInterruptedDriftRuns`
   (called from `api/router.go`) turns every `running` row into status
   **`interrupted`** — its own status, not an error, since the units already

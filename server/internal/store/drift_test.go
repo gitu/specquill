@@ -211,3 +211,56 @@ func TestFileDriftFinding(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
+
+func TestListDriftRunsAndFindingCounts(t *testing.T) {
+	s := OpenTest(t)
+	older, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", Mode: "drift",
+		ScopeJSON: `["a.md"]`, DocsTotal: 1, SourcesJSON: `["reg"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", Mode: "gaps",
+		DocsTotal: 1, Focus: "retention", SourcesJSON: `["reg"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// another branch's run must not leak into this branch's history
+	if _, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "ws/flo", Mode: "drift"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "a", RunID: older, DocPath: "a.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "b", RunID: newer},
+		{RepoKey: "r", Branch: "main", Fingerprint: "c", RunID: newer},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a resolved finding is not what a past run is still worth
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := s.ListDriftRuns("r", "main", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("history = %+v, want this branch's 2 runs", runs)
+	}
+	if runs[0].ID != newer || runs[1].ID != older {
+		t.Errorf("history must be newest first: %d then %d", runs[0].ID, runs[1].ID)
+	}
+	if runs[0].Mode != "gaps" || runs[0].Focus != "retention" || runs[0].SourcesJSON != `["reg"]` {
+		t.Errorf("row lost the run's shape: %+v", runs[0])
+	}
+
+	counts, err := s.DriftFindingCountsByRun("r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[newer] != 2 || counts[older] != 0 {
+		t.Errorf("counts = %v, want 2 live for run %d and none for the resolved one", counts, newer)
+	}
+}

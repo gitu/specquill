@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
+import { localizeFeed } from '../lib/feed';
 import { projectPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import {
@@ -20,12 +21,17 @@ const SEV: Record<string, { label: string; fg: string; bg: string; rank: number 
  * The run controls: pick a mode (Drift verifies each document against the
  * sources, Gaps sweeps the sources for uncovered capabilities, Extract
  * analyzes the app into a requirement inventory), aim it, choose the report,
- * and watch it go. The findings it produces render full-width in
+ * and watch it go. Every mode can be narrowed the same three ways — which
+ * reference sources it touches, which units it covers, and one area to
+ * concentrate on. The findings it produces render full-width in
  * DriftFindings — they need the room.
  */
-export function DriftControls({ repo, branch }: { repo: string | undefined; branch: string }) {
+export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
+  repo: string | undefined; branch: string;
+  runId?: number; onSelectRun?: (id: number) => void;
+}) {
   const navigate = useNavigate();
-  const drift = useDrift(repo, branch);
+  const drift = useDrift(repo, branch, runId);
   const tree = useTree(repo, branch);
   const run = useRunDrift(repo, branch);
   const cancel = useCancelDrift(repo, branch);
@@ -33,7 +39,9 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
   const suggest = useFocusAreas(repo, branch);
   const qc = useQueryClient();
   const [mode, setMode] = useState<DriftMode>('drift');
-  const [scope, setScope] = useState<string[]>([]); // folder prefixes; [] = everything
+  // folder prefixes (trailing '/') and/or exact document paths; [] = everything
+  const [scope, setScope] = useState<string[]>([]);
+  const [docFilter, setDocFilter] = useState('');
   const [report, setReport] = useState(''); // '' = follow the last run / default
   const [pickSources, setPickSources] = useState<string[]>([]); // [] = every selected source
   const [focus, setFocus] = useState('');
@@ -48,18 +56,27 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
     docs.forEach((p) => { const i = p.indexOf('/'); if (i > 0) seen.add(p.slice(0, i + 1)); });
     return [...seen].sort();
   }, [docs]);
-  const scopedCount = scope.length === 0 ? docs.length
-    : docs.filter((p) => scope.some((f) => p.startsWith(f))).length;
+  // a folder entry covers everything under it; anything else is one document
+  const inScope = (p: string) => scope.some((s) => (s.endsWith('/') ? p.startsWith(s) : p === s));
+  const scopedCount = scope.length === 0 ? docs.length : docs.filter(inScope).length;
+  const pickedDocs = scope.filter((s) => !s.endsWith('/'));
+  const toggle = (list: string[], v: string) =>
+    (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   const data = drift.data;
   if (!data?.enabled) return null;
-  const running = data.run?.status === 'running';
+  const shown = data.run;
+  // a run in flight may not be the one on screen — the user can look back at
+  // an older run while it works
+  const running = shown?.status === 'running';
+  const active = data.activeRunId !== 0 && !running;
   const sources = data.sources ?? [];
-  const unitNoun = data.run?.mode === 'gaps' ? 'sources' : 'docs';
+  const unitNoun = shown?.mode === 'drift' ? 'docs' : 'sources';
 
   // never hardcode a path here: the standing report is the PROJECT's
-  // (drift.report: in its .specquill/config.yml), reported by the server
-  const reportTarget = report || data.run?.reportPath || data.defaultReport || '';
+  // (drift.report: in its .specquill/config.yml), reported by the server.
+  // A new run continues the NEWEST run's report, not the one being looked at.
+  const reportTarget = report || data.runs?.[0]?.reportPath || data.defaultReport || '';
   const reportExists = (data.reports ?? []).includes(reportTarget);
   const start = () => {
     setErr('');
@@ -70,10 +87,11 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
       const body = {
         mode, report: reportTarget, branch: on,
         ...(pickSources.length ? { sources: pickSources } : {}),
-        ...(mode === 'gaps' && focus.trim() ? { focus: focus.trim() } : {}),
+        ...(focus.trim() ? { focus: focus.trim() } : {}),
         ...(mode === 'drift' ? { paths: scope } : {}),
       };
       await run.mutateAsync(body);
+      onSelectRun?.(0); // follow the run that was just started
       // the switch remounts this card's query against the new branch; that
       // mount fetch can land BEFORE the run row exists, and a card showing
       // "no run" never polls. Re-ask once the remount has settled.
@@ -85,7 +103,8 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
   const resume = () => {
     setErr('');
     void ensureWritableBranch().then(async (on) => {
-      await run.mutateAsync({ branch: on, resume: data.run!.id });
+      await run.mutateAsync({ branch: on, resume: shown!.id });
+      onSelectRun?.(0);
       setTimeout(() => qc.invalidateQueries({ queryKey: ['drift', repo] }), 400);
     }).catch((e) => setErr(String((e as Error).message ?? e)));
   };
@@ -96,9 +115,9 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
           Source alignment
         </span>
         <span style={sx('flex:1')} />
-        {data.run && !running && (
-          <span title={data.run.error} style={sx(`font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;flex:none;background:${data.run.status === 'ok' ? 'var(--data-bg)' : 'var(--reg-bg)'};color:${data.run.status === 'ok' ? 'var(--data)' : 'var(--reg)'}`)}>
-            {data.run.status}
+        {shown && !running && (
+          <span title={shown.error} style={sx(`font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:99px;flex:none;background:${shown.status === 'ok' ? 'var(--data-bg)' : 'var(--reg-bg)'};color:${shown.status === 'ok' ? 'var(--data)' : 'var(--reg)'}`)}>
+            {shown.status}
           </span>
         )}
       </div>
@@ -106,11 +125,11 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
       {running ? (
         <div style={sx('padding:12px 14px')}>
           <div style={sx('display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)')}>
-            <span style={sx('flex:1')}>checking {data.run!.docsDone}/{data.run!.docsTotal} {unitNoun}…</span>
+            <span style={sx('flex:1')}>checking {shown!.docsDone}/{shown!.docsTotal} {unitNoun}…</span>
             <button onClick={() => cancel.mutate()} style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>Cancel</button>
           </div>
           <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
-            <div style={sx(`width:${data.run!.docsTotal ? Math.round((100 * data.run!.docsDone) / data.run!.docsTotal) : 0}%;height:100%;background:var(--ai)`)} />
+            <div style={sx(`width:${shown!.docsTotal ? Math.round((100 * shown!.docsDone) / shown!.docsTotal) : 0}%;height:100%;background:var(--ai)`)} />
           </div>
           {/* the run is a server-side worker, not a browser task — say so, or
               people sit and watch a page they do not need to watch */}
@@ -118,27 +137,40 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
             Runs on the server — you can close this page or work elsewhere. Findings and the
             report are written as it goes, and this page picks the run back up when you return.
           </div>
-          {(data.run!.activity?.length ?? 0) > 0 && (
+          {(shown!.activity?.length ?? 0) > 0 && (
             <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);margin-top:8px;line-height:1.6")}>
-              {data.run!.activity.slice(-3).map((line, i) => <div key={i} style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{line}</div>)}
+              {localizeFeed(shown!.activity.slice(-3), shown!.startedAt).map((line, i) => <div key={i} style={sx('overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{line}</div>)}
             </div>
           )}
         </div>
       ) : (
         <div style={sx('padding:10px 14px;border-bottom:1px solid var(--border)')}>
-          {data.run?.resumable && (
+          {/* looking back at an older run while another one works: the controls
+              stay put (a second run would 409), the live one is one click away */}
+          {active && (
+            <div data-drift-active style={sx('display:flex;align-items:center;gap:9px;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2)')}>
+              <span style={sx('flex:1;min-width:0;font-size:11.5px;color:var(--text-2)')}>
+                Run {data.activeRunId} is in progress on this branch.
+              </span>
+              <button onClick={() => onSelectRun?.(0)}
+                style={sx('height:24px;padding:0 10px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;flex:none')}>
+                Follow it
+              </button>
+            </div>
+          )}
+          {shown?.resumable && (
             <div data-drift-resume style={sx('display:flex;align-items:center;gap:9px;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2)')}>
               <div style={sx('flex:1;min-width:0;font-size:11.5px;color:var(--text-2);line-height:1.5')}>
-                {data.run.status === 'interrupted'
+                {shown.status === 'interrupted'
                   ? 'The server restarted during this run.'
-                  : data.run.status === 'cancelled' ? 'This run was stopped.' : 'This run failed part way.'}
+                  : shown.status === 'cancelled' ? 'This run was stopped.' : 'This run failed part way.'}
                 {' '}
-                <strong>{data.run.docsDone} of {data.run.docsTotal}</strong> {data.run.mode === 'drift' ? 'documents' : 'sources'} were
+                <strong>{shown.docsDone} of {shown.docsTotal}</strong> {shown.mode === 'drift' ? 'documents' : 'sources'} were
                 checked — the rest can be picked up.
               </div>
-              <button data-drift-resume-start onClick={resume} disabled={run.isPending}
+              <button data-drift-resume-start onClick={resume} disabled={run.isPending || active}
                 style={sx('height:26px;padding:0 11px;border:1px solid var(--ai);border-radius:7px;background:var(--ai);color:#fff;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
-                {run.isPending ? 'Resuming…' : `Resume (${data.run.docsTotal - data.run.docsDone} left)`}
+                {run.isPending ? 'Resuming…' : `Resume (${shown.docsTotal - shown.docsDone} left)`}
               </button>
             </div>
           )}
@@ -147,63 +179,96 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
             <ModeSeg label="Gaps" title="sweep each reference source for capabilities no document covers" active={mode === 'gaps'} onClick={() => setMode('gaps')} />
             <ModeSeg label="Extract" title="analyze the application sources into a grouped requirement inventory, persisted beside the report" active={mode === 'extract'} onClick={() => setMode('extract')} />
           </div>
-          {mode === 'drift' ? (
-            <div style={sx('display:flex;flex-wrap:wrap;gap:5px;margin-top:9px')}>
-              <ScopeChip label="Everything" active={scope.length === 0} onClick={() => setScope([])} />
-              {folders.map((f) => (
-                <ScopeChip key={f} label={f} active={scope.includes(f)}
-                  onClick={() => setScope((s) => (s.includes(f) ? s.filter((x) => x !== f) : [...s, f]))} />
-              ))}
-            </div>
-          ) : (
+
+          {/* drift is the only mode whose units are documents — the others
+              work per source, and their unit picker IS the source row below */}
+          {mode === 'drift' && (
             <div style={sx('margin-top:9px')}>
               <div style={sx('display:flex;flex-wrap:wrap;gap:5px;align-items:center')}>
-                <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>
-                  {mode === 'extract' ? 'analyze' : 'sweep'}
-                </span>
-                <ScopeChip label="All sources" active={pickSources.length === 0} onClick={() => setPickSources([])} />
-                {sources.map((n) => (
-                  <ScopeChip key={n} label={'~' + n} active={pickSources.includes(n)}
-                    onClick={() => setPickSources((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]))} />
+                <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>check</span>
+                <ScopeChip label="Everything" active={scope.length === 0} onClick={() => setScope([])} />
+                {folders.map((f) => (
+                  <ScopeChip key={f} label={f} active={scope.includes(f)}
+                    onClick={() => setScope((s) => toggle(s, f))} />
                 ))}
               </div>
-              {mode === 'gaps' && (
-                <>
-                  <div style={sx('display:flex;align-items:center;gap:6px;margin-top:7px')}>
-                    <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>focus</span>
-                    <input value={focus} placeholder="whole source — or name an area to aim at"
-                      onChange={(e) => setFocus(e.target.value)}
-                      title="Restrict this sweep to one area; gaps outside it are another sweep's job"
-                      style={sx('flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px')} />
-                    {focus && (
-                      <button onClick={() => setFocus('')}
-                        style={sx('height:24px;padding:0 8px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>clear</button>
+              {/* a folder is often still too much: name the documents outright */}
+              <details style={{ marginTop: 6 }}>
+                <summary style={sx('font-size:10.5px;color:var(--text-3);cursor:pointer;user-select:none')}>
+                  pick individual documents{pickedDocs.length ? ` (${pickedDocs.length} picked)` : ''}
+                </summary>
+                <div style={sx('margin-top:5px')}>
+                  <input value={docFilter} onChange={(e) => setDocFilter(e.target.value)}
+                    placeholder="filter documents" spellCheck={false}
+                    style={sx("width:100%;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:'JetBrains Mono',monospace;font-size:10.5px")} />
+                  <div data-drift-doc-picker style={sx('max-height:150px;overflow-y:auto;margin-top:5px;border:1px solid var(--border);border-radius:7px')}>
+                    {docs.filter((p) => p.toLowerCase().includes(docFilter.toLowerCase())).map((p) => (
+                      <label key={p} title={p}
+                        style={sx("display:flex;align-items:center;gap:7px;padding:3px 8px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-2);cursor:pointer")}>
+                        <input type="checkbox" checked={scope.includes(p)}
+                          onChange={() => setScope((s) => toggle(s, p))} style={{ flex: 'none', cursor: 'pointer' }} />
+                        <span style={sx('flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{p}</span>
+                      </label>
+                    ))}
+                    {docs.length === 0 && (
+                      <div style={sx('padding:5px 8px;font-size:10.5px;color:var(--text-3)')}>no documents on this branch</div>
                     )}
-                    <button onClick={() => { setErr(''); suggest.mutate(pickSources.length ? pickSources : undefined, { onSuccess: (r) => setAreas(r.areas), onError: (e) => setErr(String((e as Error).message ?? e)) }); }}
-                      disabled={suggest.isPending}
-                      title="Ask where a gap sweep would pay off, based on what has been extracted"
-                      style={sx('height:24px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none')}>
-                      {suggest.isPending ? 'Thinking…' : 'Suggest areas'}
-                    </button>
                   </div>
-                  {areas?.length === 0 && (
-                    <div style={sx('font-size:10.5px;color:var(--text-3);margin-top:5px')}>no focus areas proposed</div>
-                  )}
-                  {(areas ?? []).map((a) => (
-                    <div key={a.name} onClick={() => { setFocus(a.name); if (a.sources.length) setPickSources(a.sources); }}
-                      title={'focus on ' + a.name}
-                      style={sx('display:flex;gap:7px;align-items:baseline;margin-top:5px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;background:' + (focus === a.name ? 'var(--ai-bg)' : 'var(--surface)'))}>
-                      <span style={sx('font-size:11.5px;font-weight:600;flex:none')}>{a.name}</span>
-                      <span style={sx('font-size:10.5px;color:var(--text-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{a.reason}</span>
-                      {a.sources.length > 0 && (
-                        <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);flex:none")}>~{a.sources.join(' ~')}</span>
-                      )}
-                    </div>
-                  ))}
-                </>
-              )}
+                </div>
+              </details>
             </div>
           )}
+
+          {/* which references the run touches — a drift check verifies against
+              them, a gaps sweep and an extraction work through them */}
+          <div style={sx('display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:9px')}>
+            <span style={sx('font-size:11px;color:var(--text-3);flex:none')}>
+              {mode === 'extract' ? 'analyze' : mode === 'gaps' ? 'sweep' : 'against'}
+            </span>
+            <ScopeChip label="All sources" active={pickSources.length === 0} onClick={() => setPickSources([])} />
+            {sources.map((n) => (
+              <ScopeChip key={n} label={'~' + n} active={pickSources.includes(n)}
+                onClick={() => setPickSources((p) => toggle(p, n))} />
+            ))}
+          </div>
+
+          {/* one area to concentrate on — every mode honours it, so a large
+              application can be worked through deliberately */}
+          <div style={sx('display:flex;align-items:center;gap:6px;margin-top:7px')}>
+            <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>focus</span>
+            <input value={focus} onChange={(e) => setFocus(e.target.value)}
+              placeholder={mode === 'drift' ? 'whole documents — or name an area to concentrate on'
+                : mode === 'extract' ? 'whole application — or name an area to analyze'
+                : 'whole source — or name an area to aim at'}
+              title={mode === 'drift' ? 'Restrict this check to one area; drift outside it is another check’s job'
+                : mode === 'extract' ? 'Extract only this area of the application; the rest is another analysis’ job'
+                : 'Restrict this sweep to one area; gaps outside it are another sweep’s job'}
+              style={sx('flex:1;min-width:0;height:24px;padding:0 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:11px')} />
+            {focus && (
+              <button onClick={() => setFocus('')}
+                style={sx('height:24px;padding:0 8px;border:none;border-radius:6px;background:none;color:var(--text-3);font-family:inherit;font-size:11px;cursor:pointer;flex:none')}>clear</button>
+            )}
+            <button onClick={() => { setErr(''); suggest.mutate(pickSources.length ? pickSources : undefined, { onSuccess: (r) => setAreas(r.areas), onError: (e) => setErr(String((e as Error).message ?? e)) }); }}
+              disabled={suggest.isPending}
+              title="Ask where the next run would pay off, based on what has been extracted"
+              style={sx('height:24px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none')}>
+              {suggest.isPending ? 'Thinking…' : 'Suggest areas'}
+            </button>
+          </div>
+          {areas?.length === 0 && (
+            <div style={sx('font-size:10.5px;color:var(--text-3);margin-top:5px')}>no focus areas proposed</div>
+          )}
+          {(areas ?? []).map((a) => (
+            <div key={a.name} onClick={() => { setFocus(a.name); if (a.sources.length) setPickSources(a.sources); }}
+              title={'focus on ' + a.name}
+              style={sx('display:flex;gap:7px;align-items:baseline;margin-top:5px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;background:' + (focus === a.name ? 'var(--ai-bg)' : 'var(--surface)'))}>
+              <span style={sx('font-size:11.5px;font-weight:600;flex:none')}>{a.name}</span>
+              <span style={sx('font-size:10.5px;color:var(--text-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{a.reason}</span>
+              {a.sources.length > 0 && (
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);flex:none")}>~{a.sources.join(' ~')}</span>
+              )}
+            </div>
+          ))}
           <div style={sx('display:flex;align-items:center;gap:6px;margin-top:9px')}>
             <span style={sx('font-size:10.5px;color:var(--text-3);flex:none')}>report</span>
             <input value={reportTarget} list="drift-report-docs" spellCheck={false}
@@ -215,10 +280,12 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
             </datalist>
             <button onClick={() => {
               // the default is already dated, so "new" must be finer-grained
-              // to start a SEPARATE report within the same day
+              // to start a SEPARATE report within the same day. UTC end to end
+              // (like the server's own date tokens) — the name lands in git.
               const t = new Date();
+              const p = (n: number) => String(n).padStart(2, '0');
               const stamp = t.toISOString().slice(0, 10) + '-' +
-                String(t.getHours()).padStart(2, '0') + String(t.getMinutes()).padStart(2, '0');
+                p(t.getUTCHours()) + p(t.getUTCMinutes());
               setReport(`reports/alignment-${stamp}.md`);
             }}
               title="Start a separate report now instead of continuing today's"
@@ -229,12 +296,10 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
           </div>
           <div style={sx('display:flex;align-items:center;gap:8px;margin-top:9px')}>
             <span style={sx('font-size:11px;color:var(--text-3);flex:1')}>
-              {mode === 'drift' ? `${scopedCount} doc${scopedCount === 1 ? '' : 's'} in scope`
-                : `${pickSources.length || sources.length} source${(pickSources.length || sources.length) === 1 ? '' : 's'}` +
-                  (mode === 'extract' ? ' → grouped requirement inventory'
-                    : focus.trim() ? ` · focused on “${focus.trim()}”` : ' · uncovered capabilities')}
+              {summarize(mode, scopedCount, pickSources.length || sources.length, focus)}
             </span>
-            <button onClick={start} disabled={run.isPending || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
+            <button onClick={start} title={active ? 'a run is already in progress on this branch' : undefined}
+              disabled={run.isPending || active || (mode === 'drift' ? scopedCount === 0 : sources.length === 0)}
               style={sx('height:26px;padding:0 12px;border:none;border-radius:7px;background:var(--text);color:var(--bg);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;flex:none')}>
               {mode === 'drift' ? 'Check drift' : mode === 'extract' ? 'Analyze app' : 'Find gaps'}
             </button>
@@ -245,21 +310,21 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
       {err && (
         <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{err}</div>
       )}
-      {data.run?.status === 'error' && data.run.error && !err && (
-        <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{data.run.error}</div>
+      {shown?.status === 'error' && shown.error && !err && (
+        <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{shown.error}</div>
       )}
 
       {(data.extractions ?? []).map((e) => (
-        <div key={e.path} onClick={() => navigate(projectPath(repo, '/editor/' + e.path, data.run?.reportBranch || branch))}
+        <div key={e.path} onClick={() => navigate(projectPath(repo, '/editor/' + e.path, shown?.reportBranch || branch))}
           style={sx("display:flex;align-items:center;gap:6px;padding:6px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);cursor:pointer")}>
           ⌗ {e.path}<span style={sx('color:var(--text-3)')}>— extracted requirements of ~{e.source}</span>
         </div>
       ))}
-      {data.run && data.run.reportPath !== '' && (
-        <div onClick={() => navigate(projectPath(repo, '/editor/' + data.run!.reportPath, data.run!.reportBranch || branch))}
+      {shown && shown.reportPath !== '' && (
+        <div onClick={() => navigate(projectPath(repo, '/editor/' + shown.reportPath, shown.reportBranch || branch))}
           style={sx("display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--prod);cursor:pointer")}>
-          ⎙ {data.run.reportPath}
-          <span style={sx('color:var(--text-3)')}>— {running ? 'updating live' : 'run report in the repo'}{data.run.reportBranch && data.run.reportBranch !== branch ? ` on ${data.run.reportBranch}` : ''}</span>
+          ⎙ {shown.reportPath}
+          <span style={sx('color:var(--text-3)')}>— {running ? 'updating live' : 'run report in the repo'}{shown.reportBranch && shown.reportBranch !== branch ? ` on ${shown.reportBranch}` : ''}</span>
         </div>
       )}
     </div>
@@ -267,14 +332,18 @@ export function DriftControls({ repo, branch }: { repo: string | undefined; bran
 }
 
 /**
- * The findings of the last run, full width: each one keeps its evidence, the
- * documents it touches and every action (draft, change, work item, issue,
- * dismiss) on screen without wrapping.
+ * The live findings, full width: each one keeps its evidence, the documents it
+ * touches and every action (draft, change, work item, issue, dismiss) on
+ * screen without wrapping. `runId` narrows them to one past run — by default
+ * every live finding shows, since a scoped run never resolved the others.
  */
-export function DriftFindings({ repo, branch }: { repo: string | undefined; branch: string }) {
+export function DriftFindings({ repo, branch, runId = 0, onSelectRun }: {
+  repo: string | undefined; branch: string;
+  runId?: number; onSelectRun?: (id: number) => void;
+}) {
   const nav = useNav();
   const navigate = useNavigate();
-  const drift = useDrift(repo, branch);
+  const drift = useDrift(repo, branch, runId);
   const dismiss = useDismissFinding(repo, branch);
   const file = useFileFinding(repo, branch);
   const draft = useDraftRequirement(repo, branch);
@@ -289,6 +358,7 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
   const data = drift.data;
   if (!data?.enabled) return null;
   const running = data.run?.status === 'running';
+  const scoped = runId !== 0 && data.run !== null; // showing ONE past run's findings
   const findings = (data.findings ?? []).filter((f) => f.status !== 'dismissed')
     .sort((a, b) => (SEV[a.severity]?.rank ?? 3) - (SEV[b.severity]?.rank ?? 3));
   const dismissed = (data.findings ?? []).filter((f) => f.status === 'dismissed');
@@ -341,6 +411,17 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
     <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
       {err && (
         <div style={sx('padding:8px 14px;font-size:11.5px;color:var(--reg);background:var(--reg-bg);border-bottom:1px solid var(--border)')}>{err}</div>
+      )}
+      {scoped && (
+        <div data-drift-scoped style={sx('display:flex;align-items:center;gap:8px;padding:7px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);font-size:11px;color:var(--text-2)')}>
+          <span style={sx('flex:1;min-width:0')}>
+            Showing what run {data.run!.id} ({driftModeLabel(data.run!.mode)}) found — other live findings are hidden.
+          </span>
+          <button onClick={() => onSelectRun?.(0)}
+            style={sx('height:22px;padding:0 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;font-size:10.5px;font-weight:600;cursor:pointer;flex:none')}>
+            Show all
+          </button>
+        </div>
       )}
 
       {findings.map((f) => {
@@ -506,11 +587,11 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
           ) : !data.run ? (
             'no run yet — start a check above'
           ) : data.run.status === 'ok' ? (
-            <><span style={sx('color:var(--data)')}>✓</span> {data.run.mode === 'gaps' ? 'no coverage gaps found in the last run'
+            <><span style={sx('color:var(--data)')}>✓</span> {data.run.mode === 'gaps' ? `no coverage gaps found in ${scoped ? 'that run' : 'the last run'}`
               : data.run.mode === 'extract' ? 'app analysis writes an extracted inventory document, not findings'
-              : 'no drift found in the last run'}</>
+              : `no drift found in ${scoped ? 'that run' : 'the last run'}`}</>
           ) : (
-            `no findings from the last run (${data.run.status})`
+            `no findings from ${scoped ? 'that run' : 'the last run'} (${data.run.status})`
           )}
         </div>
       )}
@@ -524,6 +605,20 @@ export function DriftFindings({ repo, branch }: { repo: string | undefined; bran
       )}
     </div>
   );
+}
+
+/** What the configured run would do, in one line above the start button. */
+function summarize(mode: DriftMode, docs: number, srcs: number, focus: string) {
+  const s = (n: number) => (n === 1 ? '' : 's');
+  const focused = focus.trim() ? ` · focused on “${focus.trim()}”` : '';
+  if (mode === 'drift') return `${docs} doc${s(docs)} in scope · against ${srcs} source${s(srcs)}${focused}`;
+  if (mode === 'extract') return `${srcs} source${s(srcs)} → grouped requirement inventory${focused}`;
+  return `${srcs} source${s(srcs)}${focused || ' · uncovered capabilities'}`;
+}
+
+/** The human name of a run mode — the label the mode segments carry. */
+export function driftModeLabel(mode: DriftMode) {
+  return mode === 'gaps' ? 'gap analysis' : mode === 'extract' ? 'app analysis' : 'drift check';
 }
 
 function ModeSeg({ label, title, active, onClick }: { label: string; title: string; active: boolean; onClick: () => void }) {

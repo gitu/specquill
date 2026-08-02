@@ -378,8 +378,14 @@ Rules:
 // documents (linkedBlock — the WHY above and the HOW below it, so the check
 // sees the chain context); the reference sources are reachable through the
 // read tools.
-func DriftPrompt(docPath, docContent, linkedBlock, extracted, instructions string, sourceNames []string) []Message {
+func DriftPrompt(docPath, docContent, linkedBlock, extracted, focus, instructions string, sourceNames []string) []Message {
 	system := driftSystem
+	if focus != "" {
+		system += "\n\n# Focus\nThis check is aimed at ONE aspect: " + focus +
+			".\nReport only drift that belongs to it. Divergences outside the focus are " +
+			"another check's job — skip them silently, and return an empty list when the " +
+			"document is sound in this aspect."
+	}
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
 	}
@@ -439,21 +445,33 @@ Rules:
 
 // SurveyPrompt builds the divide-the-application conversation: partition one
 // source into the capability areas that are then extracted one at a time.
-func SurveyPrompt(sourceName, instructions string) []Message {
+func SurveyPrompt(sourceName, focus, instructions string) []Message {
 	system := surveySystem
+	if focus != "" {
+		system += "\n\n# Focus\nThis analysis is aimed at ONE part of the application: " + focus +
+			".\nDivide only that part into areas — capabilities outside it belong to another " +
+			"analysis. Return an empty list when the source has nothing in this part."
+	}
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
 	}
+	user := "# Application source to divide: ~" + sourceName +
+		"\n\nExplore it and return its capability areas as JSON."
+	if focus != "" {
+		user = "# Application source to divide: ~" + sourceName +
+			"\n# Aimed at: " + focus +
+			"\n\nExplore it and return the capability areas WITHIN that part as JSON."
+	}
 	return []Message{
 		{Role: "system", Content: system},
-		{Role: "user", Content: "# Application source to divide: ~" + sourceName +
-			"\n\nExplore it and return its capability areas as JSON."},
+		{Role: "user", Content: user},
 	}
 }
 
 const focusSystem = `You are the specquill focus adviser. You propose the AREAS
-a requirements analyst could aim the next gap analysis at, so they can work
-through a large application deliberately instead of sweeping everything.
+a requirements analyst could aim their next run at — a gap sweep, an extraction
+or a drift check — so they can work through a large application deliberately
+instead of sweeping everything at once.
 
 Base the proposals on what you are given: the extracted requirement
 inventories (with their coverage), the reference sources, and the workspace's
@@ -572,8 +590,12 @@ Rules:
 
 // ExtractPrompt builds the conquer step: extract the requirements of ONE
 // surveyed area of an application source.
-func ExtractPrompt(sourceName, area, summary string, paths []string, instructions string) []Message {
+func ExtractPrompt(sourceName, area, summary string, paths []string, focus, instructions string) []Message {
 	system := extractSystem
+	if focus != "" {
+		system += "\n\n# Focus\nThis analysis is aimed at ONE part of the application: " + focus +
+			".\nExtract only requirements that belong to it, even when the area's files carry more."
+	}
 	if instructions != "" {
 		system += "\n\nWorkspace drift instructions:\n" + instructions
 	}

@@ -482,3 +482,73 @@ test('a running check says it does not need the page open', async ({ page, reque
   await expect(page.getByText(/Runs on the server/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/picks the run back up when you return/)).toBeVisible();
 });
+
+// The page shows ONE run — the newest by default, any earlier one on request.
+// Picking a past run scopes the findings to what THAT run found.
+test('past runs stay selectable and scope the findings', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
+
+  // run 1: a drift check over specs/
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const before = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, before);
+  const driftRun = await runId(request, ws.branch);
+
+  // run 2: a gap sweep, which becomes the newest
+  await page.getByText('Gaps', { exact: true }).click();
+  await page.getByRole('button', { name: 'Find gaps' }).click();
+  await runFinished(request, ws.branch, driftRun);
+  const gapRun = await runId(request, ws.branch);
+  expect(gapRun).toBeGreaterThan(driftRun);
+
+  // the newest run is what the page defaults to, and both runs' findings show
+  const picker = page.locator('[data-drift-run-picker]');
+  await expect(picker).toHaveValue(String(gapRun), { timeout: 15_000 });
+  await expect(picker.locator(`option[value="${driftRun}"]`)).toHaveCount(1);
+  await expect(rows(page, 'coverage-gap').first()).toBeVisible();
+  await expect(rows(page, 'outdated-requirement').first()).toBeVisible();
+
+  // pick the older drift run: its findings only, and the panel says so
+  await picker.selectOption(String(driftRun));
+  await expect(page.locator('[data-drift-scoped]')).toBeVisible();
+  await expect(rows(page, 'outdated-requirement').first()).toBeVisible();
+  await expect(rows(page, 'coverage-gap')).toHaveCount(0);
+  await expect(page.getByText('Run ' + driftRun, { exact: true })).toBeVisible();
+
+  // back to the default view: every live finding again
+  await page.getByRole('button', { name: 'Show all' }).click();
+  await expect(page.locator('[data-drift-scoped]')).toHaveCount(0);
+  await expect(rows(page, 'coverage-gap').first()).toBeVisible();
+});
+
+// Every mode can be aimed the same three ways; a drift check narrows to
+// single documents and to the sources it verifies against.
+test('a drift check can be narrowed to one document and one source', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
+
+  // pick ONE document instead of a whole folder
+  await page.getByText(/pick individual documents/).click();
+  const picker = page.locator('[data-drift-doc-picker]');
+  await picker.getByText('specs/venue.md').click();
+  await expect(page.getByText(/1 doc in scope/)).toBeVisible();
+
+  // …and restrict which reference it is verified against
+  await page.getByRole('button', { name: '~regulations' }).click();
+  await expect(page.getByText(/1 doc in scope · against 1 source/)).toBeVisible();
+
+  const before = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, before);
+
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { scope: string[] };
+  };
+  expect(d.run.scope).toEqual(['specs/venue.md']);
+});
