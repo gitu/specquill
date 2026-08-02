@@ -106,6 +106,33 @@ function DriverChipView({ raw, titles, model, info, nav }: {
   );
 }
 
+// The family marker chip: what a document IS to the model — entity icon +
+// type plus the WHY/WHAT/HOW/WHEN axis badge. Rendered on the Properties
+// `type:` row when the value names a known family.
+const GROUP_COLOR: Record<string, { fg: string; bg: string }> = {
+  why: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
+  what: { fg: 'var(--prod)', bg: 'var(--prod-bg)' },
+  how: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
+  when: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
+};
+function FamilyMarker({ ent, title }: { ent: EntityDef; title: string }) {
+  const mono = "font-family:'JetBrains Mono',monospace;";
+  const g = ent.group ?? '';
+  const gc = GROUP_COLOR[g] || { fg: 'var(--text-2)', bg: 'var(--surface-2)' };
+  return (
+    <span title={title}
+      style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + (ent.color || 'var(--text-2)') + ';border-radius:7px;background:var(--surface-2);font-size:11px;flex:none')}>
+      <span style={{ color: ent.color }}>{ent.icon}</span>
+      <span style={sx('font-weight:600')}>{ent.docType || ent.kind}</span>
+      {g && (
+        <span style={sx(`${mono}font-size:8.5px;font-weight:700;letter-spacing:.4px;padding:1px 5px;border-radius:4px;background:${gc.bg};color:${gc.fg}`)}>
+          {g.toUpperCase()}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Computed backlinks panel: every inbound link to this document — driver
 // citations, the other typed frontmatter relations, and body-text mentions.
 // Deliberately its OWN box, not a row in the Properties panel — these are
@@ -114,24 +141,15 @@ function DriverChipView({ raw, titles, model, info, nav }: {
 // document's FAMILY marker (its classified type + model-axis group), and the
 // link-debug list folds out at the bottom — one panel for the whole linking
 // story, rendered even with zero backlinks so the state is never ambiguous.
-function BacklinksPanel({ links, report, model, entities, nav, outline, onJump }: {
+function BacklinksPanel({ links, report, model, nav, outline, onJump }: {
   links: DocBacklink[];
   report: NonNullable<ReturnType<typeof docLinkReport>>;
   model: WorkspaceModel;
-  entities: EntityDef[];
   nav: (p: string) => void;
   outline?: { level: number; text: string }[];
   onJump?: (i: number) => void;
 }) {
   const mono = "font-family:'JetBrains Mono',monospace;";
-  const ent = report.classified ? entities.find((e) => e.kind === report.kind) : undefined;
-  const groupColor: Record<string, { fg: string; bg: string }> = {
-    why: { fg: 'var(--reg)', bg: 'var(--reg-bg)' },
-    what: { fg: 'var(--prod)', bg: 'var(--prod-bg)' },
-    how: { fg: 'var(--text-2)', bg: 'var(--surface-2)' },
-    when: { fg: 'var(--ai)', bg: 'var(--ai-bg)' },
-  };
-  const gc = groupColor[report.group] || { fg: 'var(--text-2)', bg: 'var(--surface-2)' };
   return (
     <div style={sx('margin:0 0 30px;border:1px dashed var(--border-2);border-radius:10px')}>
       <div style={sx('display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px dashed var(--border)')}>
@@ -139,19 +157,9 @@ function BacklinksPanel({ links, report, model, entities, nav, outline, onJump }
         <span style={sx(mono + 'font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px')}>Context</span>
         <span style={sx(mono + 'font-size:10.5px;color:var(--text-3)')}>· computed from links to this document — not stored in it</span>
         <div style={sx('flex:1')} />
-        {/* the family marker: what this document IS to the model */}
-        {ent ? (
-          <span title={`classified by its type: as ${ent.docType || ent.kind}${report.group ? ` — ${report.group.toUpperCase()} on the model axis` : ''}`}
-            style={sx('display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--border);border-left:3px solid ' + (ent.color || 'var(--text-2)') + ';border-radius:7px;background:var(--surface-2);font-size:11px')}>
-            <span style={{ color: ent.color }}>{ent.icon}</span>
-            <span style={sx('font-weight:600')}>{ent.docType || ent.kind}</span>
-            {report.group && (
-              <span style={sx(`${mono}font-size:8.5px;font-weight:700;letter-spacing:.4px;padding:1px 5px;border-radius:4px;background:${gc.bg};color:${gc.fg}`)}>
-                {report.group.toUpperCase()}
-              </span>
-            )}
-          </span>
-        ) : (
+        {/* the family itself shows on the Properties `type:` row — here only
+            the failure case warns, since it also means links don't parse */}
+        {!report.classified && (
           <span title="no entity family matches this document's type: or folder — typed links do not parse here"
             style={sx('display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border:1px solid var(--reg-line);border-radius:7px;background:var(--reg-bg);color:var(--reg);font-size:11px;font-weight:600')}>
             ⚠ unclassified
@@ -379,6 +387,20 @@ export function EditorView() {
   const [shareOpen, setShareOpen] = useState(false);
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null);
   const editorApi = useRef<MilkdownApi | null>(null);
+  // the toolbar measures ITSELF (not the viewport): tree + speccy eat width,
+  // so a media query can't tell when the row actually gets tight. Below the
+  // threshold the buttons drop their labels (tooltips remain), and the row
+  // wraps rather than clipping controls off the edge.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barW, setBarW] = useState(Infinity);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBarW(el.clientWidth));
+    ro.observe(el);
+    setBarW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
   // bumped when a sketch is saved (editor OR speccy) so embedded previews
   // re-render — app-level, because the speccy panel saves sketches too
   const { sketchGen, bumpSketchGen } = app;
@@ -571,6 +593,14 @@ export function EditorView() {
     return { path: /\.md$/.test(p) && app.files?.[p] !== undefined ? p : '', type };
   }, [app.model, app.files, path]);
 
+  // the `type:` row renders as the family marker when its value names a
+  // known family — same normalization the classifier applies, so whatever
+  // spelling classifies also renders nicely. Unknown types stay plain text.
+  const typeEntity = (v: string) => {
+    const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    return app.entities.find((e) => norm(e.docType || e.kind) === norm(v) || norm(e.kind) === norm(v));
+  };
+
   // the debug view: everything the model parses (and skips) as links here
   const linkReport = useMemo(
     () => (kind === 'md' && app.model && app.files ? docLinkReport(app.files, app.model, path) : null),
@@ -643,10 +673,23 @@ export function EditorView() {
     return suggestReferences(stripFrontmatter(draft.raw).body, targets, path).slice(0, 6);
   }, [effMode, targets, draft.raw, path, ready]);
 
+  // edit mode carries ~5 extra controls, so its full-label row needs more room
+  const compact = narrow || barW < (effMode === 'edit' ? 1200 : 780);
   return (
     <div style={sx('flex:1;min-height:0;display:flex;flex-direction:column;position:relative')}>
       {!narrow && docTabsStrip('editor', name, nav, draft.dirty, raw0)}
-      <div style={sx('height:40px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 ' + (narrow ? '10px' : '16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'overflow-x:auto;overflow-y:hidden' : ''))}>
+      <div ref={barRef} style={sx('flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:' + (narrow ? '0 10px' : '5px 16px') + ';background:var(--surface);border-bottom:1px solid var(--border);' + (narrow ? 'height:40px;overflow-x:auto;overflow-y:hidden' : 'min-height:40px;flex-wrap:wrap;row-gap:4px'))}>
+        {/* the mode selector leads: it's the one control every visit uses */}
+        <div style={sx('flex:none;display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:2px')}>
+          <span onClick={() => setMode('view')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'view'))}>View</span>
+          {editable && (
+            <span onClick={() => void enterEdit()} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'edit'))}>Edit</span>
+          )}
+          {kind !== 'image' && (
+            <span onClick={() => setMode('source')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'source'))}>Source</span>
+          )}
+          <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
+        </div>
         <div style={sx("display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text-2);min-width:30px;overflow:hidden")}>
           <span style={sx('color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>{path}</span>
           {draft.dirty && <span title="unsaved changes" style={sx('flex:none;width:6px;height:6px;border-radius:50%;background:var(--reg)')} />}
@@ -662,23 +705,23 @@ export function EditorView() {
                 </button>
               ))}
             </span>
-            <button onClick={insertMermaid} title="Insert a mermaid diagram at the cursor"
+            <button onClick={insertMermaid} aria-label="Diagram" title="Insert a mermaid diagram at the cursor"
               style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-              <IconDiagram /> Diagram
+              <IconDiagram />{!compact && ' Diagram'}
             </button>
-            <button onClick={insertSketch} title="Create an excalidraw sketch and embed it at the cursor"
+            <button onClick={insertSketch} aria-label="Sketch" title="Create an excalidraw sketch and embed it at the cursor"
               style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-              <IconPen /> Sketch
+              <IconPen />{!compact && ' Sketch'}
             </button>
-            <button onClick={() => imagePicker.current?.click()} title="Upload an image and embed it at the cursor (or just paste/drop one)"
+            <button onClick={() => imagePicker.current?.click()} aria-label="Image" title="Upload an image and embed it at the cursor (or just paste/drop one)"
               style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-              <IconImage /> Image
+              <IconImage />{!compact && ' Image'}
             </button>
             <input ref={imagePicker} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple hidden
               onChange={(e) => { void pickImage(e.target.files); e.target.value = ''; }} />
-            <button onClick={() => applyLinkify()} title="Turn plain-text mentions of requirements, specs and fields into links"
+            <button onClick={() => applyLinkify()} aria-label="Link refs" title="Turn plain-text mentions of requirements, specs and fields into links"
               style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-              <IconLink /> Link refs
+              <IconLink />{!compact && ' Link refs'}
             </button>
             <span style={sx('width:1px;height:20px;background:var(--border)')} />
           </>
@@ -698,16 +741,6 @@ export function EditorView() {
             )}
           </span>
         )}
-        <div style={sx('flex:none;display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:2px')}>
-          <span onClick={() => setMode('view')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'view'))}>View</span>
-          {editable && (
-            <span onClick={() => void enterEdit()} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'edit'))}>Edit</span>
-          )}
-          {kind !== 'image' && (
-            <span onClick={() => setMode('source')} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(effMode === 'source'))}>Source</span>
-          )}
-          <span onClick={() => setHistoryOpen(true)} style={sx('padding:3px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;' + tseg(historyOpen))}>History</span>
-        </div>
         <span style={sx('width:1px;height:20px;background:var(--border)')} />
         {!readOnly && !generated && kind === 'md' && drift.data?.enabled && (
           <button
@@ -719,9 +752,10 @@ export function EditorView() {
               onError: (e) => toasts.push({ text: `Drift check: ${(e as Error).message}`, kind: 'error' }),
             })}
             disabled={runDrift.isPending || drift.data?.run?.status === 'running'}
+            aria-label="Check drift"
             title="Verify this document against the reference sources (AI) — findings appear on the Source alignment page"
             style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-            {drift.data?.run?.status === 'running' ? 'Checking…' : 'Check drift'}
+            {drift.data?.run?.status === 'running' ? 'Checking…' : compact ? 'Drift' : 'Check drift'}
           </button>
         )}
         {!readOnly && !generated && (
@@ -736,9 +770,9 @@ export function EditorView() {
             </button>
           </>
         )}
-        <button onClick={() => setShareOpen(true)} title="Share this workspace as an OKF bundle (unauthenticated zip link)"
+        <button onClick={() => setShareOpen(true)} aria-label="Share" title="Share this workspace as an OKF bundle (unauthenticated zip link)"
           style={sx('flex:none;display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface);color:var(--text-2);font-family:inherit;font-size:12px;cursor:pointer')}>
-          <IconShare />Share
+          <IconShare />{!compact && 'Share'}
         </button>
       </div>
       {historyOpen && <HistoryDrawer path={path} onClose={() => setHistoryOpen(false)} />}
@@ -865,19 +899,27 @@ export function EditorView() {
                     <div style={sx('flex:1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0')}>
                       {p.rawKey === 'drivers'
                         ? p.items.map((it, i) => <DriverChipView key={i} raw={it.text} titles={docTitles} model={app.model} info={driverInfo} nav={nav} />)
-                        : p.items.map((it, i) => (
-                          it.openPath
-                            ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
-                            : it.href
-                              ? <a key={i} href={it.href} target="_blank" rel="noopener noreferrer" style={sx(it.style)}>{it.text}</a>
-                              : <span key={i} style={sx(it.style)}>{it.text}</span>
-                        ))}
+                        : p.rawKey === 'type'
+                          ? p.items.map((it, i) => {
+                            const ent = typeEntity(it.text);
+                            return ent
+                              ? <FamilyMarker key={i} ent={ent}
+                                  title={`a known family: ${ent.label}${ent.group ? ` — ${ent.group.toUpperCase()} on the model axis` : ''}`} />
+                              : <span key={i} style={sx(it.style)}>{it.text}</span>;
+                          })
+                          : p.items.map((it, i) => (
+                            it.openPath
+                              ? <RefChipView key={i} text={it.text} path={it.openPath} docTitle={docTitles[it.openPath]} entities={app.entities} nav={nav} />
+                              : it.href
+                                ? <a key={i} href={it.href} target="_blank" rel="noopener noreferrer" style={sx(it.style)}>{it.text}</a>
+                                : <span key={i} style={sx(it.style)}>{it.text}</span>
+                          ))}
                     </div>
                   </div>
                 ))}
               </div>
             )}
-            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} entities={app.entities} nav={nav} outline={outline} onJump={jumpToHeading} />}
+            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} nav={nav} outline={outline} onJump={jumpToHeading} />}
             {kind === 'image' ? (
               fileRepo && (
                 <div
@@ -958,7 +1000,7 @@ export function EditorView() {
                 />
               )}
             </div>
-            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} entities={app.entities} nav={nav} outline={outline} onJump={jumpToHeading} />}
+            {linkReport && app.model && <BacklinksPanel links={backlinks} report={linkReport} model={app.model} nav={nav} outline={outline} onJump={jumpToHeading} />}
             <MilkdownEditor
               key={path + ':' + draft.gen + ':' + sketchGen + ':' + app.theme + (conflict ? ':c' : '')}
               body={body}
