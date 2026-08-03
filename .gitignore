@@ -1,4 +1,5 @@
 data/
+specquill.shots.yml
 node_modules/
 web/dist/
 server/internal/webui/dist/*
