@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -15,6 +16,24 @@ import (
 //
 //go:embed builtin/*.md
 var builtinFS embed.FS
+
+// starterDoc is what "New recipe" writes: a working two-stage pipeline with
+// the prompts stubbed out. It lives OUTSIDE builtin/ on purpose — it is a
+// template, not a recipe anyone can run, and must not be loaded as one.
+//
+//go:embed starter.md
+var starterDoc string
+
+// Starter returns the template for a new project recipe, named after the slug
+// it is being saved as. It parses — a starter that did not would teach the
+// wrong shape (TestStarterParses).
+func Starter(slug, name string) string {
+	if name == "" {
+		name = slug
+	}
+	r := strings.NewReplacer("RECIPE_NAME", name, "RECIPE_SLUG", slug)
+	return r.Replace(starterDoc)
+}
 
 // BuiltinSlugs are the modes the run API accepts as `mode:`, in the order the
 // UI shows them.

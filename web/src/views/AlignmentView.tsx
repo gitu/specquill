@@ -6,6 +6,7 @@ import { useApp } from '../state/AppContext';
 import { projectPath } from '../state/nav';
 import { DriftRunSummary, useDrift } from '../api/hooks';
 import { DriftControls, DriftFindings, driftModeLabel } from '../components/DriftCard';
+import { RecipeList } from '../components/RecipeList';
 
 /**
  * Source alignment as its own page: the run controls stay compact at the top,
@@ -19,7 +20,10 @@ export function AlignmentView() {
   // 0 = the newest run, and keep following it as new ones start
   const [runId, setRunId] = useState(0);
   const drift = useDrift(app.repoId, app.branch, runId);
-  const [tab, setTab] = useState<'findings' | 'activity'>('findings');
+  const [tab, setTab] = useState<'findings' | 'activity' | 'recipes'>('findings');
+  // WHICH pipeline the controls will run. It lives here so the Recipes tab can
+  // select one — a list you cannot act from is a brochure.
+  const [recipe, setRecipe] = useState('drift');
   const run = drift.data?.run;
   const running = run?.status === 'running';
   const open = (drift.data?.findings ?? []).filter((f) => f.status !== 'dismissed').length;
@@ -39,7 +43,8 @@ export function AlignmentView() {
 
         {/* controls + last-run meta: compact, side by side */}
         <div style={sx('display:grid;grid-template-columns:1.65fr 1fr;gap:18px;margin-top:22px;align-items:start')}>
-          <DriftControls repo={app.repoId} branch={app.branch} runId={runId} onSelectRun={setRunId} />
+          <DriftControls repo={app.repoId} branch={app.branch} runId={runId} onSelectRun={setRunId}
+            recipe={recipe} onPickRecipe={setRecipe} />
           {run && (
             <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
               <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
@@ -76,6 +81,7 @@ export function AlignmentView() {
         <div style={sx('display:flex;align-items:center;gap:2px;margin:20px 0 10px')}>
           <Tab label={`Findings${open ? ' · ' + open : ''}`} active={tab === 'findings'} onClick={() => setTab('findings')} />
           <Tab label={`Run activity${lines ? ' · ' + lines : ''}`} active={tab === 'activity'} onClick={() => setTab('activity')} />
+          <Tab label="Recipes" active={tab === 'recipes'} onClick={() => setTab('recipes')} />
           <span style={sx('flex:1')} />
           {run?.reportPath !== undefined && run?.reportPath !== '' && (
             <span onClick={() => navigate(projectPath(app.repoId, '/editor/' + run.reportPath, run.reportBranch || app.branch))}
@@ -85,7 +91,10 @@ export function AlignmentView() {
           )}
         </div>
 
-        {tab === 'findings' ? (
+        {tab === 'recipes' ? (
+          <RecipeList repo={app.repoId} branch={app.branch} selected={recipe}
+            onSelect={(slug) => { setRecipe(slug); setTab('findings'); }} />
+        ) : tab === 'findings' ? (
           <DriftFindings repo={app.repoId} branch={app.branch} runId={runId} onSelectRun={setRunId} />
         ) : (
           <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>

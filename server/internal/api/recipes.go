@@ -77,6 +77,9 @@ func (s *Server) getRecipes(w http.ResponseWriter, r *http.Request, repo *projec
 	}
 	out["recipes"] = list
 	out["errors"] = errs
+	// the template "New recipe" writes: defined here, beside the parser, so
+	// the client never has to know the format
+	out["starter"] = recipe.Starter("my-audit", "My audit")
 	jsonOK(w, out)
 }
 

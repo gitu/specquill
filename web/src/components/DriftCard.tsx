@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { sx } from '../lib/sx';
@@ -27,9 +27,12 @@ const SEV: Record<string, { label: string; fg: string; bg: string; rank: number 
  * concentrate on. The findings it produces render full-width in
  * DriftFindings — they need the room.
  */
-export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
+export function DriftControls({ repo, branch, runId = 0, onSelectRun, recipe, onPickRecipe }: {
   repo: string | undefined; branch: string;
   runId?: number; onSelectRun?: (id: number) => void;
+  // WHICH pipeline to run. Owned by the page so the Recipes tab can select
+  // one; falls back to local state when nothing lifts it.
+  recipe?: string; onPickRecipe?: (slug: string) => void;
 }) {
   const navigate = useNavigate();
   const drift = useDrift(repo, branch, runId);
@@ -42,8 +45,13 @@ export function DriftControls({ repo, branch, runId = 0, onSelectRun }: {
   const check = useCheckRecipe(repo, branch);
   const qc = useQueryClient();
   // the mode IS a recipe slug: the three built-ins are recipes like any other
-  const [mode, setMode] = useState<DriftMode>('drift');
+  const [ownMode, setOwnMode] = useState<DriftMode>('drift');
+  const mode = recipe ?? ownMode;
+  const setMode = (slug: DriftMode) => { setOwnMode(slug); onPickRecipe?.(slug); };
   const [dryRun, setDryRun] = useState<RecipeCheck | null>(null);
+  // a projection belongs to the recipe it was made for — picking another one
+  // (here or from the Recipes tab) must not leave the old numbers on screen
+  useEffect(() => { setDryRun(null); }, [recipe]);
   // folder prefixes (trailing '/') and/or exact document paths; [] = everything
   const [scope, setScope] = useState<string[]>([]);
   const [docFilter, setDocFilter] = useState('');

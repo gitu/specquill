@@ -156,8 +156,20 @@ from the code.
   `list_files`/`search`/`read_file` cannot reach an excluded file rather than
   being asked nicely.
   `GET /alignment/recipes` lists them (a recipe that fails to parse is
-  REPORTED, never silently absent); `POST /alignment/recipes/validate` is a
-  dry run projecting units and model calls against the ceiling.
+  REPORTED, never silently absent) plus the `starter` document ＋ New recipe
+  writes — the format has ONE definition, in Go, and the client never
+  hardcodes it; `POST /alignment/recipes/validate` is a dry run projecting
+  units and model calls against the ceiling.
+  Recipes live under `.specquill/`, which the document tree hides behind its
+  all-files toggle, so **`/alignment` has a third tab, Recipes**
+  (`components/RecipeList.tsx`): shipped and project pipelines side by side
+  with their stage chain, file filter, finding kinds and load errors, "Use"
+  to select one for the run controls (the selection lives in `AlignmentView`,
+  passed into `DriftControls`) and "edit" straight into the ordinary document
+  editor. Without it the only evidence the feature exists is a dropdown you
+  have to already know to look in — and a project with no recipes yet gets no
+  hint at all. `scripts/dev-fixture.sh` ships one worked example
+  (`repo/.specquill/alignment/deadline-audit.md`), which mock-llm answers.
 - **Extraction is the baseline** (recipe `extract`), and it is DIVIDE AND
   CONQUER, not one pass — now expressed as three stages in
   `builtin/extract.md`: (1) `survey` divides the app into capability areas

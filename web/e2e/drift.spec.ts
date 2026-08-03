@@ -629,6 +629,71 @@ test('a project recipe is listed, dry run and executed like a built-in', async (
   await expect(page.locator('[data-drift-recipe]')).toContainText('Deadline audit');
 });
 
+// A recipe lives under .specquill/, which the document tree hides behind its
+// all-files toggle — so the Recipes tab is the only place the feature is
+// discoverable, and the only route to the example anyone will copy.
+test('the recipes tab lists every pipeline and opens the example', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+  await page.getByRole('button', { name: 'Recipes' }).click();
+
+  // the shipped three and the project's own, side by side
+  for (const slug of ['drift', 'gaps', 'extract', 'deadline-audit']) {
+    await expect(page.locator(`[data-recipe="${slug}"]`)).toBeVisible();
+  }
+  const mine = page.locator('[data-recipe="deadline-audit"]');
+  await expect(mine).toContainText('Deadline audit');
+  await expect(mine).toContainText('unstated-deadline');       // its own kinds
+  await expect(mine).toContainText('.specquill/alignment/');    // and where it lives
+
+  // "Use" selects it for the run controls above
+  await mine.locator('[data-recipe-use]').click();
+  await expect(page.locator('[data-drift-recipe]')).toHaveValue('deadline-audit');
+
+  // "edit" opens the recipe as an ordinary document — the payoff of the
+  // format being markdown
+  await page.getByRole('button', { name: 'Recipes' }).click();
+  await mine.locator('[data-recipe-open]').click();
+  await expect(page).toHaveURL(/editor\/\.specquill\/alignment\/deadline-audit\.md/, { timeout: 20_000 });
+  await expect(page.getByText('regulatory deadline reader').first()).toBeVisible({ timeout: 15_000 });
+});
+
+// "New recipe" has to write something that actually runs — an author's first
+// experience must not be an error about a document they did not write.
+test('new recipe writes a working starter and opens it', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  const slug = `scratch-starter-${Date.now().toString(36)}`;
+  const path = `.specquill/alignment/${slug}.md`;
+  try {
+    await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+    await page.getByRole('button', { name: 'Recipes' }).click();
+    await page.locator('[data-recipe-new]').click();
+    await page.locator('[data-recipe-slug]').fill(slug);
+    await page.locator('[data-recipe-create]').click();
+    await expect(page).toHaveURL(new RegExp(`editor/\\.specquill/alignment/${slug}\\.md`), { timeout: 20_000 });
+
+    // it parses: the server lists it rather than reporting it broken
+    const listed = (await (await request.get(
+      `/api/repos/${REPO}/alignment/recipes?branch=${q(branch)}`, { headers: H })).json()) as {
+        recipes: { slug: string; findings: { kind: string }[] }[]; errors: Record<string, string>;
+      };
+    expect(listed.errors[slug]).toBeUndefined();
+    const created = listed.recipes.find((r) => r.slug === slug);
+    expect(created, 'the starter should parse and be listed').toBeTruthy();
+    // …and it is named after the slug it was saved as, not the template
+    expect(created!.findings.map((f) => f.kind)).toContain(`${slug}-finding`);
+
+    // a dry run over it resolves — the thing an author does next
+    const check = (await (await request.post(
+      `/api/repos/${REPO}/alignment/recipes/validate?branch=${q(branch)}`,
+      { headers: H, data: { recipe: slug } })).json()) as { ok: boolean; estimatedCalls: number };
+    expect(check.ok).toBe(true);
+    expect(check.estimatedCalls).toBeGreaterThan(0);
+  } finally {
+    await request.delete(`/api/repos/${REPO}/files/${path}?branch=${q(branch)}`, { headers: H });
+  }
+});
+
 // A recipe that is there but does not parse must SAY so — otherwise it is
 // simply absent from the picker and nobody can tell why.
 test('a broken recipe is reported, not silently dropped', async ({ page, request }) => {

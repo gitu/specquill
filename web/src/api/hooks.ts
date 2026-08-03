@@ -323,6 +323,7 @@ export interface RecipesResp {
   errors: Record<string, string>;    // recipes that are there but do not load
   models: string[];                  // what a recipe may name per stage
   maxCallsPerRun: number;
+  starter: string;                   // the document "New recipe" writes
 }
 
 /** The pipelines this branch offers. */
