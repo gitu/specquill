@@ -163,6 +163,17 @@ func testDriftServer(t *testing.T, aiResponses []string, opts ...func(*driftFixt
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
 
+	// a second catalogued source this project does NOT reference: the thing a
+	// recipe must never be able to reach. Present in the deployment, absent
+	// from .specquill/config.yml `references:`.
+	other := filepath.Join(tmp, "other-src")
+	gitRun(t, "init", "-b", "main", other)
+	if err := os.WriteFile(filepath.Join(other, "secret.md"), []byte("SECRET: another project's material."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, "-C", other, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+	gitRun(t, "-C", other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "other")
+
 	reg := filepath.Join(tmp, "reg-src")
 	gitRun(t, "init", "-b", "main", reg)
 	if err := os.WriteFile(filepath.Join(reg, "rules.md"), []byte("RTS 22 requires microsecond timestamps for reports."), 0o644); err != nil {
@@ -266,7 +277,10 @@ func testDriftServer(t *testing.T, aiResponses []string, opts ...func(*driftFixt
 	if err := st.SyncProjects([]store.Project{{ProjectID: "w", RepoID: "w"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+	if err := st.SyncSources([]store.Source{
+		{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300},
+		{Name: "other-project", Kind: "git", Remote: other, DefaultBranch: "main", SyncInterval: 300},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")
@@ -613,6 +627,17 @@ func TestDriftReportStaysInsideTheProjectContentRoot(t *testing.T) {
 	gitRun(t, "-C", src, "add", "-A")
 	gitRun(t, "-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
+	// a second catalogued source this project does NOT reference: the thing a
+	// recipe must never be able to reach. Present in the deployment, absent
+	// from .specquill/config.yml `references:`.
+	other := filepath.Join(tmp, "other-src")
+	gitRun(t, "init", "-b", "main", other)
+	if err := os.WriteFile(filepath.Join(other, "secret.md"), []byte("SECRET: another project's material."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, "-C", other, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+	gitRun(t, "-C", other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "other")
+
 	reg := filepath.Join(tmp, "reg-src")
 	gitRun(t, "init", "-b", "main", reg)
 	if err := os.WriteFile(filepath.Join(reg, "rules.md"), []byte("microsecond timestamps"), 0o644); err != nil {
@@ -645,7 +670,10 @@ func TestDriftReportStaysInsideTheProjectContentRoot(t *testing.T) {
 	if err := st.SyncProjects([]store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SyncSources([]store.Source{{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300}}); err != nil {
+	if err := st.SyncSources([]store.Source{
+		{Name: "reg", Kind: "git", Remote: reg, DefaultBranch: "main", SyncInterval: 300},
+		{Name: "other-project", Kind: "git", Remote: other, DefaultBranch: "main", SyncInterval: 300},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")
@@ -1752,5 +1780,271 @@ func TestFocusIsCapped(t *testing.T) {
 	// space in the committed report line)
 	if got := singleLine("abc def", 4); got != "abc" {
 		t.Fatalf("cap left whitespace: %q", got)
+	}
+}
+
+// ---------------------------------------------------- recipe containment
+//
+// A recipe is user content committed to a repository, and it steers what a run
+// READS. These pin the boundary: it may narrow what the project is already
+// entitled to and nothing else. The deployment catalogs `other-project` and
+// this project does not reference it, so every attempt below has something
+// real to fail to reach.
+
+func recipeNaming(sources, paths, report string) string {
+	return `---
+name: Reach
+units: sources
+output: findings
+` + sources + paths + report + `findings:
+  - kind: reach
+    label: Reach
+stages:
+  - id: go
+    over: unit
+    produces: findings
+    key: findings
+---
+
+## stage: go
+
+Report as JSON.
+
+### user
+
+Look at ~{{source}} and reply as JSON.
+`
+}
+
+// The headline invariant: a recipe naming another project's source is refused,
+// not quietly narrowed to nothing (or worse, granted).
+func TestRecipeCannotReachAnUnreferencedSource(t *testing.T) {
+	h, _, _, _, prompts := testDriftServer(t, nil,
+		withRecipe("reach", recipeNaming("sources: [other-project]\n", "", "")))
+	cookie := login(t, h)
+
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "reach"})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d %v", code, out)
+	}
+	msg, _ := out["error"].(string)
+	if !strings.Contains(msg, "other-project") || !strings.Contains(msg, "no access") {
+		t.Fatalf("the error should name the source and say why: %q", msg)
+	}
+	if !strings.Contains(msg, "never add one") {
+		t.Fatalf("the error should say a recipe can only narrow: %q", msg)
+	}
+	if len(*prompts) != 0 {
+		t.Fatalf("nothing should have been sent to the model: %v", *prompts)
+	}
+}
+
+// Mixing an entitled source with an unentitled one must not slip the second
+// one through on the coat-tails of the first.
+func TestRecipeCannotSmuggleASourceAlongsideAnEntitledOne(t *testing.T) {
+	h, _, _, _, _ := testDriftServer(t, nil,
+		withRecipe("reach", recipeNaming("sources: [reg, other-project]\n", "", "")))
+	cookie := login(t, h)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "reach"})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d %v", code, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "other-project") {
+		t.Fatalf("error should name the offending source: %q", msg)
+	}
+}
+
+// Even with no `sources:` at all, the run's toolbox may only contain the
+// project's entitled references — the set a recipe narrows, never the catalog.
+func TestRecipeRunOnlyEverSeesEntitledSources(t *testing.T) {
+	h, _, _, _, prompts := testDriftServer(t, []string{`{"findings":[]}`},
+		withRecipe("reach", recipeNaming("", "", "")))
+	cookie := login(t, h)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "reach"})
+	if code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	// one unit, and it is the referenced source
+	run := drift["run"].(map[string]any)
+	scope := run["scope"].([]any)
+	if len(scope) != 1 || scope[0] != "reg" {
+		t.Fatalf("the run walked %v, want just [reg]", scope)
+	}
+	for _, p := range *prompts {
+		if strings.Contains(p, "other-project") {
+			t.Fatalf("an unreferenced source reached the prompt:\n%s", p)
+		}
+	}
+}
+
+// `paths:` scopes documents within THIS project. It cannot climb out of it —
+// the scope is resolved against the branch snapshot, so a traversal is simply
+// not a document.
+func TestRecipePathsCannotEscapeTheProject(t *testing.T) {
+	for _, escape := range []string{
+		"paths: ['../../etc']\n",
+		"paths: ['/etc/passwd']\n",
+		"paths: ['../other-project']\n",
+	} {
+		t.Run(escape, func(t *testing.T) {
+			rec := strings.Replace(recipeNaming("", escape, ""), "units: sources", "units: docs", 1)
+			h, _, _, _, _ := testDriftServer(t, nil, withRecipe("reach", rec))
+			cookie := login(t, h)
+			code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+				map[string]any{"recipe": "reach"})
+			// nothing in scope — a path outside the project is not a document
+			if code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d %v", code, out)
+			}
+			if msg, _ := out["error"].(string); !strings.Contains(msg, "no documents in scope") {
+				t.Fatalf("error = %q", msg)
+			}
+		})
+	}
+}
+
+// A recipe's `report:` is where it WRITES. It goes through the same path gate
+// as any document, so it cannot land outside the project's content root.
+func TestRecipeReportCannotEscapeTheProject(t *testing.T) {
+	for _, bad := range []string{
+		"report:\n  path: ../../escaped.md\n",
+		"report:\n  path: /etc/escaped.md\n",
+		"report:\n  path: ../other/escaped.md\n",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			h, _, _, _, _ := testDriftServer(t, nil, withRecipe("reach", recipeNaming("", "", bad)))
+			cookie := login(t, h)
+			code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+				map[string]any{"recipe": "reach"})
+			if code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d %v", code, out)
+			}
+			if msg, _ := out["error"].(string); !strings.Contains(msg, "project-relative") {
+				t.Fatalf("error = %q", msg)
+			}
+		})
+	}
+}
+
+// The file-selection pre-pass may only SUBTRACT. A model reply naming a path
+// it was never given — or one from another source — cannot widen the filter.
+func TestFileSelectionCannotWidenTheFilter(t *testing.T) {
+	files := map[string]string{"model/Order.kt": "a", "model/Trade.kt": "b"}
+	got := pick(files, []string{
+		"model/Order.kt",       // real
+		"model/Nope.kt",        // never existed
+		"../../etc/passwd",     // traversal
+		"~other-project/secret.md", // another source entirely
+	})
+	if len(got) != 1 || got["model/Order.kt"] != "a" {
+		t.Fatalf("pick widened the filter: %v", got)
+	}
+}
+
+// Config-time refusal is only half of it. At RUNTIME the model holds the
+// tools, and a recipe's prompt is free text that can ask for anything — so the
+// tools themselves have to be the boundary. They read from the run's narrowed
+// snapshot, which simply does not contain another project's material.
+func TestToolsCannotReachBeyondTheRunsSources(t *testing.T) {
+	tb := &speccyToolbox{sources: []ai.GroundingSource{
+		{Name: "reg", Files: map[string]string{"rules.md": "allowed"}},
+	}}
+	for _, path := range []string{
+		"~other-project/secret.md", // catalogued, but not this run's
+		"~reg/../other-project/secret.md",
+		"~reg/../../etc/passwd",
+	} {
+		if out, err := tb.readFile(path); err == nil {
+			t.Errorf("read_file(%q) returned %q, want an error", path, out)
+		}
+	}
+	// the allowed one still works, so the guard is not just "everything fails"
+	if out, err := tb.readFile("~reg/rules.md"); err != nil || out != "allowed" {
+		t.Fatalf("read_file of an in-scope file: %q %v", out, err)
+	}
+	// listing cannot enumerate a source the run does not hold
+	if _, err := tb.listFiles("other-project"); err == nil {
+		t.Error("list_files named an out-of-scope source without complaint")
+	}
+	// nor can search reach into one
+	if _, err := tb.search("SECRET", "other-project"); err == nil {
+		t.Error("search reached an out-of-scope source without complaint")
+	}
+	// an unscoped search sweeps only what the run holds (the "no matches"
+	// reply echoes the query, so look for the source prefix, not the term)
+	hits, err := tb.search("SECRET", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(hits, "~other-project/") {
+		t.Fatalf("unscoped search leaked another source: %s", hits)
+	}
+	if got, _ := tb.search("allowed", ""); !strings.Contains(got, "~reg/rules.md") {
+		t.Fatalf("unscoped search should still reach the run's own sources: %s", got)
+	}
+}
+
+// `files.describe` is AI-resolved, so it is the one filter whose result comes
+// from a model. It must still only ever subtract — and a failure must not fall
+// back to the wider set, which would be the opposite of what was asked for.
+func TestDescribeFilterNarrowsWhatTheToolsSee(t *testing.T) {
+	// the model keeps one of the two files the globs allowed
+	selection := `{"paths":["model/Order.kt","model/Nope.kt","~other-project/secret.md"]}`
+	rec := `---
+name: Described
+units: sources
+output: findings
+files:
+  describe: only the entities
+findings:
+  - kind: reach
+    label: Reach
+stages:
+  - id: go
+    over: unit
+    produces: findings
+    key: findings
+---
+
+## stage: go
+
+Report as JSON.
+
+### user
+
+List with list_files, then reply as JSON.
+`
+	h, _, _, _, _ := testDriftServer(t, []string{selection, `{"findings":[]}`},
+		withRecipe("described", rec),
+		withRegFiles(map[string]string{"model/Order.kt": "class Order", "model/Trade.kt": "class Trade"}))
+	cookie := login(t, h)
+	if code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/drift/run?branch=main",
+		map[string]any{"recipe": "described"}); code != http.StatusOK {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	drift := waitDrift(t, h, cookie)
+	run := drift["run"].(map[string]any)
+	if run["status"] != "ok" {
+		t.Fatalf("run = %v", run)
+	}
+	feed := ""
+	for _, l := range run["activity"].([]any) {
+		feed += l.(string) + "\n"
+	}
+	// only the one real path it named survives: the invented one and the one
+	// belonging to another source are both dropped
+	if !strings.Contains(feed, "→ 1 of 3") {
+		t.Fatalf("the selection did not narrow to exactly the real path:\n%s", feed)
+	}
+	if !strings.Contains(feed, "filtered to 1 of 3 files") {
+		t.Fatalf("the toolbox was not narrowed:\n%s", feed)
+	}
+	// the pre-pass is charged against the run's budget like any other call
+	if run["aiCalls"].(float64) != 2 {
+		t.Fatalf("aiCalls = %v, want 2 (selection + stage)", run["aiCalls"])
 	}
 }

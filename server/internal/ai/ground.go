@@ -541,3 +541,40 @@ func ReversePrompt(findingJSON, excerpts, guidance string) []Message {
 		{Role: "user", Content: b.String()},
 	}
 }
+
+const selectFilesSystem = `You are the specquill file selector. You are given a
+list of file paths from ONE read-only reference source and a description of
+which of them matter for an audit. You return the subset that matches.
+
+Reply with ONLY a JSON object, no prose:
+
+{"paths": ["model/Order.kt", "model/Trade.kt"]}
+
+Rules:
+- Copy paths EXACTLY as given. A path you did not receive is discarded, so
+  inventing one only loses you a file.
+- Judge by what the path says the file IS. You cannot read them here.
+- When the description is ambiguous, keep the file: a later stage can ignore
+  something irrelevant, but it can never see something you dropped.
+- Matching nothing is a valid answer: {"paths": []}.`
+
+// SelectFilesPrompt builds the file-selection pre-pass for a recipe's
+// `files.describe` filter — "the files that define persisted entities" — over
+// the paths its globs already kept.
+//
+// The reply can only ever NARROW: the runner intersects it back against the
+// list given here, so a hallucinated path cannot widen what the run reaches.
+func SelectFilesPrompt(sourceName, describe string, paths []string) []Message {
+	var b strings.Builder
+	b.WriteString("# Reference source: ~" + sourceName + "\n")
+	b.WriteString("# Keep the files matching: " + describe + "\n\n")
+	b.WriteString("# Paths\n")
+	for _, p := range paths {
+		b.WriteString(p + "\n")
+	}
+	b.WriteString("\nReturn the matching subset as JSON.")
+	return []Message{
+		{Role: "system", Content: selectFilesSystem},
+		{Role: "user", Content: b.String()},
+	}
+}

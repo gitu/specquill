@@ -75,7 +75,7 @@ type runContext struct {
 	spend func(int) error          // charge model calls against the run's ceiling
 	state *unitState               // the resume checkpoint (never nil)
 	save  func(*unitState) error   // persist the checkpoint
-	tools func(recipe.FileFilter) (*speccyToolbox, []ai.ToolSpec, error)
+	tools func(context.Context, recipe.FileFilter) (*speccyToolbox, []ai.ToolSpec, error)
 }
 
 // errCallCeiling stops a run that has spent its budget. Its own error so the
@@ -462,7 +462,7 @@ func (s *Server) askStage(ctx context.Context, rc *runContext, unit string,
 		rc.note(line)
 	}
 	filter := rc.rec.FilterFor(st)
-	tb, specs, err := rc.tools(filter)
+	tb, specs, err := rc.tools(ctx, filter)
 	if err != nil {
 		return nil, err
 	}

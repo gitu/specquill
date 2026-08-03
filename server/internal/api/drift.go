@@ -688,7 +688,37 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 			"no reference sources selected — drift needs references in .specquill/config.yml")
 		return
 	}
-	// the run request narrows the references, else the recipe's own default
+	// A recipe may NARROW which references a run touches. It can never widen
+	// them: `sources` above is what this project is entitled to (the in-repo
+	// `references:` intersected with the server catalog — see resolveSources),
+	// and everything below only ever filters that set. A recipe naming a
+	// source belonging to another project matches nothing.
+	//
+	// The recipe and the request are treated differently on a name that does
+	// not match. A REQUEST comes from the picker, which only offers entitled
+	// sources, so a stale name there is transient UI state and is dropped. A
+	// RECIPE is authored and committed: silently running it against less than
+	// it asked for would leave the author believing an audit covered a source
+	// it never read, so an unknown name is refused outright.
+	if len(rec.Sources) > 0 && len(body.Sources) == 0 {
+		entitled := map[string]bool{}
+		for _, src := range sources {
+			entitled[src.Name] = true
+		}
+		var unknown []string
+		for _, n := range rec.Sources {
+			if n = strings.TrimPrefix(strings.TrimSpace(n), "~"); n != "" && !entitled[n] {
+				unknown = append(unknown, "~"+n)
+			}
+		}
+		if len(unknown) > 0 {
+			jsonError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
+				"recipe %s names %s, which this project has no access to — a recipe can only "+
+					"narrow the references in .specquill/config.yml, never add one",
+				rec.Slug, strings.Join(unknown, ", ")))
+			return
+		}
+	}
 	pickSources := body.Sources
 	if len(pickSources) == 0 {
 		pickSources = rec.Sources
@@ -943,6 +973,73 @@ func (s *Server) resolveRecipe(slug string, files map[string]string) (*recipe.Re
 	return nil, fmt.Errorf("unknown recipe %q — available: %s", slug, strings.Join(known, ", "))
 }
 
+// selectFiles resolves a recipe's `files.describe` filter — "the files that
+// define persisted entities" — into a concrete subset, with one model call per
+// source per run.
+//
+// The reply can only ever SUBTRACT: every path it returns is checked back
+// against the list it was given, so a hallucinated or smuggled path cannot
+// widen what the run reaches. The result is checkpointed on the run, so a
+// resume does not pay for the selection again.
+func (s *Server) selectFiles(ctx context.Context, rc *runContext, source, describe string,
+	files map[string]string, note func(string)) (map[string]string, error) {
+	if len(files) == 0 {
+		return files, nil
+	}
+	key := source + "\x00" + describe
+	if rc.state != nil {
+		if cached, ok := rc.state.Files[key]; ok {
+			return pick(files, cached), nil
+		}
+	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	if err := rc.spend(1); err != nil {
+		return nil, err
+	}
+	var out struct {
+		Paths []string `json:"paths"`
+	}
+	if err := s.completeJSONWith(ai.WithLabel(ctx, "filter ~"+source), s.ai.WithModel("quick"),
+		ai.SelectFilesPrompt(source, describe, paths), &out); err != nil {
+		// a failed selection must not silently hand the stage the WIDER set —
+		// that is the opposite of what the author asked for
+		return nil, fmt.Errorf("selecting files matching %q in ~%s: %w", describe, source, err)
+	}
+	kept := pick(files, out.Paths)
+	note(fmt.Sprintf("    · selecting files matching %s in ~%s → %d of %d",
+		strconv.Quote(describe), source, len(kept), len(files)))
+	if rc.state != nil {
+		if rc.state.Files == nil {
+			rc.state.Files = map[string][]string{}
+		}
+		chosen := make([]string, 0, len(kept))
+		for p := range kept {
+			chosen = append(chosen, p)
+		}
+		sort.Strings(chosen)
+		rc.state.Files[key] = chosen
+	}
+	return kept, nil
+}
+
+// pick narrows a snapshot to the named paths. A name that is not already in
+// the snapshot is DROPPED — this is the check that keeps a model's reply from
+// widening a filter rather than narrowing it.
+func pick(files map[string]string, paths []string) map[string]string {
+	out := make(map[string]string, len(paths))
+	for _, p := range paths {
+		if content, ok := files[p]; ok {
+			out[p] = content
+		}
+	}
+	return out
+}
+
 // recipeToolbox builds the read-only toolbox one stage runs with, narrowed to
 // the source files its filter keeps.
 //
@@ -950,13 +1047,20 @@ func (s *Server) resolveRecipe(slug string, files map[string]string) (*recipe.Re
 // the prompt: list_files, search and read_file then cannot reach an excluded
 // file at all. Asking a model to please ignore the test directory is not the
 // same thing.
-func (s *Server) recipeToolbox(rc *runContext, filter recipe.FileFilter,
+func (s *Server) recipeToolbox(ctx context.Context, rc *runContext, filter recipe.FileFilter,
 	note func(string)) (*speccyToolbox, []ai.ToolSpec, error) {
 	sources := rc.sources
 	if !filter.Empty() {
 		sources = make([]ai.GroundingSource, 0, len(rc.sources))
 		for _, src := range rc.sources {
 			kept := filter.Apply(src.Files)
+			if filter.Describe != "" {
+				chosen, err := s.selectFiles(ctx, rc, src.Name, filter.Describe, kept, note)
+				if err != nil {
+					return nil, nil, err
+				}
+				kept = chosen
+			}
 			if len(kept) != len(src.Files) {
 				note(fmt.Sprintf("    · ~%s filtered to %d of %d files",
 					src.Name, len(kept), len(src.Files)))
@@ -1124,8 +1228,8 @@ func (s *Server) driftWorker(ctx context.Context, cancel context.CancelFunc, key
 		// files its tools can even see, and that filter has to bind the tools
 		// themselves, not just the prompt
 		rc.note = liveNote(i)
-		rc.tools = func(filter recipe.FileFilter) (*speccyToolbox, []ai.ToolSpec, error) {
-			return s.recipeToolbox(rc, filter, liveNote(i))
+		rc.tools = func(tctx context.Context, filter recipe.FileFilter) (*speccyToolbox, []ai.ToolSpec, error) {
+			return s.recipeToolbox(tctx, rc, filter, liveNote(i))
 		}
 		switch rec.Output {
 		case recipe.OutputExtraction:
@@ -2929,8 +3033,15 @@ func (s *Server) askJSONWith(ctx context.Context, client *ai.Client, msgs []ai.M
 // completeJSON is askJSON for the one-shot actions (draft, remedy, plan,
 // create): no tool loop, same corrective re-ask when the reply does not parse.
 func (s *Server) completeJSON(ctx context.Context, msgs []ai.Message, out any) error {
+	return s.completeJSONWith(ctx, s.ai, msgs, out)
+}
+
+// completeJSONWith is completeJSON against a NAMED model — the file-selection
+// pre-pass runs on the quick tier, since choosing paths from a list is
+// classification, not reasoning.
+func (s *Server) completeJSONWith(ctx context.Context, client *ai.Client, msgs []ai.Message, out any) error {
 	for attempt := 0; ; attempt++ {
-		reply, err := s.ai.Complete(ctx, msgs)
+		reply, err := client.Complete(ctx, msgs)
 		if err != nil {
 			return err
 		}

@@ -151,10 +151,33 @@ from the code.
   user content in a repo, so what they can point the server at is deployment
   policy, and an unlisted id 422s before the run starts.
   `files:` (`include`/`exclude` globs with `**` — `internal/recipe/glob.go`,
-  no dependency; plus `describe:`, AI-resolved) narrows which SOURCE files a
-  stage sees, applied to the snapshot the TOOLS read (`recipeToolbox`), so
+  no dependency; plus `describe:`, resolved by one quick-tier call per source
+  per run, checkpointed, and intersected BACK against the post-glob list so a
+  hallucinated path cannot widen it) narrows which SOURCE files a stage sees,
+  applied to the snapshot the TOOLS read (`recipeToolbox`), so
   `list_files`/`search`/`read_file` cannot reach an excluded file rather than
   being asked nicely.
+- **A recipe can only ever NARROW what a run reads** — it is user content
+  committed to a repository, so this is the boundary that matters and it is
+  pinned by tests (`TestRecipeCannotReach…`, `TestToolsCannotReachBeyond…` in
+  `api/drift_test.go`). Concretely: `sources:` is intersected with what the
+  PROJECT is entitled to (`resolveSources` — the in-repo `references:` ∩ the
+  server catalog, unchanged by any recipe), and naming a source outside that
+  set 422s rather than silently running against less, because an author who
+  believes an audit covered a source it never read is worse off than one told
+  no. (A request-level `sources:` still just intersects: it comes from the
+  picker, which only offers entitled ones, so a stale name there is transient
+  UI state.) `paths:` resolves against the branch snapshot, `report:` through
+  `cleanDocPath` + `project.SaveFile`'s MapIn, and reference sources are
+  served from in-memory snapshots — no recipe input reaches the filesystem.
+  At RUNTIME the tools are the boundary, not the prompt: `speccyToolbox.source`
+  resolves `~name/...` only within the run's narrowed set, so a prompt asking
+  for another project's material gets an error, not a file.
+  There is deliberately NO inline recipe on a run: `POST /drift/run` takes a
+  slug that must exist in the repository, so every pipeline that executes has
+  been committed and can be reviewed. `POST /alignment/recipes/validate` does
+  accept unsaved `content:` — but it only parses and projects, making no model
+  calls and no writes, which is what the editor needs and nothing more.
   `GET /alignment/recipes` lists them (a recipe that fails to parse is
   REPORTED, never silently absent) plus the `starter` document ＋ New recipe
   writes — the format has ONE definition, in Go, and the client never
