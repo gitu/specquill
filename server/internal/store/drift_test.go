@@ -113,7 +113,7 @@ func TestResolveDriftFindingsScopeAware(t *testing.T) {
 		}
 	}
 	// re-check of a.md keeps only a1 — b.md was out of scope and must survive
-	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", []string{"a1"}); err != nil {
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", []string{"a1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	live, err := s.DriftFindings("r", "main")
@@ -151,7 +151,7 @@ func TestGapFindingsReconcilePerSource(t *testing.T) {
 	}
 	// a fresh sweep of `api` keeps only g1 — other sources' gaps and
 	// doc-backed drift findings must survive
-	if err := s.ResolveGapFindingsExcept("r", "main", "api", []string{"g1"}); err != nil {
+	if err := s.ResolveGapFindingsExcept("r", "main", "api", []string{"g1"}, []string{"coverage-gap"}); err != nil {
 		t.Fatal(err)
 	}
 	live, err := s.DriftFindings("r", "main")
@@ -209,5 +209,157 @@ func TestFileDriftFinding(t *testing.T) {
 	}
 	if err := s.FileDriftFinding("r", "main", "nope", "u", "t"); err != ErrNotFound {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestListDriftRunsAndFindingCounts(t *testing.T) {
+	s := OpenTest(t)
+	older, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", Mode: "drift",
+		ScopeJSON: `["a.md"]`, DocsTotal: 1, SourcesJSON: `["reg"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "main", Mode: "gaps",
+		DocsTotal: 1, Focus: "retention", SourcesJSON: `["reg"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// another branch's run must not leak into this branch's history
+	if _, err := s.CreateDriftRun(DriftRun{RepoKey: "r", Branch: "ws/flo", Mode: "drift"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "a", RunID: older, DocPath: "a.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "b", RunID: newer},
+		{RepoKey: "r", Branch: "main", Fingerprint: "c", RunID: newer},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a resolved finding is not what a past run is still worth
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := s.ListDriftRuns("r", "main", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("history = %+v, want this branch's 2 runs", runs)
+	}
+	if runs[0].ID != newer || runs[1].ID != older {
+		t.Errorf("history must be newest first: %d then %d", runs[0].ID, runs[1].ID)
+	}
+	if runs[0].Mode != "gaps" || runs[0].Focus != "retention" || runs[0].SourcesJSON != `["reg"]` {
+		t.Errorf("row lost the run's shape: %+v", runs[0])
+	}
+
+	counts, err := s.DriftFindingCountsByRun("r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[newer] != 2 || counts[older] != 0 {
+		t.Errorf("counts = %v, want 2 live for run %d and none for the resolved one", counts, newer)
+	}
+}
+
+// Two recipes may audit the same document or source. Reconciliation is
+// limited to the KINDS the running recipe declares, so a custom pipeline's
+// findings survive a built-in run over the same unit — and vice versa.
+func TestReconciliationLeavesOtherRecipesAlone(t *testing.T) {
+	s := OpenTest(t)
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "d1", RunID: 1, DocPath: "a.md", Kind: "contradiction"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "m1", RunID: 2, DocPath: "a.md", Kind: "model-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "g1", RunID: 1, Source: "api", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "x1", RunID: 2, Source: "api", Kind: "unstated-deadline"},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a drift run over a.md reports nothing: it resolves ITS kind only
+	if err := s.ResolveDriftFindingsExcept("r", "main", "a.md", nil,
+		[]string{"contradiction", "new-requirement"}); err != nil {
+		t.Fatal(err)
+	}
+	// a gaps sweep of ~api likewise
+	if err := s.ResolveGapFindingsExcept("r", "main", "api", nil, []string{"coverage-gap"}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.DriftFindings("r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range live {
+		got[f.Fingerprint] = true
+	}
+	if got["d1"] || got["g1"] {
+		t.Errorf("the running recipe's own stale findings should resolve: %v", got)
+	}
+	if !got["m1"] || !got["x1"] {
+		t.Errorf("another recipe's findings must survive: %v", got)
+	}
+}
+
+// A finding about a document that has been DELETED can never be reconciled the
+// normal way — that only happens when a run re-checks the document, and a
+// deleted one is never in scope again. It would otherwise sit on the page
+// forever, pointing at nothing, with actions that quietly do nothing.
+func TestOrphanedFindingsRetire(t *testing.T) {
+	s := OpenTest(t)
+	for _, f := range []DriftFinding{
+		{RepoKey: "r", Branch: "main", Fingerprint: "live", RunID: 1, DocPath: "specs/a.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "gone", RunID: 1, DocPath: "specs/deleted.md"},
+		{RepoKey: "r", Branch: "main", Fingerprint: "gap", RunID: 1, Source: "api", Kind: "coverage-gap"},
+		{RepoKey: "r", Branch: "other", Fingerprint: "elsewhere", RunID: 1, DocPath: "specs/deleted.md"},
+	} {
+		if err := s.UpsertDriftFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.ResolveOrphanedDriftFindings("r", "main", []string{"specs/a.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("retired %d, want 1", n)
+	}
+	live, _ := s.DriftFindings("r", "main")
+	got := map[string]bool{}
+	for _, f := range live {
+		got[f.Fingerprint] = true
+	}
+	if got["gone"] {
+		t.Error("a finding about a deleted document should retire")
+	}
+	if !got["live"] {
+		t.Error("a finding about a live document must survive")
+	}
+	// source-anchored findings have no document to lose
+	if !got["gap"] {
+		t.Error("coverage gaps carry no doc_path and must never be retired this way")
+	}
+	// another branch's findings are its own business
+	other, _ := s.DriftFindings("r", "other")
+	if len(other) != 1 {
+		t.Errorf("another branch was touched: %v", other)
+	}
+}
+
+// An empty document set means the branch has no documents at all — every
+// doc-backed finding is orphaned, and the query must not degenerate into a
+// no-op WHERE clause.
+func TestOrphanedFindingsWithNoDocumentsLeft(t *testing.T) {
+	s := OpenTest(t)
+	if err := s.UpsertDriftFinding(DriftFinding{
+		RepoKey: "r", Branch: "main", Fingerprint: "x", RunID: 1, DocPath: "specs/a.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ResolveOrphanedDriftFindings("r", "main", nil); err != nil || n != 1 {
+		t.Fatalf("retired %d (err %v), want 1", n, err)
 	}
 }

@@ -7,7 +7,7 @@ import { useCommitDetail, useCommitSummary, useLog } from '../api/hooks';
 import type { DocDelta } from '../api/hooks';
 import { buildHistory, sinceDays, singularLabel } from '../lib/history';
 import type { HistoryCommit, HistoryFile } from '../lib/history';
-import { daysAgo } from '../lib/derive';
+import { daysAgo, localDay } from '../lib/derive';
 import { DiffCard } from '../components/DiffCard';
 import { HistoryDrawer } from '../components/HistoryDrawer';
 import { IconSpark } from '../components/icons';
@@ -136,7 +136,7 @@ function CommitDetail({ commit, onOpen }: { commit: HistoryCommit; onOpen: (path
     <div style={sx('max-width:760px;margin:0 auto;padding:26px 30px 60px')}>
       <div style={sx('display:flex;align-items:center;gap:9px;flex-wrap:wrap')}>
         <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)")}>{commit.sha.slice(0, 10)}</span>
-        <span style={sx('font-size:11.5px;color:var(--text-2)')}>{commit.author} · {commit.date.slice(0, 10)}</span>
+        <span style={sx('font-size:11.5px;color:var(--text-2)')}>{commit.author} · {localDay(commit.date)}</span>
       </div>
       <h1 style={sx('margin:12px 0 0;font-size:21px;font-weight:700;letter-spacing:-.4px')}>{commit.subject}</h1>
 

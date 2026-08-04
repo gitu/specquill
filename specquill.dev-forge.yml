@@ -48,6 +48,15 @@ session:
 
 ai:
   enabled: true
-  base_url: http://127.0.0.1:11434/v1
-  model: qwen2.5:7b
-  quick_model: qwen2.5:7b
+  base_url: https://api.openai.com/v1
+  model: gpt-5.6-terra
+  quick_model: gpt-5.4-mini
+  api_key_env: SPECQUILL_AI_KEY
+  # "none", not a reasoning level: OpenAI's gpt-5.x models REFUSE function
+  # tools on /chat/completions unless reasoning_effort is explicitly "none",
+  # and they default the field server-side so omitting it does not help. The
+  # client recovers by retrying that one 400 with "none" — but this server
+  # exists to exercise drift and extraction, which are tool loops making
+  # hundreds of calls, and every one of them would pay the wasted round trip.
+  reasoning_effort: "none"
+

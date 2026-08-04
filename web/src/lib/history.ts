@@ -6,6 +6,7 @@
 // model.ts exports the classifier at all.
 
 import type { Commit, CommitFile } from '../api/hooks';
+import { localDay } from './derive';
 import { classifier } from './model';
 import type { WorkspaceModel } from './model';
 import type { EntityDef } from './config';
@@ -72,7 +73,8 @@ export function buildHistory(commits: Commit[], model: WorkspaceModel, filters: 
         change: CHANGE_OF[f.status] || 'modified',
       };
     });
-    return { ...c, files, summary: rollup(files), day: (c.date || '').slice(0, 10) };
+    // the author date carries the AUTHOR's offset; group by the reader's day
+    return { ...c, files, summary: rollup(files), day: localDay(c.date || '') };
   });
 
   const counts: Record<string, number> = { all: all.length };

@@ -54,7 +54,7 @@ async function resetFindings(request: APIRequestContext) {
   const branch = await wsBranch(request);
   const ws = { branch };
   const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as {
-    findings?: { fingerprint: string; draftPath: string; remedyPath: string }[];
+    findings?: { fingerprint: string; kind: string; draftPath: string; remedyPath: string }[];
   };
   for (const f of drift.findings ?? []) {
     for (const p of [f.draftPath, f.remedyPath]) {
@@ -106,8 +106,12 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('vs ~regulations').first()).toBeVisible();
 
-  // file the first finding on the dev-board target (mock forge)
-  await page.getByRole('button', { name: 'File issue' }).first().click();
+  // File the finding for a NAMED document: this test asserts the work-items
+  // backlink lands in that document's frontmatter, so "the first finding" is
+  // not good enough — it could be a gap, a project recipe's source-anchored
+  // kind, or a finding about a document another suite left behind.
+  await rows(page, 'outdated-requirement').filter({ hasText: 'specs/txn-report.md' }).first()
+    .getByRole('button', { name: 'File issue' }).click();
   await expect(page.getByText(/work item filed/).first()).toBeVisible({ timeout: 15_000 });
 
   // the filing wrote a work-items backlink into the doc's frontmatter as an
@@ -116,7 +120,7 @@ test('scoped drift run verifies findings, files a work item and backlinks the do
   const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
     findings: { status: string; docPath: string; workItemUrl: string }[];
   };
-  const filed = drift.findings.find((f) => f.status === 'filed');
+  const filed = drift.findings.find((f) => f.status === 'filed' && f.docPath !== '');
   expect(filed).toBeTruthy();
   expect(filed!.workItemUrl).toContain('/issues/');
 
@@ -184,7 +188,7 @@ test('gap analysis reverse-engineers the missing requirement', async ({ page, re
 
   // the mock reports one uncovered capability from ~regulations
   await expect(page.getByText(/GDPR storage limitation has no requirement/).first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText('gap', { exact: true })).toBeVisible();
+  await expect(page.getByText('gap', { exact: true }).first()).toBeVisible();
   await expect(rows(page, 'coverage-gap').getByText(/suggests requirements\/REQ-gdpr-retention\.md/)).toBeVisible();
 
   // reverse-engineer the missing requirement — lands as an uncommitted draft
@@ -240,8 +244,12 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   await page.getByRole('button', { name: 'Check drift' }).click();
   await expect(page.getByText(/timestamp precision drifted/).first()).toBeVisible({ timeout: 30_000 });
 
-  // "+ Work item" drafts the WHEN document and opens it in the editor
-  await page.getByRole('button', { name: '+ Work item' }).first().click();
+  // "+ Work item" drafts the WHEN document and opens it in the editor. Scope
+  // to a NAMED spec: the work item's `delivers:` link points at the document
+  // the finding is about, so a source-anchored finding (a gap, or a project
+  // recipe's own kind) would have nothing to link to.
+  await rows(page, 'outdated-requirement').filter({ hasText: 'specs/txn-report.md' }).first()
+    .getByRole('button', { name: '+ Work item' }).click();
   await expect(page).toHaveURL(/editor\/work-items\/WI-timestamp-precision\.md/, { timeout: 20_000 });
   await expect(page.getByText('Raise execution-timestamp precision').first()).toBeVisible({ timeout: 10_000 });
 
@@ -250,7 +258,7 @@ test('a finding spawns a linked work item in the workspace', async ({ page, requ
   const file = (await (await request.get(
     `/api/repos/${REPO}/files/work-items/WI-timestamp-precision.md?ref=${q(ws.branch)}`, { headers: H })).json()) as { content: string };
   expect(file.content).toContain('delivers:');
-  expect(file.content).toMatch(/specs\/(txn-report|venue)\.md/);
+  expect(file.content).toContain('specs/txn-report.md');
 
   // and the finding now carries the remedy instead of the create buttons
   const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
@@ -481,4 +489,229 @@ test('a running check says it does not need the page open', async ({ page, reque
   await page.goto(`/p/${REPO}/alignment`);
   await expect(page.getByText(/Runs on the server/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/picks the run back up when you return/)).toBeVisible();
+});
+
+// The page shows ONE run — the newest by default, any earlier one on request.
+// Picking a past run scopes the findings to what THAT run found.
+test('past runs stay selectable and scope the findings', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
+
+  // run 1: a drift check over specs/
+  await page.getByRole('button', { name: 'specs/', exact: true }).click();
+  const before = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, before);
+  const driftRun = await runId(request, ws.branch);
+
+  // run 2: a gap sweep, which becomes the newest
+  await page.getByText('Gaps', { exact: true }).click();
+  await page.getByRole('button', { name: 'Find gaps' }).click();
+  await runFinished(request, ws.branch, driftRun);
+  const gapRun = await runId(request, ws.branch);
+  expect(gapRun).toBeGreaterThan(driftRun);
+
+  // the newest run is what the page defaults to, and both runs' findings show
+  const picker = page.locator('[data-drift-run-picker]');
+  await expect(picker).toHaveValue(String(gapRun), { timeout: 15_000 });
+  await expect(picker.locator(`option[value="${driftRun}"]`)).toHaveCount(1);
+  await expect(rows(page, 'coverage-gap').first()).toBeVisible();
+  await expect(rows(page, 'outdated-requirement').first()).toBeVisible();
+
+  // pick the older drift run: its findings only, and the panel says so
+  await picker.selectOption(String(driftRun));
+  await expect(page.locator('[data-drift-scoped]')).toBeVisible();
+  await expect(rows(page, 'outdated-requirement').first()).toBeVisible();
+  await expect(rows(page, 'coverage-gap')).toHaveCount(0);
+  await expect(page.getByText('Run ' + driftRun, { exact: true })).toBeVisible();
+
+  // back to the default view: every live finding again
+  await page.getByRole('button', { name: 'Show all' }).click();
+  await expect(page.locator('[data-drift-scoped]')).toHaveCount(0);
+  await expect(rows(page, 'coverage-gap').first()).toBeVisible();
+});
+
+// Every mode can be aimed the same three ways; a drift check narrows to
+// single documents and to the sources it verifies against.
+test('a drift check can be narrowed to one document and one source', async ({ page, request }) => {
+  await resetFindings(request);
+  const ws = { branch: await wsBranch(request) };
+  await page.goto(`/p/${REPO}/alignment`);
+  await expect(page.getByRole('heading', { name: 'Source alignment' })).toBeVisible();
+
+  // pick ONE document instead of a whole folder
+  await page.getByText(/pick individual documents/).click();
+  const picker = page.locator('[data-drift-doc-picker]');
+  await picker.getByText('specs/venue.md').click();
+  await expect(page.getByText(/1 doc in scope/)).toBeVisible();
+
+  // …and restrict which reference it is verified against
+  await page.getByRole('button', { name: '~regulations' }).click();
+  await expect(page.getByText(/1 doc in scope · against 1 source/)).toBeVisible();
+
+  const before = await runId(request, ws.branch);
+  await page.getByRole('button', { name: 'Check drift' }).click();
+  await runFinished(request, ws.branch, before);
+
+  const d = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(ws.branch)}`, { headers: H })).json()) as {
+    run: { scope: string[] };
+  };
+  expect(d.run.scope).toEqual(['specs/venue.md']);
+});
+
+// A project's OWN pipeline, end to end: the recipe committed in the fixture
+// (repo/.specquill/alignment/deadline-audit.md) is picked from the SPA, dry
+// run, started, and produces findings carrying its own declared kind.
+test('a project recipe is listed, dry run and executed like a built-in', async ({ page, request }) => {
+  await resetFindings(request);
+  const branch = await wsBranch(request);
+
+  // the recipe ships with the fixture and loads on this branch
+  const listed = (await (await request.get(
+    `/api/repos/${REPO}/alignment/recipes?branch=${q(branch)}`, { headers: H })).json()) as {
+      recipes: { slug: string; name: string; builtin: boolean; findings: { kind: string }[] }[];
+      errors: Record<string, string>;
+      models: string[]; maxCallsPerRun: number;
+    };
+  expect(Object.keys(listed.errors)).toHaveLength(0); // nothing broken in the fixture
+  for (const slug of ['drift', 'gaps', 'extract']) {
+    expect(listed.recipes.find((r) => r.slug === slug)?.builtin).toBe(true);
+  }
+  const mine = listed.recipes.find((r) => r.slug === 'deadline-audit');
+  expect(mine, 'the fixture recipe should be listed').toBeTruthy();
+  expect(mine!.builtin).toBe(false);
+  expect(mine!.findings.map((f) => f.kind)).toContain('unstated-deadline');
+  expect(listed.maxCallsPerRun).toBeGreaterThan(0);
+
+  // the dry run projects the work WITHOUT doing any of it
+  const before = await runId(request, branch);
+  const check = (await (await request.post(
+    `/api/repos/${REPO}/alignment/recipes/validate?branch=${q(branch)}`,
+    { headers: H, data: { recipe: 'deadline-audit' } })).json()) as {
+      ok: boolean; units: number; unitKind: string; estimatedCalls: number;
+      stages: { id: string; calls: number; files?: Record<string, number> }[];
+    };
+  expect(check.ok).toBe(true);
+  expect(check.unitKind).toBe('sources');
+  expect(check.units).toBeGreaterThan(0);
+  expect(check.estimatedCalls).toBeGreaterThan(0);
+  // the recipe filters the source to regulations/** — the projection says so
+  const deadlines = check.stages.find((s) => s.id === 'deadlines');
+  expect(Object.values(deadlines?.files ?? {}).some((n) => n > 0)).toBe(true);
+  expect(await runId(request, branch), 'a dry run must not start a run').toBe(before);
+
+  // …and running it goes through the same engine as any built-in
+  await request.post(`/api/repos/${REPO}/drift/run?branch=${q(branch)}`, {
+    headers: H, data: { recipe: 'deadline-audit' },
+  });
+  await runFinished(request, branch, before);
+
+  const drift = (await (await request.get(`/api/repos/${REPO}/drift?branch=${q(branch)}`, { headers: H })).json()) as {
+    run: { mode: string; recipeName: string; aiCalls: number; kinds: { kind: string; draftable: boolean }[]; activity: string[] };
+    findings: { kind: string; suggestedPath: string }[];
+  };
+  expect(drift.run.mode).toBe('deadline-audit');
+  expect(drift.run.recipeName).toBe('Deadline audit');
+  expect(drift.run.aiCalls).toBeGreaterThan(0);
+  // the run carries its recipe's kinds, which is how the page labels them
+  expect(drift.run.kinds.find((k) => k.kind === 'unstated-deadline')?.draftable).toBe(true);
+  // the recipe's own narration, not the engine's
+  expect(drift.run.activity.join('\n')).toMatch(/found \d+ deadline/);
+  const mineFound = drift.findings.filter((f) => f.kind === 'unstated-deadline');
+  expect(mineFound.length).toBeGreaterThan(0);
+  expect(mineFound[0].suggestedPath).toBeTruthy();
+
+  // the page renders the custom kind and offers the recipe in its picker
+  await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+  await expect(rows(page, 'unstated-deadline').first()).toBeVisible();
+  await expect(page.locator('[data-drift-recipe]')).toContainText('Deadline audit');
+});
+
+// A recipe lives under .specquill/, which the document tree hides behind its
+// all-files toggle — so the Recipes tab is the only place the feature is
+// discoverable, and the only route to the example anyone will copy.
+test('the recipes tab lists every pipeline and opens the example', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+  await page.getByRole('button', { name: 'Recipes' }).click();
+
+  // the shipped three and the project's own, side by side
+  for (const slug of ['drift', 'gaps', 'extract', 'deadline-audit']) {
+    await expect(page.locator(`[data-recipe="${slug}"]`)).toBeVisible();
+  }
+  const mine = page.locator('[data-recipe="deadline-audit"]');
+  await expect(mine).toContainText('Deadline audit');
+  await expect(mine).toContainText('unstated-deadline');       // its own kinds
+  await expect(mine).toContainText('.specquill/alignment/');    // and where it lives
+
+  // "Use" selects it for the run controls above
+  await mine.locator('[data-recipe-use]').click();
+  await expect(page.locator('[data-drift-recipe]')).toHaveValue('deadline-audit');
+
+  // "edit" opens the recipe as an ordinary document — the payoff of the
+  // format being markdown
+  await page.getByRole('button', { name: 'Recipes' }).click();
+  await mine.locator('[data-recipe-open]').click();
+  await expect(page).toHaveURL(/editor\/\.specquill\/alignment\/deadline-audit\.md/, { timeout: 20_000 });
+  await expect(page.getByText('regulatory deadline reader').first()).toBeVisible({ timeout: 15_000 });
+});
+
+// "New recipe" has to write something that actually runs — an author's first
+// experience must not be an error about a document they did not write.
+test('new recipe writes a working starter and opens it', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  const slug = `scratch-starter-${Date.now().toString(36)}`;
+  const path = `.specquill/alignment/${slug}.md`;
+  try {
+    await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+    await page.getByRole('button', { name: 'Recipes' }).click();
+    await page.locator('[data-recipe-new]').click();
+    await page.locator('[data-recipe-slug]').fill(slug);
+    await page.locator('[data-recipe-create]').click();
+    await expect(page).toHaveURL(new RegExp(`editor/\\.specquill/alignment/${slug}\\.md`), { timeout: 20_000 });
+
+    // it parses: the server lists it rather than reporting it broken
+    const listed = (await (await request.get(
+      `/api/repos/${REPO}/alignment/recipes?branch=${q(branch)}`, { headers: H })).json()) as {
+        recipes: { slug: string; findings: { kind: string }[] }[]; errors: Record<string, string>;
+      };
+    expect(listed.errors[slug]).toBeUndefined();
+    const created = listed.recipes.find((r) => r.slug === slug);
+    expect(created, 'the starter should parse and be listed').toBeTruthy();
+    // …and it is named after the slug it was saved as, not the template
+    expect(created!.findings.map((f) => f.kind)).toContain(`${slug}-finding`);
+
+    // a dry run over it resolves — the thing an author does next
+    const check = (await (await request.post(
+      `/api/repos/${REPO}/alignment/recipes/validate?branch=${q(branch)}`,
+      { headers: H, data: { recipe: slug } })).json()) as { ok: boolean; estimatedCalls: number };
+    expect(check.ok).toBe(true);
+    expect(check.estimatedCalls).toBeGreaterThan(0);
+  } finally {
+    await request.delete(`/api/repos/${REPO}/files/${path}?branch=${q(branch)}`, { headers: H });
+  }
+});
+
+// A recipe that is there but does not parse must SAY so — otherwise it is
+// simply absent from the picker and nobody can tell why.
+test('a broken recipe is reported, not silently dropped', async ({ page, request }) => {
+  const branch = await wsBranch(request);
+  const path = '.specquill/alignment/scratch-broken.md';
+  await request.put(`/api/repos/${REPO}/files/${path}?branch=${q(branch)}`, {
+    headers: H, data: { content: '---\nname: Broken\nunits: nope\n---\n' },
+  });
+  try {
+    const listed = (await (await request.get(
+      `/api/repos/${REPO}/alignment/recipes?branch=${q(branch)}`, { headers: H })).json()) as {
+        errors: Record<string, string>;
+      };
+    expect(listed.errors['scratch-broken']).toMatch(/units must be/);
+
+    await page.goto(`/p/${REPO}/alignment?branch=${q(branch)}`);
+    await expect(page.getByText(/scratch-broken\.md/)).toBeVisible();
+  } finally {
+    await request.delete(`/api/repos/${REPO}/files/${path}?branch=${q(branch)}`, { headers: H });
+  }
 });

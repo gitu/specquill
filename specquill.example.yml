@@ -162,6 +162,19 @@ ai:
   model: gpt-4o                      # main tier (thinking-class, tool-capable): chat + draft edits
   quick_model: gpt-4o-mini           # fast one-shot tier: commit messages, titles
   api_key_env: SPECQUILL_AI_KEY      # env var holding the key; omit for keyless local providers
+  # Models an alignment recipe may name PER STAGE, beyond the two tiers above
+  # (a cheap one to survey, a thinking-class one to judge). This is an
+  # ALLOWLIST, not a fallback chain: recipes live in the repository and are
+  # written by users, so which models they can point this server at is a
+  # deployment decision. A recipe naming anything else fails validation before
+  # its run starts. The tier names `default` and `quick` always work.
+  # models:
+  #   - gpt-4.1-mini
+  # Ceiling on model calls ONE alignment run may make (default 500). A recipe
+  # multiplies stages by items by units; a run that hits this stops as
+  # `capped` — resumable, with everything it found kept. The alignment page's
+  # dry run projects the count before you start.
+  max_calls_per_run: 500
   # OpenAI reasoning models (gpt-5.x) refuse function tools on
   # /chat/completions unless reasoning_effort is explicitly "none". The
   # client detects that refusal and retries with "none" automatically;

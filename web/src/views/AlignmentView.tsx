@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { sx } from '../lib/sx';
+import { localizeFeed } from '../lib/feed';
 import { useApp } from '../state/AppContext';
 import { projectPath } from '../state/nav';
-import { useDrift } from '../api/hooks';
-import { DriftControls, DriftFindings } from '../components/DriftCard';
+import { DriftRunSummary, useDrift } from '../api/hooks';
+import { DriftControls, DriftFindings, driftModeLabel } from '../components/DriftCard';
+import { RecipeList } from '../components/RecipeList';
 
 /**
  * Source alignment as its own page: the run controls stay compact at the top,
@@ -15,12 +17,19 @@ import { DriftControls, DriftFindings } from '../components/DriftCard';
 export function AlignmentView() {
   const app = useApp();
   const navigate = useNavigate();
-  const drift = useDrift(app.repoId, app.branch);
-  const [tab, setTab] = useState<'findings' | 'activity'>('findings');
+  // 0 = the newest run, and keep following it as new ones start
+  const [runId, setRunId] = useState(0);
+  const drift = useDrift(app.repoId, app.branch, runId);
+  const [tab, setTab] = useState<'findings' | 'activity' | 'recipes'>('findings');
+  // WHICH pipeline the controls will run. It lives here so the Recipes tab can
+  // select one — a list you cannot act from is a brochure.
+  const [recipe, setRecipe] = useState('drift');
   const run = drift.data?.run;
   const running = run?.status === 'running';
   const open = (drift.data?.findings ?? []).filter((f) => f.status !== 'dismissed').length;
   const lines = run?.activity?.length ?? 0;
+  const runs = drift.data?.runs ?? [];
+  const newest = runs[0]?.id ?? 0;
 
   return (
     <div style={sx('flex:1;min-height:0;overflow-y:auto;background:var(--bg)')}>
@@ -34,21 +43,35 @@ export function AlignmentView() {
 
         {/* controls + last-run meta: compact, side by side */}
         <div style={sx('display:grid;grid-template-columns:1.65fr 1fr;gap:18px;margin-top:22px;align-items:start')}>
-          <DriftControls repo={app.repoId} branch={app.branch} />
+          <DriftControls repo={app.repoId} branch={app.branch} runId={runId} onSelectRun={setRunId}
+            recipe={recipe} onPickRecipe={setRecipe} />
           {run && (
             <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
               <div style={sx("padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px")}>
-                Last run
+                {runId === 0 || run.id === newest ? 'Last run' : 'Run ' + run.id}
+              </div>
+              {/* every run of this branch stays reachable; picking the newest
+                  goes back to following it as further runs start */}
+              <div style={sx('padding:9px 14px 0')}>
+                <select data-drift-run-picker value={run.id}
+                  onChange={(e) => setRunId(Number(e.target.value) === newest ? 0 : Number(e.target.value))}
+                  style={sx("width:100%;height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:10.5px")}>
+                  {runs.map((r) => <option key={r.id} value={r.id}>{runOption(r, r.id === newest)}</option>)}
+                  {!runs.some((r) => r.id === run.id) && <option value={run.id}>{'#' + run.id}</option>}
+                </select>
               </div>
               <div style={sx('padding:11px 14px;font-size:11.5px;color:var(--text-2);display:flex;flex-direction:column;gap:5px')}>
-                <Meta k="mode" v={run.mode === 'gaps' ? 'gap analysis' : run.mode === 'extract' ? 'app analysis' : 'drift check'} />
+                <Meta k="recipe" v={run.recipeName || driftModeLabel(run.mode)} />
                 <Meta k="status" v={running ? `running · ${run.docsDone}/${run.docsTotal}` : run.status} />
                 <Meta k="started" v={new Date(run.startedAt * 1000).toLocaleString()} />
                 <Meta k="scope" v={`${run.scope?.length ?? 0} ${run.mode === 'drift'
                   ? (run.scope?.length === 1 ? 'doc' : 'docs')
                   : (run.scope?.length === 1 ? 'source' : 'sources')}`} />
+                {run.focus !== '' && <Meta k="focus" v={run.focus} />}
                 {run.headSha !== '' && <Meta k="checked at" v={run.headSha.slice(0, 10)} />}
                 {run.droppedUnverified > 0 && <Meta k="dropped" v={`${run.droppedUnverified} unverified`} />}
+                {run.aiCalls > 0 && <Meta k="model calls" v={String(run.aiCalls)} />}
+                {run.resumedFrom > 0 && <Meta k="resumed" v={`picked up run ${run.resumedFrom}`} />}
               </div>
             </div>
           )}
@@ -58,6 +81,7 @@ export function AlignmentView() {
         <div style={sx('display:flex;align-items:center;gap:2px;margin:20px 0 10px')}>
           <Tab label={`Findings${open ? ' · ' + open : ''}`} active={tab === 'findings'} onClick={() => setTab('findings')} />
           <Tab label={`Run activity${lines ? ' · ' + lines : ''}`} active={tab === 'activity'} onClick={() => setTab('activity')} />
+          <Tab label="Recipes" active={tab === 'recipes'} onClick={() => setTab('recipes')} />
           <span style={sx('flex:1')} />
           {run?.reportPath !== undefined && run?.reportPath !== '' && (
             <span onClick={() => navigate(projectPath(app.repoId, '/editor/' + run.reportPath, run.reportBranch || app.branch))}
@@ -67,15 +91,20 @@ export function AlignmentView() {
           )}
         </div>
 
-        {tab === 'findings' ? (
-          <DriftFindings repo={app.repoId} branch={app.branch} />
+        {tab === 'recipes' ? (
+          <RecipeList repo={app.repoId} branch={app.branch} selected={recipe}
+            onSelect={(slug) => { setRecipe(slug); setTab('findings'); }} />
+        ) : tab === 'findings' ? (
+          <DriftFindings repo={app.repoId} branch={app.branch} runId={runId} onSelectRun={setRunId} />
         ) : (
           <div style={sx('border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface)')}>
             {lines === 0 ? (
               <div style={sx('padding:11px 14px;font-size:12px;color:var(--text-3)')}>no run yet</div>
             ) : (
+              // stored in UTC (the feed lands in the report doc), read here in
+              // the viewer's own clock
               <div style={sx("padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-2);line-height:1.7;white-space:pre-wrap")}>
-                {run!.activity.join('\n')}
+                {localizeFeed(run!.activity, run!.startedAt).join('\n')}
               </div>
             )}
           </div>
@@ -83,6 +112,18 @@ export function AlignmentView() {
       </div>
     </div>
   );
+}
+
+/** One line of the run picker: when it ran, what it did and what it left. */
+function runOption(r: DriftRunSummary, newest: boolean) {
+  const when = new Date(r.startedAt * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const parts = [`#${r.id}`, when, driftModeLabel(r.mode), r.status];
+  if (r.focus) parts.push('“' + r.focus + '”');
+  if (r.findings) parts.push(`${r.findings} finding${r.findings === 1 ? '' : 's'}`);
+  if (newest) parts.push('newest');
+  return parts.join(' · ');
 }
 
 function Tab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {

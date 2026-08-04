@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backlinkLabel, buildDashboard, buildTimed, windowPhrase, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph } from './derive';
+import { backlinkLabel, buildDashboard, buildTimed, windowPhrase, buildGraph, buildProps, buildRefTree, buildTree, collectFieldValues, collectRefTargets, defaultDoc, docAnchorOptions, docLinkReport, driverMeta, collectBacklinks, filterRefPaths, focusGraph, localDay } from './derive';
 import { buildModel } from './model';
 import { BUILTIN_ENTITIES } from './entities';
 import { workspaceConfig } from './config';
@@ -519,5 +519,21 @@ describe('collectBacklinks', () => {
     expect(b['specs/s1.md']).toEqual([{ from: 'requirements/R1.md', kind: 'implements', type: undefined, id: 'R1', title: 'One' }]);
     // a pure text mention still backlinks
     expect(b['regulations/a.md']).toEqual([{ from: 'requirements/R1.md', kind: 'in text', type: undefined, id: 'R1', title: 'One' }]);
+  });
+});
+
+describe('localDay', () => {
+  it('reads a zoned timestamp in the viewer clock, not the author offset', () => {
+    const iso = '2026-07-30T08:00:00Z';
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, '0');
+    expect(localDay(iso)).toBe(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
+    // the same instant written with any offset is the same local day
+    expect(localDay('2026-07-30T10:00:00+02:00')).toBe(localDay(iso));
+  });
+
+  it('passes plain frontmatter dates through — they carry no zone', () => {
+    expect(localDay('2026-07-30')).toBe('2026-07-30');
+    expect(localDay('')).toBe('');
   });
 });

@@ -111,15 +111,98 @@ from the code.
 - **Speccy grounding**: grounded reference sources join the system prompt under
   `## ~source/path` read-only headings (workspace keeps a 60% budget floor);
   draft edits refuse any `~`-prefixed path.
-- **Extraction is the baseline** (mode `extract`), and it is DIVIDE AND
-  CONQUER, not one pass: (1) `ai.SurveyPrompt` divides the app into
-  capability areas with file hints (capped at `maxExtractAreas`), (2) each
-  area is extracted on its OWN AI loop — a failed area is noted and skipped,
-  never sinking the source, (3) `ai.MatchPrompt` then walks the extracted
-  requirements in batches of `matchBatchSize` and matches each against the
-  workspace docs (full/partial/none + the document + why). Extraction no
-  longer guesses coverage inline — matching is its own phase, and a match
-  naming a document that does not exist degrades to `none`. The result is a
+- **ONE recipe engine runs every mode** (Aug 2026). `drift`, `gaps` and
+  `extract` were three hardcoded pipelines doing the same shape of work; they
+  now SHIP as built-in recipes (`internal/recipe/builtin/*.md`, `go:embed`)
+  executed by one stage runner (`api/pipeline.go`). `mode:` on the run
+  request is a recipe slug — old clients are unaffected — and a project adds
+  its own under **`.specquill/alignment/<slug>.md`**, read from the request's
+  branch like every other in-repo config (a slug shadowing a built-in is an
+  error, not an override).
+  A recipe is a MARKDOWN document: frontmatter carries the pipeline
+  (`units: docs|sources` = what the run iterates AND its resume granularity,
+  `output: findings|extraction`, `stages:`, `findings:` kinds, `files:`
+  filters, `model:`), the body carries the prompts as prose — `## stage: <id>`
+  is a stage's system prompt, `### focus` the note appended when the run is
+  aimed, `### user` the user-message template. So a recipe opens in the
+  ORDINARY document editor and there is no YAML editing surface to build.
+  Stage fields exist because a built-in needs them: `over: unit|<earlier
+  stage>` (fan-out), `produces: items|findings|annotations`, `key` (the JSON
+  key the reply uses), `batch`, `on_error: skip`, `noun`/`require`/`max`,
+  `verify`, `narrate:`. Templates take `{{name}}`, `{{#name}}…{{/name}}` and
+  `{{^name}}…{{/name}}`; an UNKNOWN `{{…}}` is left verbatim on purpose
+  (prompts show the model JSON braces), while an unknown name in a `### user`
+  template is a parse error.
+  **The engine owns no prose** — every heading, blank line and sentence the
+  model sees comes from the recipe. That is enforced, not aspirational:
+  `api/pipeline_golden_test.go` asserts the rendered conversations are
+  BYTE-FOR-BYTE what `ai.DriftPrompt`/`GapPrompt`/`SurveyPrompt`/
+  `ExtractPrompt`/`MatchPrompt` produced, with the frozen expectations in
+  `pipeline_legacy_test.go`. Changing a built-in's wording is allowed; it has
+  to be a decision, made in both places.
+  What the engine DOES own and no recipe may opt out of: evidence
+  verification (`verify: true` → quotes checked against the source snapshot as
+  each stage produces its items, so a later stage never spends a call on
+  something already discarded), anchor-based fingerprints, `askJSON`'s
+  one-re-ask repair, and the rule that a model may never name a document that
+  does not exist.
+  Per-stage `model:` selection goes through `ai.Client.WithModel`, gated by
+  the `ai.models` ALLOWLIST (`{model, quick_model} ∪ models`) — recipes are
+  user content in a repo, so what they can point the server at is deployment
+  policy, and an unlisted id 422s before the run starts.
+  `files:` (`include`/`exclude` globs with `**` — `internal/recipe/glob.go`,
+  no dependency; plus `describe:`, resolved by one quick-tier call per source
+  per run, checkpointed, and intersected BACK against the post-glob list so a
+  hallucinated path cannot widen it) narrows which SOURCE files a stage sees,
+  applied to the snapshot the TOOLS read (`recipeToolbox`), so
+  `list_files`/`search`/`read_file` cannot reach an excluded file rather than
+  being asked nicely.
+- **A recipe can only ever NARROW what a run reads** — it is user content
+  committed to a repository, so this is the boundary that matters and it is
+  pinned by tests (`TestRecipeCannotReach…`, `TestToolsCannotReachBeyond…` in
+  `api/drift_test.go`). Concretely: `sources:` is intersected with what the
+  PROJECT is entitled to (`resolveSources` — the in-repo `references:` ∩ the
+  server catalog, unchanged by any recipe), and naming a source outside that
+  set 422s rather than silently running against less, because an author who
+  believes an audit covered a source it never read is worse off than one told
+  no. (A request-level `sources:` still just intersects: it comes from the
+  picker, which only offers entitled ones, so a stale name there is transient
+  UI state.) `paths:` resolves against the branch snapshot, `report:` through
+  `cleanDocPath` + `project.SaveFile`'s MapIn, and reference sources are
+  served from in-memory snapshots — no recipe input reaches the filesystem.
+  At RUNTIME the tools are the boundary, not the prompt: `speccyToolbox.source`
+  resolves `~name/...` only within the run's narrowed set, so a prompt asking
+  for another project's material gets an error, not a file.
+  There is deliberately NO inline recipe on a run: `POST /drift/run` takes a
+  slug that must exist in the repository, so every pipeline that executes has
+  been committed and can be reviewed. `POST /alignment/recipes/validate` does
+  accept unsaved `content:` — but it only parses and projects, making no model
+  calls and no writes, which is what the editor needs and nothing more.
+  `GET /alignment/recipes` lists them (a recipe that fails to parse is
+  REPORTED, never silently absent) plus the `starter` document ＋ New recipe
+  writes — the format has ONE definition, in Go, and the client never
+  hardcodes it; `POST /alignment/recipes/validate` is a dry run projecting
+  units and model calls against the ceiling.
+  Recipes live under `.specquill/`, which the document tree hides behind its
+  all-files toggle, so **`/alignment` has a third tab, Recipes**
+  (`components/RecipeList.tsx`): shipped and project pipelines side by side
+  with their stage chain, file filter, finding kinds and load errors, "Use"
+  to select one for the run controls (the selection lives in `AlignmentView`,
+  passed into `DriftControls`) and "edit" straight into the ordinary document
+  editor. Without it the only evidence the feature exists is a dropdown you
+  have to already know to look in — and a project with no recipes yet gets no
+  hint at all. `scripts/dev-fixture.sh` ships one worked example
+  (`repo/.specquill/alignment/deadline-audit.md`), which mock-llm answers.
+- **Extraction is the baseline** (recipe `extract`), and it is DIVIDE AND
+  CONQUER, not one pass — now expressed as three stages in
+  `builtin/extract.md`: (1) `survey` divides the app into capability areas
+  with file hints (`max: 12`, `require: name`), (2) `area` extracts each on
+  its OWN AI loop — `on_error: skip`, so a failed area is noted and skipped,
+  never sinking the source, (3) `match` walks the extracted requirements in
+  batches of 8 (`produces: annotations`, stamped onto the upstream items by
+  index) against the workspace docs (full/partial/none + the document + why).
+  Extraction does not guess coverage inline — matching is its own stage, and a
+  match naming a document that does not exist degrades to `none`. The result is a
   grouped inventory: capability areas, atomic RFC-2119 statements, verbatim
   evidence, coverage per requirement. It persists
   as its own living document BESIDE the alignment report
@@ -133,27 +216,35 @@ from the code.
   run scope.
 - **Source alignment** (`api/drift.go`; its OWN page `/alignment` —
   `views/AlignmentView.tsx`, rail icon. `DriftControls` (run controls) and
-  the last-run panel sit compact side by side; below them a TABBED
+  the run panel sit compact side by side; below them a TABBED
   FULL-WIDTH panel switches between `DriftFindings` and the run activity —
   findings need the width for their paths, evidence and actions, and the log
   needs it to stay unwrapped. The Overview keeps only the compact
-  `AlignmentSummary` card + "Check drift" in the editor) has TWO run modes:
-  **drift** —
-  scoped per-document AI runs verify docs against the selected references —
-  and **gaps** — per-source sweeps report capabilities no document covers.
-  Any run may be RESTRICTED to a subset of the project's references
-  (`sources:` on the run request, 422 when none match) and a gaps sweep may
-  be AIMED at one area (`focus:`, a hard constraint in the prompt — out-of-
-  area gaps are another sweep's job); `POST .../drift/focus` proposes where
-  to aim next from the extracted inventories (read-only: no run, no writes),
-  and the card offers those as clickable chips that set both the focus and
-  its sources
+  `AlignmentSummary` card + "Check drift" in the editor). The three shipped
+  recipes stay one click away as mode segments — **drift** (scoped per-document
+  runs verify docs against the selected references), **gaps** (per-source
+  sweeps report capabilities no document covers) and **extract** — with a
+  dropdown beside them for the project's own recipes and an "edit" link
+  straight into the document editor; "Dry run" projects what one would cost.
+  EVERY mode is steerable the same three ways, and the controls show all
+  three regardless of mode: which references it touches (`sources:`, 422 when
+  none match — drift verifies against them, gaps/extract work through them),
+  which units it covers (`paths:`, when the recipe's units are documents —
+  folder prefixes AND exact document paths, both resolved by
+  `resolveDriftScope`) and one area to
+  concentrate on (`focus:`, a hard constraint in the prompt of the drift, gap
+  AND survey/extract passes — out-of-area findings are another run's job; a
+  focused survey that returns no areas is an answer, not a failure);
+  `POST .../drift/focus` proposes where to aim next from the extracted
+  inventories (read-only: no run, no writes), and the card offers those as
+  clickable chips that set both the focus and its sources
   (kind `coverage-gap`, `doc_path=''`, fingerprint anchored on the SOURCE
   path). Drift ALSO proposes documents that don't exist yet: kind
   `new-requirement` (the source mandates something in the audited doc's
   area that no requirement states) carries a `suggestedPath` and is
-  draftable exactly like a gap — `draftableKind()` gates the draft
-  action, so never re-gate it on `doc_path == ""`. Runs narrate
+  draftable exactly like a gap — WHICH kinds are draftable is now the
+  recipe's `draftable:` declaration, read from the run's frozen recipe
+  (`Server.draftableKind`), so never re-gate it on `doc_path == ""`. Runs narrate
   themselves per unit AND per model tool call (`· read ~src/path`,
   `search "…"` — `toolNote`), naming every finding kept and dropped;
   the feed persists live (each note) while the report is rewritten
@@ -308,6 +399,20 @@ from the code.
   was removed in July 2026.
 - **Byte fidelity**: untouched documents save byte-identical; only real user
   edits normalize markdown.
+- **UTC in git, local on screen** (Aug 2026): every timestamp that lands in a
+  file is UTC — frontmatter `created`/`updated` (`mdfm.Touch` AND the client's
+  `lib/frontmatter.todayStr`, which must agree or a save flips the date back
+  and forth), report/extraction body lines (marked ` UTC` / `Z`), the run
+  activity feed, `{date}`-style report paths, `{yy}`/`{yyyy}` id tokens and
+  the `changes/` slug prefix. Otherwise the same edit carries a different date
+  per author and diffs against itself around midnight. Everything DISPLAYED is
+  the reader's clock: run times come from epochs (`toLocaleString`), the
+  stored feed stamps are converted back for display (`lib/feed.localizeFeed` —
+  the run's `startedAt` supplies the day, and a line before it has crossed UTC
+  midnight), and git author dates (`%aI`, the author's own offset) are
+  regrouped onto the reader's day by `lib/derive.localDay`. The exceptions are
+  deliberate: `derive.todayISO` and `history.sinceDays` stay LOCAL — they are
+  the user's "today" for the timeline and the history window, not stored data.
 - **Sketches**: `*.excalidraw.png` — PNGs with the excalidraw scene embedded
   (export-embed-scene), natively viewable anywhere, editable in the modal via
   `loadFromBlob`/`exportToBlob`. Legacy `*.excalidraw` JSON still supported.
@@ -321,7 +426,9 @@ from the code.
   failure degrades to an `error` field, never a broken page.
 - **AI tiers**: `ai.model` (thinking-class: chat, draft edits) vs
   `ai.quick_model` (one-shot: commit messages). Both through any
-  OpenAI-compatible endpoint. `.specquill/skills/*.md` in the workspace are
+  OpenAI-compatible endpoint. An alignment recipe may pick a model PER STAGE
+  (`ai.Client.WithModel`) from `ai.models` — an allowlist, not a fallback
+  chain. `.specquill/skills/*.md` in the workspace are
   pinned into the speccy system prompt as authoring rules.
 
 ## Hard-won gotchas (do not rediscover these)
@@ -358,18 +465,48 @@ from the code.
   the tab does not stop it, findings and the report are written per unit, and
   the card picks it back up on return — the card SAYS so while running,
   because nothing else would tell the user.
+- **The page shows ONE run, and WHICH one is the user's choice**:
+  `GET /drift?run=<id>` (default = the newest; an id from another branch or a
+  reset store degrades to the newest instead of 404ing, so a stale selection
+  never breaks the page). The payload carries `runs` — the compact history,
+  newest first, each row with its live finding count — and `activeRunId`; the
+  client polls on THAT, so a run in flight keeps updating while the user
+  looks back at an older one. Picking a past run narrows the findings to its
+  `run_id` (the worker stamps it on every upsert, so a re-found finding
+  belongs to the run that last saw it); the DEFAULT view keeps every live
+  finding, because a scoped run never resolved the ones it did not re-check.
+  Selection lives in `AlignmentView` (`runId` state, 0 = follow the newest)
+  and is passed into `DriftControls`/`DriftFindings` — starting or resuming a
+  run snaps it back to 0. While another run is active the start button is
+  disabled (a second one would 409) with a "Follow it" banner instead.
 - Boot closes what the previous process left behind: `MarkInterruptedDriftRuns`
   (called from `api/router.go`) turns every `running` row into status
   **`interrupted`** — its own status, not an error, since the units already
   checked stand.
-- A run that stopped with units left (`interrupted`, `cancelled`, errored) is
-  **resumable**: `POST .../drift/run {resume: <runId>}` inherits its mode,
-  sources, focus and report and runs ONLY `scope[DocsDone:]`. The worker is
-  sequential, so `DocsDone` is exactly how far it got — which is why it now
-  persists REAL progress when it stops (it used to mark every unit done at
+- A run that stopped with units left (`interrupted`, `cancelled`, `capped`,
+  errored) is **resumable**: `POST .../drift/run {resume: <runId>}` inherits
+  its recipe, sources, focus and report and runs ONLY `scope[DocsDone:]`. The
+  worker is sequential, so `DocsDone` is exactly how far it got — which is why
+  it persists REAL progress when it stops (it used to mark every unit done at
   the end, making a cancelled run look complete and killing the resume).
   `store.DriftRun.Resumable()` is the one gate; a run already picked up by
   another 409s, so the same units never run twice.
+  The resume is **per stage**, not per unit: the run executes the recipe
+  FROZEN onto it at start (`drift_runs.recipe_json` — editing the recipe
+  document underneath a run, or resuming days later, cannot change what it is
+  doing), and each stage checkpoints its output
+  (`drift_runs.stage_state_json`), so a resumed run re-enters at the stage
+  that was interrupted instead of redoing the unit. Only the IN-FLIGHT unit's
+  state is kept — pruned the moment a unit completes — so the blob is bounded
+  by one unit's intermediate output however long the run is. `Resumable()`
+  needed no change for this: a unit interrupted mid-recipe already leaves
+  `DocsDone` at the units BEFORE it, so `scope[DocsDone:]` re-includes the
+  partial unit and the checkpoint just makes re-entering it cheap.
+- **`capped` is a budget, not a fault**: `ai.max_calls_per_run` (default 500)
+  bounds one run's model calls, because a recipe multiplies stages by items by
+  units. Hitting it finishes the run as `capped` — its own status like
+  `interrupted`, resumable, with everything found kept and the feed saying
+  why. `drift_runs.ai_calls` is the counter; the dry run projects it up front.
 - The per-finding actions (draft, plan, remedy, create) and the linker are
   ONE request each — navigating away cancels them. Both surface a
   `data-keep-open` hint while in flight; do not promise resumability there.
@@ -404,13 +541,16 @@ itself — read `/tmp/…` or journald when a run "does nothing":
 
 - **`ai: <model> [<label>] complete|tool loop in <dur> (rounds, tools, sizes)`**
   — every model call, with WHAT it was for. The label rides on the context
-  (`ai.WithLabel`, `internal/ai/label.go`): `drift specs/x.md`,
-  `extract survey ~src`, `extract area <name>`, `match 1-8`, `gaps ~src`,
-  `plan <fp>`, `create <kind> <path>`, `remedy <kind>`, `linker propose`,
-  `focus areas`, `speccy chat|draft`. Sizes only — prompts carry workspace
+  (`ai.WithLabel`, `internal/ai/label.go`). A recipe stage's label is
+  `<recipe> <stage> <unit>` — `drift verify specs/x.md`,
+  `extract survey reg`, `extract area reg`, `gaps sweep reg`,
+  `model-audit detect reg` — plus the one-shot actions `plan <fp>`,
+  `create <kind> <path>`, `remedy <kind>`, `linker propose`, `focus areas`,
+  `speccy chat|draft`. The `<model>` names which model that stage used, so a
+  per-stage override is visible. Sizes only — prompts carry workspace
   content and never enter the log.
-- **`drift [<repo>@<branch>]: run N …`** — start (mode, units, sources,
-  report + branch, focus), one line per unit (findings, dropped, duration),
+- **`drift [<repo>@<branch>]: run N …`** — start (recipe, stages, units,
+  sources, report + branch, focus), one line per unit (findings, dropped, duration),
   and the finish (status, live findings, dropped, failed units). Plus every
   action: filed, drafted, remedy, created, extracted, planned, cancelled.
 - **`linker [<repo>@<branch>]:`** — proposed/applied counts and validation drops.

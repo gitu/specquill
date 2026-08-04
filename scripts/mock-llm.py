@@ -66,6 +66,29 @@ class Handler(BaseHTTPRequestHandler):
                      'purpose': 'States what happens when precision is missing.', 'linksTo': [0]},
                 ],
             })
+        elif 'regulatory deadline reader' in system:
+            # a PROJECT recipe's stage (repo/.specquill/alignment/deadline-audit.md):
+            # the mock answers a project's own pipeline exactly like a built-in,
+            # because the engine does not distinguish them
+            reply = json.dumps({'deadlines': [
+                {'name': '(mock) T+1 transaction reporting',
+                 'statement': 'Executed transactions must be reported by close of the '
+                              'following working day.',
+                 'clock': 'close of the following working day',
+                 'paths': ['regulations/mifid-ii.md']},
+            ]})
+        elif 'requirements auditor' in system:
+            reply = json.dumps({'findings': [{
+                'anchor': 'regulations/mifid-ii.md#T+1',
+                'kind': 'unstated-deadline',
+                'severity': 'high',
+                'title': '(mock) T+1 reporting deadline has no requirement',
+                'detail': 'The regulation bounds submission to the following working day; '
+                          'no requirement states the deadline.',
+                'suggestedPath': 'requirements/REQ-submission-deadline.md',
+                'evidence': [{'path': 'regulations/mifid-ii.md',
+                              'quote': 'no later than the close of the following working day'}],
+            }]})
         elif 'focus adviser' in system:
             # propose where a gap sweep would pay off
             reply = json.dumps({'areas': [

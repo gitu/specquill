@@ -61,6 +61,11 @@ func Validate(content string) error {
 // absent), preserving key order and comments via a yaml.v3 node round-trip.
 // Content without frontmatter is returned unchanged — Touch maintains dates,
 // it never invents a frontmatter block.
+//
+// The date is taken in UTC: what lands in git must not depend on the server's
+// timezone (or the browser's — web/src/lib/frontmatter.ts todayStr does the
+// same), or the same edit would carry a different date for different people
+// and diff against itself around midnight.
 func Touch(content string, isNew bool, now time.Time) (string, error) {
 	fm, body, has := Split(content)
 	if !has {
@@ -74,7 +79,7 @@ func Touch(content string, isNew bool, now time.Time) (string, error) {
 		return content, nil // scalar/list frontmatter — nothing to maintain
 	}
 	m := doc.Content[0]
-	today := now.Format("2006-01-02")
+	today := now.UTC().Format("2006-01-02")
 	if isNew {
 		setKey(m, "created", today, false)
 	}

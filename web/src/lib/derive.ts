@@ -43,6 +43,21 @@ export function todayISO(): string {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+/**
+ * The calendar day of an ISO timestamp in the VIEWER's clock. Git hands us
+ * author dates with the author's own offset (`%aI`); showing that raw would
+ * date a commit by where its author sat, so the reader's day is what the feed
+ * groups and labels by. Anything that is not a full timestamp (a plain
+ * `YYYY-MM-DD` frontmatter date, which carries no zone) is passed through.
+ */
+export function localDay(iso: string): string {
+  if (!iso || iso.length <= 10) return (iso || '').slice(0, 10);
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return iso.slice(0, 10);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+
 /** "in 12d" / "today" / "8d ago" — signed day counts as the timeline reads them. */
 export function daysLabel(days: number): string {
   if (days === 0) return 'today';

@@ -12,8 +12,8 @@ type DriftRun struct {
 	ID                int64
 	RepoKey           string
 	Branch            string
-	Mode              string // drift (per-doc verify) | gaps (per-source coverage)
-	Status            string // running | ok | error | cancelled | interrupted
+	Mode              string // the recipe slug: drift | gaps | extract | a project's own
+	Status            string // running | ok | error | cancelled | interrupted | capped
 	Error             string
 	ScopeJSON         string // resolved doc list, frozen at start
 	DocsTotal         int
@@ -27,8 +27,17 @@ type DriftRun struct {
 	SourcesJSON       string // reference names this run was restricted to (for resume)
 	Focus             string // gaps: the area this sweep was aimed at (for resume)
 	ResumedFrom       int64  // the run this one picked up where it stopped (0 = fresh)
-	StartedAt         int64
-	FinishedAt        int64
+	// RecipeJSON is the resolved pipeline this run executes, frozen at start —
+	// what makes it reproducible and resumable after the recipe document is
+	// edited underneath it.
+	RecipeJSON string
+	// StageStateJSON checkpoints the IN-FLIGHT unit's completed stages and
+	// their output, so a resume re-enters where it stopped instead of redoing
+	// the whole unit. Pruned when a unit completes.
+	StageStateJSON string
+	AICalls        int // model calls spent, against ai.max_calls_per_run
+	StartedAt      int64
+	FinishedAt     int64
 }
 
 // DriftFinding is one verified divergence between a document and a source.
@@ -68,10 +77,12 @@ func (s *Store) CreateDriftRun(run DriftRun) (int64, error) {
 	}
 	res, err := s.exec(`INSERT INTO drift_runs
 		(repo_key, branch, mode, status, scope_json, docs_total, head_sha,
-		 report_path, report_branch, sources_json, focus, resumed_from, started_at)
-		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 report_path, report_branch, sources_json, focus, resumed_from,
+		 recipe_json, stage_state_json, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.RepoKey, run.Branch, run.Mode, run.ScopeJSON, run.DocsTotal, run.HeadSHA,
-		run.ReportPath, run.ReportBranch, run.SourcesJSON, run.Focus, run.ResumedFrom, time.Now().Unix())
+		run.ReportPath, run.ReportBranch, run.SourcesJSON, run.Focus, run.ResumedFrom,
+		run.RecipeJSON, run.StageStateJSON, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -84,6 +95,29 @@ func (s *Store) UpdateDriftRunProgress(id int64, docsDone, dropped int, activity
 	_, err := s.exec(`UPDATE drift_runs SET docs_done = ?, dropped_unverified = ?, activity_json = ? WHERE id = ?`,
 		docsDone, dropped, activityJSON, id)
 	return err
+}
+
+// SetDriftRunStageState checkpoints the in-flight unit's stage progress. The
+// blob is deliberately small: the runner prunes it the moment a unit finishes,
+// so at most one unit's intermediate output is ever stored.
+func (s *Store) SetDriftRunStageState(id int64, stateJSON string) error {
+	_, err := s.exec(`UPDATE drift_runs SET stage_state_json = ? WHERE id = ?`, stateJSON, id)
+	return err
+}
+
+// AddDriftRunAICalls charges model calls to a run and returns the new total,
+// so the worker can stop at the deployment's ceiling. Read-after-write in one
+// statement: the store is single-connection, so this cannot interleave.
+func (s *Store) AddDriftRunAICalls(id int64, n int) (int, error) {
+	if _, err := s.exec(`UPDATE drift_runs SET ai_calls = ai_calls + ? WHERE id = ?`, n, id); err != nil {
+		return 0, err
+	}
+	var total int
+	err := s.queryRow(`SELECT ai_calls FROM drift_runs WHERE id = ?`, id).Scan(&total)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return total, err
 }
 
 // SetDriftRunExtractions records the application inventories a run persisted.
@@ -121,6 +155,57 @@ func (s *Store) DriftRunByID(id int64) (*DriftRun, error) {
 	return r, err
 }
 
+// ListDriftRuns returns the recent runs of a repo+branch, newest first. It
+// deliberately leaves out the heavy per-run blobs (scope, activity, extractions):
+// the run picker only needs each run's shape, and the one being looked at is
+// loaded in full by DriftRunByID.
+func (s *Store) ListDriftRuns(repoKey, branch string, limit int) ([]DriftRun, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := s.query(`SELECT id, mode, status, error, docs_total, docs_done,
+			dropped_unverified, report_path, report_branch, sources_json, focus,
+			resumed_from, started_at, finished_at
+		FROM drift_runs WHERE repo_key = ? AND branch = ? ORDER BY id DESC LIMIT ?`,
+		repoKey, branch, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DriftRun{}
+	for rows.Next() {
+		r := DriftRun{RepoKey: repoKey, Branch: branch}
+		if err := rows.Scan(&r.ID, &r.Mode, &r.Status, &r.Error, &r.DocsTotal, &r.DocsDone,
+			&r.DroppedUnverified, &r.ReportPath, &r.ReportBranch, &r.SourcesJSON, &r.Focus,
+			&r.ResumedFrom, &r.StartedAt, &r.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DriftFindingCountsByRun counts the live findings each run produced, so the
+// run picker can say what a past run is still worth.
+func (s *Store) DriftFindingCountsByRun(repoKey, branch string) (map[int64]int, error) {
+	rows, err := s.query(`SELECT run_id, COUNT(*) FROM drift_findings
+		WHERE repo_key = ? AND branch = ? AND resolved_at = 0 GROUP BY run_id`, repoKey, branch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // DriftRunResumedBy reports which run already picked up id (0 = none), so the
 // same remaining units are not run twice.
 func (s *Store) DriftRunResumedBy(id int64) (int64, error) {
@@ -134,20 +219,26 @@ func (s *Store) DriftRunResumedBy(id int64) (int64, error) {
 
 const driftRunSelect = `SELECT id, repo_key, branch, mode, status, error, scope_json, docs_total,
 		docs_done, dropped_unverified, head_sha, activity_json, report_path, report_branch,
-		extractions_json, sources_json, focus, resumed_from, started_at, finished_at
+		extractions_json, sources_json, focus, resumed_from, recipe_json, stage_state_json,
+		ai_calls, started_at, finished_at
 	FROM drift_runs`
 
 func (s *Store) scanDriftRun(row *sql.Row, r *DriftRun) error {
 	return row.Scan(&r.ID, &r.RepoKey, &r.Branch, &r.Mode, &r.Status, &r.Error, &r.ScopeJSON,
 		&r.DocsTotal, &r.DocsDone, &r.DroppedUnverified, &r.HeadSHA, &r.ActivityJSON,
 		&r.ReportPath, &r.ReportBranch, &r.ExtractionsJSON, &r.SourcesJSON, &r.Focus,
-		&r.ResumedFrom, &r.StartedAt, &r.FinishedAt)
+		&r.ResumedFrom, &r.RecipeJSON, &r.StageStateJSON, &r.AICalls, &r.StartedAt, &r.FinishedAt)
 }
 
 // Resumable reports whether a run stopped with work left — the server
-// restarted under it, the user cancelled it, or it failed midway. Its
-// remaining units are scope[DocsDone:]: the worker is sequential, so
-// DocsDone is exactly how far it got.
+// restarted under it, the user cancelled it, it hit the call ceiling
+// (`capped`), or it failed midway. Its remaining units are scope[DocsDone:]:
+// the worker is sequential, so DocsDone is exactly how far it got.
+//
+// Note this stays correct for per-stage resume without changing: a unit
+// interrupted mid-recipe leaves DocsDone at the units BEFORE it, so the
+// partial unit is already in the remainder. StageStateJSON only makes
+// re-entering it cheap.
 func (r *DriftRun) Resumable() bool {
 	return r.Status != "running" && r.Status != "ok" && r.DocsDone < r.DocsTotal
 }
@@ -188,36 +279,81 @@ func (s *Store) UpsertDriftFinding(f DriftFinding) error {
 
 // ResolveDriftFindingsExcept marks a doc's findings resolved when the fresh
 // check no longer reports their fingerprint. Scope-aware reconciliation: it
-// touches ONE doc, so scoped runs never clear findings they did not re-check.
-func (s *Store) ResolveDriftFindingsExcept(repoKey, branch, docPath string, keep []string) error {
+// touches ONE doc, so scoped runs never clear findings they did not re-check —
+// and only the KINDS the running recipe declares, so two recipes auditing the
+// same document do not resolve each other's findings.
+func (s *Store) ResolveDriftFindingsExcept(repoKey, branch, docPath string, keep, kinds []string) error {
 	args := []any{time.Now().Unix(), repoKey, branch, docPath}
 	q := `UPDATE drift_findings SET resolved_at = ?
 		WHERE repo_key = ? AND branch = ? AND doc_path = ? AND resolved_at = 0`
-	if len(keep) > 0 {
-		q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
-		for _, fp := range keep {
-			args = append(args, fp)
-		}
-	}
+	q, args = narrowByKinds(q, args, kinds)
+	q, args = narrowByFingerprint(q, args, keep)
 	_, err := s.exec(q, args...)
 	return err
 }
 
-// ResolveGapFindingsExcept is the gaps-mode counterpart of
+// ResolveGapFindingsExcept is the per-source counterpart of
 // ResolveDriftFindingsExcept: coverage gaps have no doc_path, so a fresh
-// sweep of ONE source resolves that source's stale gaps only.
-func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep []string) error {
+// sweep of ONE source resolves that source's stale gaps only — again limited
+// to the running recipe's own kinds.
+func (s *Store) ResolveGapFindingsExcept(repoKey, branch, source string, keep, kinds []string) error {
 	args := []any{time.Now().Unix(), repoKey, branch, source}
 	q := `UPDATE drift_findings SET resolved_at = ?
 		WHERE repo_key = ? AND branch = ? AND doc_path = '' AND source = ? AND resolved_at = 0`
-	if len(keep) > 0 {
-		q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
-		for _, fp := range keep {
-			args = append(args, fp)
-		}
-	}
+	q, args = narrowByKinds(q, args, kinds)
+	q, args = narrowByFingerprint(q, args, keep)
 	_, err := s.exec(q, args...)
 	return err
+}
+
+// ResolveOrphanedDriftFindings retires findings about documents that no longer
+// exist on the branch.
+//
+// Ordinary reconciliation can never reach them: it resolves a document's stale
+// findings when a run RE-CHECKS that document, and a deleted document is never
+// in scope again. So they linger forever — shown on the page, pointing at
+// nothing, with actions that quietly do nothing (a remedy has no document to
+// link to). `live` is the branch's current document set.
+func (s *Store) ResolveOrphanedDriftFindings(repoKey, branch string, live []string) (int64, error) {
+	args := []any{time.Now().Unix(), repoKey, branch}
+	q := `UPDATE drift_findings SET resolved_at = ?
+		WHERE repo_key = ? AND branch = ? AND doc_path != '' AND resolved_at = 0`
+	if len(live) > 0 {
+		q += ` AND doc_path NOT IN (?` + strings.Repeat(",?", len(live)-1) + `)`
+		for _, p := range live {
+			args = append(args, p)
+		}
+	}
+	res, err := s.exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// narrowByKinds limits a reconciliation to the kinds a recipe owns. An empty
+// list means "no restriction" — a run whose recipe declares nothing (an
+// extraction) reconciles nothing anyway.
+func narrowByKinds(q string, args []any, kinds []string) (string, []any) {
+	if len(kinds) == 0 {
+		return q, args
+	}
+	q += ` AND kind IN (?` + strings.Repeat(",?", len(kinds)-1) + `)`
+	for _, k := range kinds {
+		args = append(args, k)
+	}
+	return q, args
+}
+
+func narrowByFingerprint(q string, args []any, keep []string) (string, []any) {
+	if len(keep) == 0 {
+		return q, args
+	}
+	q += ` AND fingerprint NOT IN (?` + strings.Repeat(",?", len(keep)-1) + `)`
+	for _, fp := range keep {
+		args = append(args, fp)
+	}
+	return q, args
 }
 
 // SetDriftFindingDraft records the reverse-engineered draft document created

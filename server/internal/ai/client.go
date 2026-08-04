@@ -30,14 +30,22 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
+// defaultMaxCallsPerRun bounds one alignment run's model calls when the
+// deployment sets no ceiling of its own.
+const defaultMaxCallsPerRun = 500
+
 type Client struct {
 	baseURL string
 	model   string // main (thinking-class): chat, draft edits
 	quick   string // fast one-shot tier: commit messages, titles
-	key     string
-	budget  int    // grounding system-prompt cap in bytes (0 = package default)
-	effort  string // reasoning_effort passthrough ("" = omit from requests)
-	http    *http.Client
+	// models a recipe may additionally name per stage (ai.models). NOT a
+	// fallback list — an id outside it fails recipe validation.
+	models   []string
+	maxCalls int // ceiling on model calls per alignment run (0 = package default)
+	key      string
+	budget   int    // grounding system-prompt cap in bytes (0 = package default)
+	effort   string // reasoning_effort passthrough ("" = omit from requests)
+	http     *http.Client
 
 	// transient-failure retry: attempts total, with an exponentially growing
 	// pause from retryBase (fields, so tests don't sleep)
@@ -58,6 +66,8 @@ func New(cfg config.AIConfig) *Client {
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
 		model:     cfg.Model,
 		quick:     quick,
+		models:    cfg.Models,
+		maxCalls:  cfg.MaxCallsPerRun,
 		key:       key,
 		budget:    cfg.GroundingBudget,
 		effort:    cfg.ReasoningEffort,
@@ -80,6 +90,65 @@ func (c *Client) chatBody(model string, msgs []Message, stream bool) map[string]
 
 func (c *Client) Model() string      { return c.model }
 func (c *Client) QuickModel() string { return c.quick }
+
+// WithModel returns a client that talks to a DIFFERENT model, sharing this
+// one's transport, key and retry policy. An alignment recipe may name a model
+// per stage — a cheap one to survey, a thinking-class one to judge — and this
+// is the whole seam that makes it possible: every existing call site keeps
+// using the configured tier untouched.
+//
+// The tier names are accepted as aliases so a recipe never has to hardcode a
+// deployment's model ids. An unknown id is NOT resolved here — the recipe
+// validator checks it against ai.models before a run starts, so reaching this
+// with an arbitrary string is a programming error, not user input.
+func (c *Client) WithModel(id string) *Client {
+	switch id {
+	case "", "default", c.model:
+		return c
+	case "quick":
+		id = c.quick
+	}
+	if id == c.model {
+		return c
+	}
+	out := *c
+	out.model = id
+	return &out
+}
+
+// Models is the set of model ids a recipe may name: both configured tiers plus
+// the explicit ai.models allowlist. Recipes are user content committed to a
+// repository, so what they can point the server at is deployment policy.
+func (c *Client) Models() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range append([]string{c.model, c.quick}, c.models...) {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// AllowedModels is Models as a set, for recipe validation.
+func (c *Client) AllowedModels() map[string]bool {
+	out := map[string]bool{}
+	for _, m := range c.Models() {
+		out[m] = true
+	}
+	return out
+}
+
+// MaxCallsPerRun is the hard ceiling on model calls one alignment run may
+// make (0 = the package default). A recipe multiplies stages by items by
+// units, so an author's typo is otherwise measured in hours and money.
+func (c *Client) MaxCallsPerRun() int {
+	if c.maxCalls > 0 {
+		return c.maxCalls
+	}
+	return defaultMaxCallsPerRun
+}
 
 // GroundingBudget is the configured system-prompt cap in bytes (0 = default).
 func (c *Client) GroundingBudget() int { return c.budget }
