@@ -7,8 +7,9 @@
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
-const OUT = path.resolve('../docs/screenshots');
+const OUT = fileURLToPath(new URL('../../docs/screenshots', import.meta.url));
 const H = { 'X-SpecQuill': '1' };
 const REPO = 'trading-specs';
 

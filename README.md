@@ -50,6 +50,8 @@ web/              React + Vite + TypeScript SPA
                     schema-driven PropertiesForm (yaml Document API),
                     @excalidraw/excalidraw modal
 repo/             demo "trading-specs" workspace (fixture source)
+docs/             project docs: the feature screenshot gallery
+                  (docs/screenshots/, regenerated with `make shots`)
 ```
 
 Key properties:
