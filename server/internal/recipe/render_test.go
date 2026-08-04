@@ -91,3 +91,18 @@ func contains(s, sub string) bool {
 		return false
 	})()
 }
+
+// A kept conditional body is re-rendered, so nesting works to any depth; a
+// dropped outer block swallows whatever it nests.
+func TestRenderResolvesNestedConditionals(t *testing.T) {
+	body := "{{#outer}}a{{#inner}}-x-{{/inner}}{{^inner}}-y-{{/inner}}b{{/outer}}"
+	if got := Render(body, map[string]string{"outer": "on", "inner": "on"}); got != "a-x-b" {
+		t.Fatalf("kept nested block: got %q", got)
+	}
+	if got := Render(body, map[string]string{"outer": "on"}); got != "a-y-b" {
+		t.Fatalf("negated nested block: got %q", got)
+	}
+	if got := Render(body, map[string]string{"inner": "on"}); got != "" {
+		t.Fatalf("dropped outer must swallow nested: got %q", got)
+	}
+}

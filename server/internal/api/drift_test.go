@@ -2048,3 +2048,34 @@ List with list_files, then reply as JSON.
 		t.Fatalf("aiCalls = %v, want 2 (selection + stage)", run["aiCalls"])
 	}
 }
+
+// The dry run must refuse exactly what the run refuses: validating a recipe
+// that names an unreachable source answers ok:false, not a silently narrowed
+// (and green) projection.
+func TestRecipeValidateRefusesAnUnreferencedSource(t *testing.T) {
+	h, _, _, _, _ := testDriftServer(t, nil,
+		withRecipe("reach", recipeNaming("sources: [reg, other-project]\n", "", "")))
+	cookie := login(t, h)
+	code, out := doJSON(t, h, cookie, "POST", "/api/repos/w/alignment/recipes/validate?branch=main",
+		map[string]any{"recipe": "reach"})
+	if code != http.StatusOK {
+		t.Fatalf("validate answers 200, got %d %v", code, out)
+	}
+	if ok, _ := out["ok"].(bool); ok {
+		t.Fatalf("expected ok:false: %v", out)
+	}
+	msg, _ := out["error"].(string)
+	if !strings.Contains(msg, "other-project") || !strings.Contains(msg, "never add one") {
+		t.Fatalf("error should name the source and say a recipe can only narrow: %q", msg)
+	}
+
+	// a request-level pick matching nothing is refused the same way
+	code, out = doJSON(t, h, cookie, "POST", "/api/repos/w/alignment/recipes/validate?branch=main",
+		map[string]any{"recipe": "reach", "sources": []string{"nope"}})
+	if code != http.StatusOK {
+		t.Fatalf("validate answers 200, got %d %v", code, out)
+	}
+	if ok, _ := out["ok"].(bool); ok {
+		t.Fatalf("expected ok:false for a pick matching nothing: %v", out)
+	}
+}

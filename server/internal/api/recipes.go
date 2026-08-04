@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"specquill/server/internal/ai"
 	"specquill/server/internal/project"
 	"specquill/server/internal/recipe"
 )
@@ -131,6 +132,15 @@ func (s *Server) postRecipeValidate(w http.ResponseWriter, r *http.Request, repo
 		driftCfg = cfg.Drift
 	}
 	sources := s.driftSources(r, repo, branch, driftCfg)
+	// the same refusals postDriftRun answers with 422: a dry run that quietly
+	// projects fewer sources than the authored recipe asked for would say
+	// ok:true about an audit that will never read them
+	if len(rec.Sources) > 0 && len(body.Sources) == 0 {
+		if msg := recipeSourcesRefusal(rec, sources); msg != "" {
+			jsonOK(w, map[string]any{"ok": false, "error": msg, "warnings": warnings})
+			return
+		}
+	}
 	pick := body.Sources
 	if len(pick) == 0 {
 		pick = rec.Sources
@@ -145,6 +155,11 @@ func (s *Server) postRecipeValidate(w http.ResponseWriter, r *http.Request, repo
 			if want[src.Name] {
 				kept = append(kept, src)
 			}
+		}
+		if len(kept) == 0 {
+			jsonOK(w, map[string]any{"ok": false,
+				"error": "none of the requested sources is selected by this project", "warnings": warnings})
+			return
 		}
 		sources = kept
 	}
@@ -250,4 +265,26 @@ func firstN(list []string, n int) []string {
 		return list
 	}
 	return list[:n]
+}
+
+// recipeSourcesRefusal is the shared gate for postDriftRun and the dry run: a
+// committed recipe naming a source outside the project's entitled references
+// is refused outright, never silently narrowed ("" when all names resolve).
+func recipeSourcesRefusal(rec *recipe.Recipe, entitled []ai.GroundingSource) string {
+	have := map[string]bool{}
+	for _, src := range entitled {
+		have[src.Name] = true
+	}
+	var unknown []string
+	for _, n := range rec.Sources {
+		if n = strings.TrimPrefix(strings.TrimSpace(n), "~"); n != "" && !have[n] {
+			unknown = append(unknown, "~"+n)
+		}
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("recipe %s names %s, which this project has no access to — a recipe can only "+
+		"narrow the references in .specquill/config.yml, never add one",
+		rec.Slug, strings.Join(unknown, ", "))
 }

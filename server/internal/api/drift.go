@@ -701,21 +701,8 @@ func (s *Server) postDriftRun(w http.ResponseWriter, r *http.Request, repo *proj
 	// it asked for would leave the author believing an audit covered a source
 	// it never read, so an unknown name is refused outright.
 	if len(rec.Sources) > 0 && len(body.Sources) == 0 {
-		entitled := map[string]bool{}
-		for _, src := range sources {
-			entitled[src.Name] = true
-		}
-		var unknown []string
-		for _, n := range rec.Sources {
-			if n = strings.TrimPrefix(strings.TrimSpace(n), "~"); n != "" && !entitled[n] {
-				unknown = append(unknown, "~"+n)
-			}
-		}
-		if len(unknown) > 0 {
-			jsonError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
-				"recipe %s names %s, which this project has no access to — a recipe can only "+
-					"narrow the references in .specquill/config.yml, never add one",
-				rec.Slug, strings.Join(unknown, ", ")))
+		if msg := recipeSourcesRefusal(rec, sources); msg != "" {
+			jsonError(w, http.StatusUnprocessableEntity, msg)
 			return
 		}
 	}

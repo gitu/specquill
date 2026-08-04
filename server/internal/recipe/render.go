@@ -49,11 +49,12 @@ func Render(text string, vars map[string]string) string {
 	}
 }
 
-// renderConditionals resolves {{#name}}…{{/name}} blocks innermost-last: it
-// scans for an opening marker and its matching close, keeps or drops the span,
-// and continues AFTER the substituted text so a dropped block cannot leave a
-// half-open marker behind. An unmatched opener is left verbatim, like an
-// unknown placeholder.
+// renderConditionals resolves {{#name}}…{{/name}} blocks outermost-first: it
+// scans for an opening marker and its matching close, drops the span or keeps
+// it (re-rendering the body, so nested blocks resolve too), and continues
+// AFTER the substituted text so a dropped block cannot leave a half-open
+// marker behind. An unmatched opener is left verbatim, like an unknown
+// placeholder.
 func renderConditionals(text string, vars map[string]string) string {
 	var b strings.Builder
 	for {
@@ -82,7 +83,7 @@ func renderConditionals(text string, vars map[string]string) string {
 		k += j
 		b.WriteString(text[:i])
 		if (vars[name] != "") != negated {
-			b.WriteString(text[j+2 : k])
+			b.WriteString(renderConditionals(text[j+2:k], vars))
 		}
 		text = text[k+len(closer):]
 	}
