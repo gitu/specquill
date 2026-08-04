@@ -18,6 +18,16 @@ Originally implemented from the Claude Design project
 [`SpecQuill.dc.html`](design/SpecQuill.dc.html) (the static prototype it grew from lives in
 [`design/prototype/`](design/prototype/)).
 
+## Screenshots
+
+A tour of every surface lives in
+[`docs/screenshots/`](docs/screenshots/README.md) — editor, speccy, source
+alignment, impact graph, timed dependencies, change history, and more.
+Regenerate the gallery with `make shots` (isolated server + demo fixtures +
+mock LLM, so no keys are needed).
+
+[![Editor](docs/screenshots/editor.png)](docs/screenshots/README.md)
+
 ## Architecture
 
 ```
@@ -40,6 +50,8 @@ web/              React + Vite + TypeScript SPA
                     schema-driven PropertiesForm (yaml Document API),
                     @excalidraw/excalidraw modal
 repo/             demo "trading-specs" workspace (fixture source)
+docs/             project docs: the feature screenshot gallery
+                  (docs/screenshots/, regenerated with `make shots`)
 ```
 
 Key properties:

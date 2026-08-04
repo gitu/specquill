@@ -1,4 +1,4 @@
-.PHONY: build web server dev dev-fixture test e2e dev-server dev-forge clean
+.PHONY: build web server dev dev-fixture test e2e dev-server dev-forge shots clean
 
 build: web server                ## release build: SPA embedded in single binary
 
@@ -29,6 +29,9 @@ dev-server: server dev-fixture   ## build + start the dev server with auto-auth
 
 dev-forge: build                 ## secondary dev server: forge-PAT login against real GitHub (:8644, embedded SPA, no -dev)
 	./server/specquill -config specquill.dev-forge.yml
+
+shots: build                     ## regenerate docs/screenshots/ (isolated server on :8663 + mock-llm + playwright)
+	./scripts/shots.sh
 
 clean:
 	rm -rf server/specquill server/internal/webui/dist/* web/dist
