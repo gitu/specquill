@@ -33,15 +33,21 @@ context (regulations, upstream specs); cite them as ~<source>/<path> but never
 propose edits to them. If the material does not contain the answer, say so
 instead of guessing. Be concise; plain prose, minimal markdown.`
 
-// ToolRules is appended to the chat system prompt whenever tools are
-// registered (read-only conversations included — read_file/ask_user are
-// always available).
-const ToolRules = `
+// ReadToolRules covers the read-only tools (read_file / list_files /
+// search). It is the whole tool contract for flows that never ask the user
+// mid-turn — the guided authoring wizard collects its questions structurally
+// instead (see wizard.go).
+const ReadToolRules = `
 
 # Tool use
 - read_file returns the full current content of any workspace file or
   ~source/path reference — use it instead of answering from a truncated
-  grounding excerpt.
+  grounding excerpt.`
+
+// ToolRules is appended to the chat system prompt whenever tools are
+// registered (read-only conversations included — read_file/ask_user are
+// always available).
+const ToolRules = ReadToolRules + `
 - When you need the user to decide something — pick between assumptions,
   confirm a plan, choose options — you MUST call the ask_user tool. Never ask
   in plain text and never end a reply with "reply X to proceed": ask_user

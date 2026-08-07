@@ -31,6 +31,54 @@ DRAFT_REPLY = json.dumps({
 })
 
 
+def wizard_reply(system, messages):
+    """Canned JSON for the guided-authoring stages (server/internal/ai/wizard.go).
+
+    Each stage is identified by a phrase unique to its prompt contract. The
+    interview answers differently once the transcript has an answer in it, so
+    the e2e can walk intent → questions → rubric filling up → ready-to-draft.
+    """
+    if 'recommendation' in system and '"matches"' in system:
+        return json.dumps({
+            'matches': [{
+                'path': 'specs/txn-report.md',
+                'title': 'Transaction reporting',
+                'relation': 'overlaps',
+                'reason': '(mock) already specifies the reporting timestamps this intent touches.',
+            }],
+            'recommendation': 'new',
+        })
+    if 'readyToDraft' in system:
+        answered = any(m['role'] == 'user' and not str(m['content']).startswith('Intent:') for m in messages)
+        if answered:
+            return json.dumps({
+                'reply': '(mock) Understood — that is enough to draft.',
+                'questions': [],
+                'rubric': [{'criterion': 'Retention period stated', 'met': True},
+                           {'criterion': 'Scope named', 'met': True}],
+                'readyToDraft': True,
+            })
+        return json.dumps({
+            'reply': '(mock) specs/txn-report.md already covers the reporting flow. Two things are open.',
+            'questions': ['Does this replace the existing window?', 'Which records are in scope?'],
+            'rubric': [{'criterion': 'Retention period stated', 'met': False},
+                       {'criterion': 'Scope named', 'met': False}],
+            'readyToDraft': False,
+        })
+    if 'short imperative document title' in system:
+        # echo the requested outline back as sections, so the test sees the
+        # server's normalization against the template rather than a fixed list
+        wanted = re.search(r'Produce exactly these sections, in this order: (.+)', system)
+        names = [n.strip() for n in (wanted.group(1) if wanted else 'Overview').split(',')]
+        return json.dumps({
+            'title': 'Mock drafted specification',
+            'sections': [{'name': n, 'content': f'(mock) {n} body grounded on the workspace.'} for n in names],
+        })
+    if '"note": "one line on what changed"' in system:
+        return json.dumps({'content': '(mock) rewritten section body.', 'note': 'rewrote it'})
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -266,6 +314,8 @@ class Handler(BaseHTTPRequestHandler):
                 'evidence': [{'path': 'regulations/mifid-ii.md',
                               'quote': 'Execution timestamps must be captured'}],
             }]})
+        elif (wiz := wizard_reply(system, body['messages'])) is not None:
+            reply = wiz
         elif body.get('tools') and last['role'] == 'tool':
             name = ''
             for m in reversed(body['messages']):
