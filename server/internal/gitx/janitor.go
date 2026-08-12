@@ -28,9 +28,10 @@ func LockDataDir(dataDir string) (release func(), err error) {
 }
 
 // StartSyncLoops fetches every repo on its configured interval (writable
-// repos update remote-tracking refs; read-only repos fast-forward heads) and
-// evicts idle clean worktrees. Runs until the process exits. Repos added at
-// runtime (AddRepo) get their own loop there.
+// repos update remote-tracking refs, then fast-forward clean local branches
+// onto them; read-only repos fast-forward heads directly) and evicts idle
+// clean worktrees. Runs until the process exits. Repos added at runtime
+// (AddRepo) get their own loop there.
 func (m *Manager) StartSyncLoops() {
 	for _, r := range m.Repos() {
 		m.startSyncLoop(r)
@@ -57,6 +58,11 @@ func (m *Manager) startSyncLoop(r *Repo) {
 				continue
 			}
 			m.notify("fetch", r.Key(), "")
+			// remote moved → local follows: ff every clean branch that is
+			// strictly behind its remote-tracking ref
+			for _, branch := range r.FFBranches(m.holdFor(r)) {
+				m.notify("pull", r.Key(), branch)
+			}
 		}
 	}()
 }

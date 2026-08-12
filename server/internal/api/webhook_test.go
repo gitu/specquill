@@ -40,7 +40,7 @@ func TestRemoteFullName(t *testing.T) {
 
 // webhookTestServer registers a writable repo whose remote LOOKS like a
 // GitHub URL but resolves to a local origin via git's env-config insteadOf —
-// so the webhook's matching, fetch and default-branch ff run for real.
+// so the webhook's matching, fetch and branch ff run for real.
 func webhookTestServer(t *testing.T) (http.Handler, string) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -56,6 +56,8 @@ func webhookTestServer(t *testing.T) (http.Handler, string) {
 	gitRun(t, "-C", work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "v1")
 	gitRun(t, "init", "--bare", "-b", "main", origin)
 	gitRun(t, "-C", work, "push", "-q", origin, "main")
+	// a second branch, present at clone time → the server has a local head
+	gitRun(t, "-C", work, "push", "-q", origin, "main:feature/x")
 
 	// the github-shaped remote resolves to the local origin for every git
 	// child process (gitx passes os.Environ through)
@@ -156,6 +158,19 @@ func TestGitHubWebhook(t *testing.T) {
 	code, out = doJSON(t, h, cookie, "GET", "/api/repos/w/files/index.md?ref=main", nil)
 	if code != http.StatusOK || out["content"] != "# v2 external\n" {
 		t.Fatalf("main not fast-forwarded by webhook: %d %v", code, out)
+	}
+
+	// a push to a NON-default branch fast-forwards its local counterpart too
+	gitRun(t, "-C", work, "push", "-q", origin, "main:feature/x") // origin feature/x → v2
+	rec = signedHook(t, h, "push", map[string]any{
+		"ref": "refs/heads/feature/x", "repository": map[string]any{"full_name": "acme/specs"},
+	}, "hook-secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("branch push hook: %d %s", rec.Code, rec.Body.String())
+	}
+	code, out = doJSON(t, h, cookie, "GET", "/api/repos/w/files/index.md?ref=feature/x", nil)
+	if code != http.StatusOK || out["content"] != "# v2 external\n" {
+		t.Fatalf("feature/x not fast-forwarded by webhook: %d %v", code, out)
 	}
 
 	// a push for an unknown repository matches nothing

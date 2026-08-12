@@ -36,6 +36,14 @@ export function TopBar() {
     app.switchBranch(name, { carryDraft: true });
     setOpen(false);
   };
+  const localBranches = (branches.data || []).filter((b) => !b.isRemote);
+  const remoteBranches = (branches.data || []).filter((b) => b.isRemote);
+  // a remote-only branch has no local head yet — materialize it on switch
+  const switchToRemote = async (name: string) => {
+    await createBranch.mutateAsync({ name, from: 'origin/' + name });
+    app.switchBranch(name);
+    setOpen(false);
+  };
 
   return (
     <header style={sx('height:46px;flex:none;display:flex;align-items:center;gap:' + (narrow ? '8px' : '12px') + ';padding:0 12px 0 14px;background:var(--surface);border-bottom:1px solid var(--border);position:relative;z-index:5')}>
@@ -97,7 +105,7 @@ export function TopBar() {
         </div>
         {open && (
           <div style={sx('position:absolute;left:0;top:34px;min-width:230px;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);overflow:hidden;z-index:20')}>
-            {(branches.data || []).map((b) => (
+            {localBranches.map((b) => (
               <div
                 key={b.name}
                 onClick={() => { app.switchBranch(b.name); setOpen(false); }}
@@ -106,6 +114,17 @@ export function TopBar() {
                 <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;flex:1")}>{b.name}</span>
                 {app.protectedBranches.includes(b.name) && <span title="protected" style={sx('display:inline-flex;color:var(--text-3)')}><IconLock /></span>}
                 {b.isDefault && <span style={sx('font-size:10px;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 5px')}>default</span>}
+              </div>
+            ))}
+            {remoteBranches.map((b) => (
+              <div
+                key={'origin/' + b.name}
+                onClick={() => switchToRemote(b.name)}
+                title={'origin/' + b.name + ' — switching creates a local branch'}
+                style={sx('display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:12.5px;' + (remoteBranches[0] === b ? 'border-top:1px solid var(--border);' : ''))}
+              >
+                <span style={sx("font-family:'JetBrains Mono',monospace;font-size:11.5px;flex:1;color:var(--text-2)")}>{b.name}</span>
+                <span style={sx('font-size:10px;color:var(--text-3);border:1px dashed var(--border);border-radius:4px;padding:1px 5px')}>remote</span>
               </div>
             ))}
             <div onClick={newBranch} style={sx('display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:12px;color:var(--prod);border-top:1px solid var(--border);font-weight:600')}>

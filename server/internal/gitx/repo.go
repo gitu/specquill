@@ -27,6 +27,16 @@ type Manager struct {
 	// GitHub App installation tokens) and takes precedence over token_env.
 	// Tokens still reach git via child-process env only.
 	TokenFor func(r *Repo) (username, token string, ok bool)
+	// HoldBranch, when set, vetoes automatic branch-head moves — e.g. a live
+	// co-editing room owns the branch's files right now.
+	HoldBranch func(repoKey, branch string) bool
+}
+
+// holdFor adapts the HoldBranch hook to a per-repo predicate for FFBranches.
+func (m *Manager) holdFor(r *Repo) func(branch string) bool {
+	return func(branch string) bool {
+		return m.HoldBranch != nil && m.HoldBranch(r.key, branch)
+	}
 }
 
 func (m *Manager) notify(kind, repo, branch string) {

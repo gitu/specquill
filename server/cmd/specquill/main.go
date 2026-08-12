@@ -27,6 +27,7 @@ import (
 	"specquill/server/internal/ai"
 	"specquill/server/internal/api"
 	"specquill/server/internal/auth"
+	"specquill/server/internal/collab"
 	"specquill/server/internal/config"
 	"specquill/server/internal/events"
 	"specquill/server/internal/githubapp"
@@ -246,6 +247,12 @@ func serve(configPath string, dev bool) error {
 	git.Notify = func(kind, repo, branch string) {
 		bus.Publish(events.Event{Kind: kind, Repo: repo, Branch: branch})
 	}
+	// the hub is created here (not defaulted inside api.New) so the sync
+	// loops' auto-ff can consult it: never move a ref under a live room
+	hub := collab.NewHub(st, git)
+	git.HoldBranch = func(repoKey, branch string) bool {
+		return len(hub.ActiveOnBranch(repoKey, branch)) > 0
+	}
 	log.Printf("initializing %d repo(s) under %s", len(cfg.Repos), cfg.DataDir)
 	if err := git.Init(); err != nil {
 		return err
@@ -297,6 +304,7 @@ func serve(configPath string, dev bool) error {
 		GitHubApp: ghApp,
 		AI:        aiClient,
 		Bus:       bus,
+		Hub:       hub,
 		Importer:  imp,
 		Dist:      dist,
 		Dev:       dev,

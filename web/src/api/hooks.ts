@@ -64,6 +64,9 @@ export function useBranches(repo: string | undefined) {
     queryKey: ['branches', repo],
     queryFn: () => api<Branch[]>(`/api/repos/${repo}/branches`),
     enabled: !!repo,
+    // the server fetch loop discovers new remote branches — poll so they
+    // appear in the branch overview without a reload (no ws push yet)
+    refetchInterval: 30_000,
   });
 }
 

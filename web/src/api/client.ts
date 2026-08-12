@@ -91,7 +91,7 @@ export interface RepoInfo {
   syncedAt?: string;
   role?: 'viewer' | 'member' | 'admin'; // the caller's effective role on this repo
 }
-export interface Branch { name: string; head: string; isDefault: boolean; ahead: number; behind: number }
+export interface Branch { name: string; head: string; isDefault: boolean; isRemote?: boolean; ahead: number; behind: number }
 export interface FileResp { content: string; sha: string }
 export interface SnapshotResp { ref: string; files: Record<string, string> }
 export interface TreeEntry { path: string; size: number }

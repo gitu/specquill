@@ -182,5 +182,19 @@ func (s *Server) postFetch(w http.ResponseWriter, r *http.Request, repo *project
 		gitFail(w, err)
 		return
 	}
-	jsonOK(w, map[string]bool{"ok": true})
+	s.publish("fetch", repo.Key(), "")
+	// remote moved → local follows; branches with live rooms stay put
+	updated := repo.FFBranches(s.holdBranch(repo.Key()))
+	for _, branch := range updated {
+		s.publish("pull", repo.Key(), branch)
+	}
+	jsonOK(w, map[string]any{"ok": true, "updated": updated})
+}
+
+// holdBranch adapts the collab hub's room ownership to FFBranches' veto:
+// never move a ref under a live co-editing room.
+func (s *Server) holdBranch(repoKey string) func(branch string) bool {
+	return func(branch string) bool {
+		return len(s.hub.ActiveOnBranch(repoKey, branch)) > 0
+	}
 }

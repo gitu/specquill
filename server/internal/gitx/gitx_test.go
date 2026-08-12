@@ -133,6 +133,134 @@ func TestReadOnlyRefusesWorktree(t *testing.T) {
 	}
 }
 
+// pushOrigin commits every pending change in the fixture's src clone and
+// pushes refspec to origin.
+func pushOrigin(t *testing.T, origin, refspec string) {
+	t.Helper()
+	src := filepath.Join(filepath.Dir(origin), "src")
+	mustRun(t, src, "add", "-A")
+	mustRun(t, src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "remote change")
+	mustRun(t, src, "push", "-q", origin, refspec)
+}
+
+func TestBranchesListsRemoteOnly(t *testing.T) {
+	m, origin := fixture(t)
+	repo, _ := m.Repo("default/w")
+
+	// a branch born on origin after the clone is remote-only until switched to
+	pushOrigin(t, origin, "main:feature/remote-only")
+	if err := repo.Fetch(); err != nil {
+		t.Fatal(err)
+	}
+	branches, err := repo.Branches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Branch{}
+	for _, b := range branches {
+		byName[b.Name] = b
+	}
+	if b, ok := byName["feature/remote-only"]; !ok || !b.IsRemote {
+		t.Fatalf("want remote-only feature/remote-only, got %v", branches)
+	}
+	if byName["main"].IsRemote {
+		t.Fatal("local main must not be marked remote")
+	}
+
+	// materializing the local branch hides the remote-only entry
+	if err := repo.CreateBranch("feature/remote-only", "origin/feature/remote-only"); err != nil {
+		t.Fatal(err)
+	}
+	branches, err = repo.Branches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range branches {
+		if b.Name == "feature/remote-only" && b.IsRemote {
+			t.Fatalf("materialized branch still listed as remote: %v", branches)
+		}
+	}
+}
+
+func TestFFBranches(t *testing.T) {
+	m, origin := fixture(t)
+	repo, _ := m.Repo("default/w")
+	src := filepath.Join(filepath.Dir(origin), "src")
+
+	mustWrite(t, filepath.Join(src, "notes.txt"), "hello v2\n")
+	pushOrigin(t, origin, "main")
+	if err := repo.Fetch(); err != nil {
+		t.Fatal(err)
+	}
+
+	// a hold veto keeps the branch where it is
+	if updated := repo.FFBranches(func(branch string) bool { return branch == "main" }); len(updated) != 0 {
+		t.Fatalf("held branch was moved: %v", updated)
+	}
+
+	updated := repo.FFBranches(nil)
+	if len(updated) != 1 || updated[0] != "main" {
+		t.Fatalf("want main ff'd, got %v", updated)
+	}
+	content, _, err := repo.File("main", "notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "v2") {
+		t.Fatalf("worktree not synced to origin state: %q", content)
+	}
+	if updated := repo.FFBranches(nil); len(updated) != 0 {
+		t.Fatalf("second run must be a no-op, got %v", updated)
+	}
+}
+
+func TestFFBranchesSkipsDivergedAndDirty(t *testing.T) {
+	m, origin := fixture(t)
+	repo, _ := m.Repo("default/w")
+	src := filepath.Join(filepath.Dir(origin), "src")
+
+	// diverged: local commit on main while origin moves too
+	if _, err := repo.SaveFile("main", "local.md", "# local\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit("main", "local work", "Jane", "j@t", nil); err != nil {
+		t.Fatal(err)
+	}
+	localHead, _ := repo.Head("main")
+	mustWrite(t, filepath.Join(src, "notes.txt"), "remote v2\n")
+	pushOrigin(t, origin, "main")
+	if err := repo.Fetch(); err != nil {
+		t.Fatal(err)
+	}
+	if updated := repo.FFBranches(nil); len(updated) != 0 {
+		t.Fatalf("diverged branch was moved: %v", updated)
+	}
+	if head, _ := repo.Head("main"); head != localHead {
+		t.Fatalf("diverged main moved from %s to %s", localHead, head)
+	}
+
+	// dirty: uncommitted worktree change on a strictly-behind branch — wip
+	// starts at origin's main head, then origin's wip moves one commit ahead
+	if err := repo.CreateBranch("wip", "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(src, "notes.txt"), "remote v3\n")
+	pushOrigin(t, origin, "main:wip")
+	if _, err := repo.SaveFile("wip", "draft.md", "# draft\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Fetch(); err != nil {
+		t.Fatal(err)
+	}
+	if updated := repo.FFBranches(nil); len(updated) != 0 {
+		t.Fatalf("dirty branch was moved: %v", updated)
+	}
+	content, _, err := repo.File("wip", "draft.md")
+	if err != nil || !strings.Contains(content, "# draft") {
+		t.Fatalf("uncommitted draft lost: %q %v", content, err)
+	}
+}
+
 func TestBranches(t *testing.T) {
 	m, _ := fixture(t)
 	repo, _ := m.Repo("default/w")

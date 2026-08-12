@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -77,6 +78,49 @@ func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
 		return cur, false, err
 	}
 	return remoteSha, true, nil
+}
+
+// FFBranches fast-forwards every clean local branch strictly behind its
+// remote-tracking ref (call after a Fetch). Diverged and dirty branches are
+// skipped with a log line — the UI surfaces them, they are not errors here.
+// hold, when non-nil, vetoes branches whose refs must not move (live
+// co-editing rooms).
+func (r *Repo) FFBranches(hold func(branch string) bool) (updated []string) {
+	if !r.Writable() || r.Cfg.Mirror {
+		return nil
+	}
+	out, err := run(r.gitDir, nil, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads")
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.SplitN(line, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		branch, cur := parts[0], parts[1]
+		remote, err := run(r.gitDir, nil, "rev-parse", "refs/remotes/origin/"+branch)
+		if err != nil {
+			continue // never pushed — nothing to follow
+		}
+		remoteSha := strings.TrimSpace(remote)
+		if remoteSha == cur {
+			continue
+		}
+		if _, err := run(r.gitDir, nil, "merge-base", "--is-ancestor", cur, remoteSha); err != nil {
+			log.Printf("sync %s: %s diverged from origin, left alone", r.Cfg.ID, branch)
+			continue
+		}
+		if hold != nil && hold(branch) {
+			continue // a live room owns this branch right now
+		}
+		if err := r.ResetBranchFF(branch, remoteSha); err != nil {
+			log.Printf("sync %s: ff %s: %v", r.Cfg.ID, branch, err)
+			continue
+		}
+		updated = append(updated, branch)
+	}
+	return updated
 }
 
 // Push publishes a branch to origin.

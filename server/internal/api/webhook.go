@@ -105,8 +105,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusBadRequest, "parse payload: "+err.Error())
 			return
 		}
-		branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
-		matched := s.syncPushedRepo(payload.Repository.FullName, branch)
+		matched := s.syncPushedRepo(payload.Repository.FullName)
 		jsonOK(w, map[string]any{"ok": true, "matched": matched})
 	case "installation":
 		s.handleInstallationEvent(w, body)
@@ -215,10 +214,11 @@ func (s *Server) handleInstallationReposEvent(w http.ResponseWriter, body []byte
 }
 
 // syncPushedRepo fetches every registered repo whose remote is the pushed
-// GitHub repository and fast-forwards the default branch when that is what
-// moved. Errors are logged, never fatal — the sync interval remains the
-// backstop. Returns how many repos matched.
-func (s *Server) syncPushedRepo(fullName, branch string) int {
+// GitHub repository and fast-forwards every clean local branch that origin
+// moved (read-only fetches update heads directly). Diverged branches are
+// left alone, same as manual pull. Errors are logged, never fatal — the
+// sync interval remains the backstop. Returns how many repos matched.
+func (s *Server) syncPushedRepo(fullName string) int {
 	want := strings.ToLower(fullName)
 	if want == "" {
 		return 0
@@ -234,15 +234,8 @@ func (s *Server) syncPushedRepo(fullName, branch string) int {
 			continue
 		}
 		s.publish("fetch", repo.Key(), "")
-		// writable repos serve local branches — ff the default branch so the
-		// pushed state is what readers see (read-only fetches update heads
-		// directly). A diverged branch is left alone, same as manual pull.
-		if repo.Writable() && branch == repo.Cfg.DefaultBranch {
-			if _, updated, err := repo.Pull(branch); err != nil {
-				log.Printf("webhook: pull %s %s: %v", repo.Key(), branch, err)
-			} else if updated {
-				s.publish("pull", repo.Key(), branch)
-			}
+		for _, branch := range repo.FFBranches(s.holdBranch(repo.Key())) {
+			s.publish("pull", repo.Key(), branch)
 		}
 	}
 	return matched
