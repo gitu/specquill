@@ -147,6 +147,14 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))
+	// guided authoring (wizard.go). The stages themselves only read, but they
+	// exist to produce a document — editor role, same gate as the chat, so a
+	// viewer is refused up front instead of burning model tokens on a draft
+	// they could never create.
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/related", s.writableH(s.speccyRelated))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/interview", s.writableH(s.speccyInterview))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/compose", s.writableH(s.speccyCompose))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/section", s.writableH(s.speccySection))
 	apiMux.HandleFunc("GET /api/speccy/info", s.speccyInfo)
 	// token-scoped dynamic projects (REQ-025); /api/dynamic itself is served
 	// even when off so the SPA can probe the feature

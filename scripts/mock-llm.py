@@ -31,6 +31,62 @@ DRAFT_REPLY = json.dumps({
 })
 
 
+def wizard_reply(system, messages):
+    """Canned JSON for the guided-authoring stages (server/internal/ai/wizard.go).
+
+    Each stage is identified by a phrase unique to its prompt contract. The
+    interview answers differently once the transcript has an answer in it, so
+    the e2e can walk intent → questions → rubric filling up → ready-to-draft.
+    """
+    if 'recommendation' in system and '"matches"' in system:
+        return json.dumps({
+            'matches': [{
+                'path': 'specs/txn-report.md',
+                'title': 'Transaction reporting',
+                'relation': 'overlaps',
+                'reason': '(mock) already specifies the reporting timestamps this intent touches.',
+            }],
+            'recommendation': 'new',
+        })
+    if 'readyToDraft' in system:
+        answered = any(m['role'] == 'user' and not str(m['content']).startswith('Intent:') for m in messages)
+        if answered:
+            return json.dumps({
+                'reply': '(mock) Understood — that is enough to draft.',
+                'questions': [],
+                'rubric': [{'criterion': 'Retention period stated', 'met': True},
+                           {'criterion': 'Scope named', 'met': True}],
+                'readyToDraft': True,
+            })
+        return json.dumps({
+            'reply': '(mock) specs/txn-report.md already covers the reporting flow. Two things are open.',
+            'questions': [
+                {'question': 'Does this replace the existing window?',
+                 'options': ['Replaces it', 'Runs alongside for existing records']},
+                # no options: exercises the free-text-only card
+                {'question': 'Which records are in scope?'},
+            ],
+            'rubric': [{'criterion': 'Retention period stated', 'met': False},
+                       {'criterion': 'Scope named', 'met': False}],
+            'readyToDraft': False,
+        })
+    if 'a short imperative document title' in system:
+        # compose answers in MARKDOWN, not JSON — section bodies are prose and
+        # a JSON envelope made real models fail on escaping. Echo the requested
+        # outline so the test sees the server's normalization, and include the
+        # characters that used to break the parse.
+        wanted = re.search(r'Produce exactly these sections, in this order: (.+)', system)
+        names = [n.strip() for n in (wanted.group(1) if wanted else 'Overview').split(',')]
+        body = '# Mock drafted specification\n'
+        for n in names:
+            body += (f'\n## {n}\n\n(mock) {n} body grounded on the workspace. '
+                     'It quotes "Booking date" and escapes a pipe \\| in a table.\n')
+        return body
+    if 'NOTE: <one line on what changed>' in system:
+        return 'NOTE: rewrote it\n(mock) rewritten section body.'
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -266,6 +322,8 @@ class Handler(BaseHTTPRequestHandler):
                 'evidence': [{'path': 'regulations/mifid-ii.md',
                               'quote': 'Execution timestamps must be captured'}],
             }]})
+        elif (wiz := wizard_reply(system, body['messages'])) is not None:
+            reply = wiz
         elif body.get('tools') and last['role'] == 'tool':
             name = ''
             for m in reversed(body['messages']):

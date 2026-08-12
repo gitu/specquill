@@ -4,7 +4,7 @@ import { useApp, ThemeMode } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { buildTimed, todayISO } from '../lib/derive';
 import { useStatus } from '../api/hooks';
-import { IconAlign, IconChanges, IconChevR, IconClock, IconDash, IconFolder, IconGear, IconHistory, IconLink, IconModel, IconSpark, IconTrace } from './icons';
+import { IconAlign, IconChanges, IconChevR, IconClock, IconDash, IconFolder, IconGear, IconHistory, IconLink, IconModel, IconSpark, IconTrace, IconWand } from './icons';
 
 // each theme state carries its own glyph — the collapsed rail button shows
 // it and cycles through, the expanded row renders them as a segment control
@@ -94,11 +94,21 @@ export function Rail() {
         </div>
       ))}
       <div style={sx('flex:1')} />
-      <button title="Speccy" onClick={app.toggleSpeccy}
-        style={sx((collapsed ? BTN : ROW) + (app.speccyOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>
-        <span style={sx('flex:none;display:flex;align-items:center;justify-content:center')}><IconSpark /></span>
-        {!collapsed && <span>Speccy</span>}
-      </button>
+      {/* the AI surfaces as one group: the wizard NAVIGATES (a staged flow with
+          its own URL), the button below TOGGLES the chat panel. Two interaction
+          models side by side, which only works because the caption frames them
+          as one thing — keep them captioned if either ever moves. */}
+      <div style={sx(`display:flex;flex-direction:column;gap:2px;align-items:${collapsed ? 'center' : 'stretch'}`)}>
+        {collapsed
+          ? <div style={sx('width:24px;height:1px;background:var(--border);margin:5px auto 5px')} />
+          : <div style={sx("padding:12px 10px 3px;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px")}>Speccy</div>}
+        {item({ path: '/wizard', label: 'Draft with Speccy', icon: <IconWand /> })}
+        <button title="Speccy" onClick={app.toggleSpeccy}
+          style={sx((collapsed ? BTN : ROW) + (app.speccyOpen ? 'background:var(--ai-bg);' : 'background:transparent;') + 'color:var(--ai)')}>
+          <span style={sx('flex:none;display:flex;align-items:center;justify-content:center')}><IconSpark /></span>
+          {!collapsed && <span>Speccy</span>}
+        </button>
+      </div>
       {/* settings as its own group: pages first, then the inline preferences —
           collapsed, only what remains navigable/clickable stays (theme cycles) */}
       <div style={sx(`display:flex;flex-direction:column;gap:2px;align-items:${collapsed ? 'center' : 'stretch'}`)}>

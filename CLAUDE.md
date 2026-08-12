@@ -352,6 +352,40 @@ from the code.
   Project memory = `.specquill/memory/*.md`, ONE decision per file (merge-
   friendly), written by the speccy via create_file and pinned into the prompt
   with skills/instructions (`ai.AuthoringRules`).
+- **Guided authoring (the wizard)** — `/wizard` view, `api/wizard.go` +
+  `ai/wizard.go`: the staged counterpart to the free-form chat panel
+  (intent → related → interview → review → editor). Four SSE endpoints under
+  `speccy/{related,interview,compose,section}`. **The two stages that return
+  PROSE answer in markdown, not JSON** — compose emits `# title` + `## section`
+  blocks (`ai.ParseDraft`), section emits `NOTE: …` + body
+  (`ai.ParseSectionReply`), both via `askText`. A JSON envelope around long
+  markdown was the single biggest source of failed drafts: gpt-5.5 mis-escapes
+  quotes, backslashes and table pipes inside a string and the turn dies with
+  `invalid character 'B'/'\\' looking for beginning of object key string`.
+  Markdown escapes nothing, so the failure mode is gone rather than retried —
+  do NOT "tidy" these back into JSON. `related` and `interview` return short
+  structured data and keep `askJSON` (the same one-re-ask repair the alignment
+  pipelines use). The tool loop runs the
+  READ-ONLY set (`tb.readSpecs()` — read/list/search/history/timeline, no
+  ask_user and no writes; the interview's questions come back as JSON fields
+  instead — `[{question, options}]`, rendered as per-question chip cards whose
+  answers batch into ONE turn, since the model asked them together and a turn
+  per chip would cost a model call each. `interviewQuestion.UnmarshalJSON`
+  accepts a bare string too: smaller models revert to `["q1", …]` often enough
+  that failing the turn over it is the wrong trade), and the tool narration
+  (`toolNote`) streams as `note` frames the SPA renders as chips.
+  **The server never writes**: `WizardView` PUTs the assembled document
+  through the ordinary file endpoint on "Create document", so an abandoned
+  wizard leaves nothing in the worktree. Wizard state is client-side
+  (`state/wizard.ts`, localStorage per repo, same idiom as `chats.ts`) and
+  KEYED BY PROJECT — the view refuses to render until `app.repoId` resolves,
+  or a typed intent lands under `''` and vanishes when the project arrives.
+  Section outlines come from `lib/sections.ts` (config `sections:` block >
+  built-in per family) and are sent with the request; `ai.SectionsFor` is the
+  server-side floor and `ai.SortSectionsLike` normalizes what the model
+  returns. The e2e needs `scripts/mock-llm.py` — `wizard_reply()` carries the
+  canned JSON for all four contracts, and its branch must resolve BEFORE the
+  generic `body.get('tools')` directives.
 - **Non-git sources = importer mirror repos**: url/openapi/confluence sources are
   remote-less gitx repos (`Mirror: true`, `git init --bare`) that `internal/
   importer`'s Runner populates via `SnapshotMirror` (full-tree bare-repo commit,

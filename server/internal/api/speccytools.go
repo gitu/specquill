@@ -32,21 +32,26 @@ type speccyToolbox struct {
 	publish  func()               // save-event hook (SSE fanout)
 }
 
-// specs declares the tools for this request. Read tools and ask_user are
-// always available; edit/create only when the conversation is writable.
-// files (the branch snapshot) feeds the workspace vocabulary into the
-// descriptions so the model uses real statuses/folders/id patterns.
-func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
-	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-	obj := func(props map[string]any, required ...string) map[string]any {
-		m := map[string]any{"type": "object", "properties": props}
-		// a nil slice marshals as `required: null`, which providers reject —
-		// omit the field entirely when nothing is required
-		if len(required) > 0 {
-			m["required"] = required
-		}
-		return m
+func toolStr(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+
+func toolObj(props map[string]any, required ...string) map[string]any {
+	m := map[string]any{"type": "object", "properties": props}
+	// a nil slice marshals as `required: null`, which providers reject —
+	// omit the field entirely when nothing is required
+	if len(required) > 0 {
+		m["required"] = required
 	}
+	return m
+}
+
+// readSpecs declares the read-only tools: exploring the workspace and the
+// selected reference sources. The guided-authoring stages (wizard.go) get
+// exactly these — they never write, and they collect their questions
+// structurally rather than through ask_user.
+func (tb *speccyToolbox) readSpecs() []ai.ToolSpec {
+	str, obj := toolStr, toolObj
 	srcNote := ""
 	if len(tb.sources) > 0 {
 		names := make([]string, 0, len(tb.sources))
@@ -92,15 +97,24 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 				"state": str("narrow to one bucket: pending | active | expiring | expired | at_risk"),
 			}),
 		},
-		{
-			Name:        "ask_user",
-			Description: "Ask the user ONE clarifying question when the request is ambiguous or a decision is theirs to make. ALWAYS use this tool for questions and confirmations — never ask in plain text; only this tool renders clickable answer options. Provide 2-5 concrete options; the user may also answer in free text. The conversation pauses until they answer.",
-			Parameters: obj(map[string]any{
-				"question": str("the question to ask, one sentence"),
-				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "2-5 short answer options"},
-			}, "question"),
-		},
 	}
+	return tools
+}
+
+// specs declares the tools for a chat request: the read tools plus ask_user,
+// and edit/create only when the conversation is writable. files (the branch
+// snapshot) feeds the workspace vocabulary into the write-tool descriptions
+// so the model uses real statuses/folders/id patterns.
+func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
+	str, obj := toolStr, toolObj
+	tools := append(tb.readSpecs(), ai.ToolSpec{
+		Name:        "ask_user",
+		Description: "Ask the user ONE clarifying question when the request is ambiguous or a decision is theirs to make. ALWAYS use this tool for questions and confirmations — never ask in plain text; only this tool renders clickable answer options. Provide 2-5 concrete options; the user may also answer in free text. The conversation pauses until they answer.",
+		Parameters: obj(map[string]any{
+			"question": str("the question to ask, one sentence"),
+			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "2-5 short answer options"},
+		}, "question"),
+	})
 	if !tb.writable {
 		return tools
 	}

@@ -168,7 +168,9 @@ test('chats survive closing the panel, auto-name, and dismiss individually', asy
   // close the panel (unmount) and reopen from the rail — the transcript survives
   await page.getByText('⌵').click();
   await expect(composer).toHaveCount(0);
-  await page.getByTitle('Speccy').click();
+  // exact: the rail also carries "Draft with Speccy" (the guided wizard), and
+  // getByTitle matches substrings by default
+  await page.getByTitle('Speccy', { exact: true }).click();
   await expect(page.getByText('Which mapping drifted?').first()).toBeVisible();
   await expect(page.getByText('Mock Chat Title')).toBeVisible();
 

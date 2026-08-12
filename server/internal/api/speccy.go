@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"specquill/server/internal/ai"
 	"specquill/server/internal/auth"
@@ -119,42 +118,12 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 	}
 	msgs := append([]ai.Message{{Role: "system", Content: system}}, body.Messages...)
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	flusher, ok := w.(http.Flusher)
+	stream, ok := startSSE(w)
 	if !ok {
-		jsonError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-	var wmu sync.Mutex
-	send := func(v any) {
-		raw, _ := json.Marshal(v)
-		wmu.Lock()
-		fmt.Fprintf(w, "data: %s\n\n", raw)
-		flusher.Flush()
-		wmu.Unlock()
-	}
-	// heartbeat: thinking models can stay silent for minutes; without bytes on
-	// the wire, reverse proxies kill the connection at their idle timeout and
-	// the chat "just stops" with nothing in any log. SSE comments are invisible
-	// to the client parser.
-	hbDone := make(chan struct{})
-	defer close(hbDone)
-	go func() {
-		t := time.NewTicker(15 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-hbDone:
-				return
-			case <-t.C:
-				wmu.Lock()
-				fmt.Fprint(w, ": ping\n\n")
-				flusher.Flush()
-				wmu.Unlock()
-			}
-		}
-	}()
+	defer stream.Close()
+	send := stream.Send
 
 	// binary sketches never enter the text snapshot — surface them in the
 	// listing anyway so the model can discover and read_file their scenes
