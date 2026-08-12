@@ -32,6 +32,7 @@ statelessness constraint without getting its elasticity in return. Any host
 with a real disk (a small VM, or a container platform with volumes) runs the
 same image with one backend and no database to operate.
 
-`.github/workflows/docker.yml` still builds and pushes the image to ghcr.io;
-only the deploy handoff is gone. The old pipeline is in git history if it is
+`.github/workflows/docker.yml` still builds and pushes the image to ghcr.io
+(multi-arch: linux/amd64 + linux/arm64, so it runs natively under Docker on
+Apple Silicon); only the deploy handoff is gone. The old pipeline is in git history if it is
 ever needed.
