@@ -31,6 +31,10 @@ jobs:
         id: version
         run: echo "value=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
 
+      # qemu covers the runner stage's arm64 RUN steps; the build stages
+      # cross-compile natively (see Dockerfile)
+      - uses: docker/setup-qemu-action@v4
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
@@ -65,6 +69,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
