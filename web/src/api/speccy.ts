@@ -1,6 +1,7 @@
 // Speccy API: SSE chat streaming (with tool activity) + draft-edit application.
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
+import { postStream, readSSE } from './sse';
 
 // Chat wire messages round-trip through the server untouched; tool_calls /
 // tool_call_id only appear on the resume path of a pending ask_user question.
@@ -47,63 +48,43 @@ export async function streamChat(
   onTool?: (t: ToolEvent) => void,
   signal?: AbortSignal,
 ): Promise<ChatResult> {
-  const res = await fetch(repoId ? `/api/repos/${encodeURIComponent(repoId)}/speccy/chat` : '/api/speccy/chat', {
-    method: 'POST',
-    headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  const reader = await postStream(
+    repoId ? `/api/repos/${encodeURIComponent(repoId)}/speccy/chat` : '/api/speccy/chat',
+    body,
     signal,
-  });
-  if (!res.ok || !res.body) {
-    let msg = res.statusText;
-    try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep */ }
-    throw new Error(msg);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+  );
   const result: ChatResult = { text: '', edited: false };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf('\n\n')) >= 0) {
-      const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      const line = frame.trim();
-      if (!line.startsWith('data:')) continue;
-      let payload: {
-        delta?: string; error?: string; done?: boolean;
-        tool?: ToolEvent;
-        ask?: { callId: string; question: string; options?: string[] };
-        resume?: ChatMessage[];
-      };
-      try {
-        payload = JSON.parse(line.slice(5).trim());
-      } catch {
-        // proxies can inject non-JSON data lines; a single bad frame must not
-        // kill the stream (and the console keeps the evidence)
-        console.warn('speccy: skipping unparseable SSE frame:', line.slice(0, 200));
-        continue;
-      }
-      if (payload.error) throw new Error(payload.error);
-      if (payload.delta) {
-        result.text += payload.delta;
-        onDelta(result.text);
-      }
-      if (payload.tool) {
-        const writeTools = ['edit_file', 'create_file', 'move_file', 'delete_file', 'draw_sketch'];
-        if (payload.tool.status === 'ok' && writeTools.includes(payload.tool.name)) {
-          result.edited = true;
-        }
-        onTool?.(payload.tool);
-      }
-      if (payload.ask) {
-        result.ask = { ...payload.ask, resume: payload.resume || [] };
-      }
-      if (payload.done) return result;
+  let failure: Error | undefined;
+  const complete = await readSSE<{
+    delta?: string; error?: string; done?: boolean;
+    tool?: ToolEvent;
+    ask?: { callId: string; question: string; options?: string[] };
+    resume?: ChatMessage[];
+  }>(reader, (payload) => {
+    if (payload.error) {
+      // thrown after the reader unwinds — throwing from inside the frame
+      // callback would leave the stream half-read
+      failure = new Error(payload.error);
+      return true;
     }
-  }
+    if (payload.delta) {
+      result.text += payload.delta;
+      onDelta(result.text);
+    }
+    if (payload.tool) {
+      const writeTools = ['edit_file', 'create_file', 'move_file', 'delete_file', 'draw_sketch'];
+      if (payload.tool.status === 'ok' && writeTools.includes(payload.tool.name)) {
+        result.edited = true;
+      }
+      onTool?.(payload.tool);
+    }
+    if (payload.ask) {
+      result.ask = { ...payload.ask, resume: payload.resume || [] };
+    }
+    return payload.done === true;
+  });
+  if (failure) throw failure;
+  if (complete) return result;
   // the stream closed without the server's terminal {done} event — a dropped
   // connection (proxy idle timeout, network) that would otherwise pass for a
   // finished reply. A pending ask is still usable; anything else is an error.

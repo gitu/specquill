@@ -208,6 +208,28 @@ type statusErr struct {
 
 func (e *statusErr) Error() string { return fmt.Sprintf("ai provider %d: %s", e.code, e.body) }
 
+// SafeErr renders an error for a LOG line. A provider's non-200 body is
+// reproduced verbatim by statusErr.Error(), and providers routinely echo part
+// of the offending request back — for the speccy that request carries the
+// workspace grounding prompt, i.e. document content. So a provider status
+// error degrades to its code here; everything else (parse failures, empty
+// replies) is our own text and keeps its detail, which is where the
+// diagnostic value actually is.
+//
+// The full error still reaches the authenticated caller over SSE — they can
+// already read those documents. It is the persisted server log this keeps
+// clean.
+func SafeErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	var se *statusErr
+	if errors.As(err, &se) {
+		return fmt.Sprintf("ai provider %d (body withheld: may echo the prompt)", se.code)
+	}
+	return err.Error()
+}
+
 // retryable: provider-side or transport failures that a second try can fix —
 // 429 (rate limit), 408, any 5xx, and network errors (reset/EOF/timeout).
 // Everything else (400 bad request, 401, 404 …) fails the same way twice.

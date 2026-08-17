@@ -46,6 +46,13 @@ export const IconModel = () => svg(19, 'currentColor', 1.8, <>
 export const IconSpark = ({ size = 19, stroke = 'currentColor', width = 1.8 }: { size?: number; stroke?: string; width?: number }) =>
   svg(size, stroke, width, <P d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />);
 
+// guided authoring: a wand drawing a document. Distinct from IconQuill (the
+// SpecQuill brand mark) and IconSpark (the chat panel) on purpose — three
+// different things must not share a glyph.
+export const IconWand = () => svg(19, 'currentColor', 1.8, <>
+  <P d="M4 20l9.5-9.5M15 4.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" />
+  <P d="M19.5 14l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" /></>);
+
 export const IconGear = () => svg(18, 'currentColor', 1.8, <>
   <circle cx="12" cy="12" r="3" /><P d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></>);
 
