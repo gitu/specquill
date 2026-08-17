@@ -30,7 +30,32 @@ export function setFmValue(fm: string, key: string, value: unknown): string {
   } else {
     doc.set(key, value);
   }
-  return doc.toString({ lineWidth: 0 }).replace(/\n$/, '');
+  // no flow padding: the workspace convention is `[a, b]`, and padding would
+  // reformat untouched inline lists on every unrelated edit
+  return doc.toString({ lineWidth: 0, flowCollectionPadding: false }).replace(/\n$/, '');
+}
+
+/**
+ * Calendar date as YYYY-MM-DD — the workspace's frontmatter date format, in
+ * UTC. Frontmatter dates are committed to git, so they must not depend on the
+ * editor's timezone: the server maintains them the same way (mdfm.Touch), and
+ * a browser-local date would make the two disagree around midnight.
+ */
+export function todayStr(now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`;
+}
+
+/**
+ * Maintain the `updated` date on a real edit: set it to today. Documents
+ * without frontmatter are left alone (callers guard on non-empty fm), and an
+ * already-current value returns the fm string unchanged so unrelated
+ * keystrokes never reformat it.
+ */
+export function touchUpdated(fm: string, now = new Date()): string {
+  const today = todayStr(now);
+  if (!fm.trim() || fmToJS(fm).updated === today) return fm;
+  return setFmValue(fm, 'updated', today);
 }
 
 /**

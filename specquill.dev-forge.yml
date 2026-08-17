@@ -1,0 +1,62 @@
+# secondary dev server: forge-PAT mode against the REAL github.com — exercises
+# the v1 deployment shape end-to-end (PAT login, per-user clones, Propose →
+# GitHub PR) plus dynamic projects (REQ-025).
+#
+#   make dev-forge          # build (SPA embedded) + start on :8644
+#
+# Sign in with a GitHub PAT that has `repo` scope. Deliberately NOT started
+# with -dev: the auto-auth user would bypass the PAT login this config exists
+# to exercise — which also means no vite proxy, so SPA changes need a rebuild.
+listen: ":8644"
+data_dir: ./data/runtime-forge      # own store + per-user clones, independent of :8643
+base_url: http://localhost:8644
+
+projects:
+  # the anchor project (REQ-024: login gate + deployment role). Everything
+  # else is opened dynamically: gitu/specquill's root .specquill/config.yml
+  # manifest declares trading-specs and specquill-docs, so e.g.
+  # gitu/specquill#specquill-docs is openable per user with their own PAT.
+  - id: trading-specs
+    remote: https://github.com/gitu/specquill.git
+    content_root: repo
+    default_branch: main
+
+# dynamic projects (REQ-025): open any manifest-carrying repo on github.com
+# that the user's own PAT can reach
+dynamic:
+  enabled: true
+  search: true                      # server proxies forge repo search (REQ-025.2)
+  user_budget: 2GB                  # per-user byte budget across ALL their clones (REQ-025.5)
+  idle_after: 168h                  # reclaim clones untouched for 7 days (REQ-025.6)
+  unsynced_retention: 720h          # dirty worktrees survive idle cleanup for 30 days, then go too
+
+# forge-PAT mode: no sources catalog — reference sources are DEFINED in the
+# workspace configs (.specquill/config.yml sources:) and cloned per user,
+# shallow, with their own PAT
+
+git:
+  committer_name: specquill
+  committer_email: specquill@dev.local
+
+auth:
+  forge:
+    kind: github                    # github.com — no base_url needed
+
+session:
+  ttl: 1h                           # no -dev TTL bypass here; the SPA re-logins silently anyway
+  cookie_secure: false              # plain http in dev
+
+ai:
+  enabled: true
+  base_url: https://api.openai.com/v1
+  model: gpt-5.6-terra
+  quick_model: gpt-5.4-mini
+  api_key_env: SPECQUILL_AI_KEY
+  # "none", not a reasoning level: OpenAI's gpt-5.x models REFUSE function
+  # tools on /chat/completions unless reasoning_effort is explicitly "none",
+  # and they default the field server-side so omitting it does not help. The
+  # client recovers by retrying that one 400 with "none" — but this server
+  # exists to exercise drift and extraction, which are tool loops making
+  # hundreds of calls, and every one of them would pay the wasted round trip.
+  reasoning_effort: "none"
+

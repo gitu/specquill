@@ -7,6 +7,7 @@ import { yaml } from '@codemirror/lang-yaml';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { diffLinesLCS } from '../lib/linediff';
+import { codeLang } from '../lib/langs';
 
 // ---- changed-line gutter (VS Code-style stripes vs the committed baseline)
 
@@ -86,11 +87,17 @@ const cmHighlight = syntaxHighlighting(HighlightStyle.define([
   { tag: tags.string, color: 'var(--data)' },
   { tag: tags.comment, color: 'var(--text-3)' },
   { tag: tags.meta, color: 'var(--text-3)' },
+  { tag: tags.keyword, color: 'var(--reg)', fontWeight: '600' },
+  { tag: tags.typeName, color: 'var(--ai)' },
+  { tag: tags.number, color: 'var(--data)' },
+  { tag: tags.atom, color: 'var(--data)' },
+  { tag: tags.definition(tags.variableName), color: 'var(--prod)' },
 ]));
 
 export function SourceEditor({ value, lang, onChange, readOnly = false, baseline }: {
   value: string;
-  lang: 'markdown' | 'yaml' | 'text';
+  /** 'markdown' | 'yaml' | a source-file extension ('kt', 'go', …) | 'text' */
+  lang: string;
   onChange: (next: string) => void;
   readOnly?: boolean;
   /** committed content — enables the changed-line gutter */
@@ -105,7 +112,8 @@ export function SourceEditor({ value, lang, onChange, readOnly = false, baseline
 
   useEffect(() => {
     if (!host.current) return;
-    const language = lang === 'markdown' ? [markdown()] : lang === 'yaml' ? [yaml()] : [];
+    const stream = codeLang(lang);
+    const language = lang === 'markdown' ? [markdown()] : lang === 'yaml' ? [yaml()] : stream ? [stream] : [];
     const view = new EditorView({
       parent: host.current,
       state: EditorState.create({

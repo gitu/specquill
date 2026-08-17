@@ -3,44 +3,62 @@ package gitx
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
-// credentialEnvArgs configures git to take credentials from the child-process
+// credentialArgs configures git to take credentials from the child-process
 // environment only — the token never appears on argv or in any config file.
-// The Manager.TokenFor hook (e.g. GitHub App installation tokens, per
-// tenant) takes precedence over the repo's token_env.
-func (r *Repo) credentialArgsEnv() (args []string, env []string) {
-	user, token := "", ""
-	if r.mgr != nil && r.mgr.TokenFor != nil {
-		if u, t, ok := r.mgr.TokenFor(r); ok {
-			user, token = u, t
-		}
-	}
+// This is the single credentials seam.
+//
+// The token is passed PER OPERATION (forge-PAT mode: the requesting user's
+// own token, carried down from the request context) — never stored on the
+// repo or manager, so concurrent requests with different tokens cannot
+// interfere. An empty token falls back to the repo's token_env, which is how
+// local/dev deployments authenticate.
+func (r *Repo) credentialArgs(token string) (args []string, env []string) {
 	if token == "" && r.Cfg.TokenEnv != "" {
 		token = os.Getenv(r.Cfg.TokenEnv)
 	}
 	if token == "" {
 		return nil, nil
 	}
-	helper := `!f(){ echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; };f`
-	env = []string{"SPECQUILL_GIT_TOKEN=" + token}
-	if user != "" {
-		env = append(env, "SPECQUILL_GIT_USER="+user)
+	// The helper is HOST-SCOPED: git tells it which host is asking (the
+	// credential protocol's host= line), and it answers only for the repo's
+	// own remote host — a redirect or rewrite to any other host gets nothing.
+	// Without this, the token would be offered to whatever host challenges.
+	helper := `!f(){ h=""; while IFS= read -r l; do case "$l" in host=*) h="${l#host=}";; esac; done; ` +
+		`if [ -z "$SPECQUILL_GIT_HOST" ] || [ "$h" = "$SPECQUILL_GIT_HOST" ]; then ` +
+		`echo "username=${SPECQUILL_GIT_USER:-x-access-token}"; echo "password=${SPECQUILL_GIT_TOKEN}"; fi; };f`
+	env = []string{
+		"SPECQUILL_GIT_TOKEN=" + token,
+		"SPECQUILL_GIT_HOST=" + remoteHost(r.Cfg.Remote),
 	}
 	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, env
 }
 
-// Fetch updates remote-tracking state (writable) or heads (read-only).
-func (r *Repo) Fetch() error {
+// remoteHost is the host[:port] an http(s) remote's credentials are scoped
+// to; "" (helper answers unconditionally) for ssh/path remotes, where the
+// token is never used anyway.
+func remoteHost(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
+// Fetch updates remote-tracking state (writable) or heads (read-only),
+// authenticating with token (empty = the repo's token_env).
+func (r *Repo) Fetch(token string) error {
 	if r.Cfg.Mirror {
 		return nil // no remote — the importer.Runner drives mirror updates
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	args, env := r.credentialArgsEnv()
+	args, env := r.credentialArgs(token)
 	if _, err := run(r.gitDir, env, append(args, "fetch", "--prune", "origin")...); err != nil {
 		return err
 	}
@@ -50,12 +68,12 @@ func (r *Repo) Fetch() error {
 
 // Pull fast-forwards branch onto origin/<branch> after a fetch. It never
 // merges: dirty worktrees and diverged branches return typed errors.
-func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
+func (r *Repo) Pull(branch, token string) (head string, updated bool, err error) {
 	branch, err = r.resolveRef(branch)
 	if err != nil {
 		return "", false, err
 	}
-	if err := r.Fetch(); err != nil {
+	if err := r.Fetch(token); err != nil {
 		return "", false, err
 	}
 	cur, err := r.Head(branch)
@@ -83,9 +101,7 @@ func (r *Repo) Pull(branch string) (head string, updated bool, err error) {
 // FFBranches fast-forwards every clean local branch strictly behind its
 // remote-tracking ref (call after a Fetch). Diverged and dirty branches are
 // skipped with a log line — the UI surfaces them, they are not errors here.
-// hold, when non-nil, vetoes branches whose refs must not move (live
-// co-editing rooms).
-func (r *Repo) FFBranches(hold func(branch string) bool) (updated []string) {
+func (r *Repo) FFBranches() (updated []string) {
 	if !r.Writable() || r.Cfg.Mirror {
 		return nil
 	}
@@ -111,9 +127,6 @@ func (r *Repo) FFBranches(hold func(branch string) bool) (updated []string) {
 			log.Printf("sync %s: %s diverged from origin, left alone", r.Cfg.ID, branch)
 			continue
 		}
-		if hold != nil && hold(branch) {
-			continue // a live room owns this branch right now
-		}
 		if err := r.ResetBranchFF(branch, remoteSha); err != nil {
 			log.Printf("sync %s: ff %s: %v", r.Cfg.ID, branch, err)
 			continue
@@ -123,15 +136,16 @@ func (r *Repo) FFBranches(hold func(branch string) bool) (updated []string) {
 	return updated
 }
 
-// Push publishes a branch to origin.
-func (r *Repo) Push(branch string) error {
+// Push publishes a branch to origin, authenticating with token (empty = the
+// repo's token_env).
+func (r *Repo) Push(branch, token string) error {
 	branch, err := r.resolveRef(branch)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	args, env := r.credentialArgsEnv()
+	args, env := r.credentialArgs(token)
 	_, err = run(r.gitDir, env, append(args, "push", "origin", branch)...)
 	return err
 }

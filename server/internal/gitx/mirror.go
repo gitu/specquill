@@ -72,11 +72,11 @@ func (r *Repo) SnapshotMirror(message string, files map[string]string) (sha stri
 		"GIT_AUTHOR_NAME=" + r.committer.CommitterName, "GIT_AUTHOR_EMAIL=" + r.committer.CommitterEmail,
 		"GIT_COMMITTER_NAME=" + r.committer.CommitterName, "GIT_COMMITTER_EMAIL=" + r.committer.CommitterEmail,
 	}
-	args := []string{"commit-tree", tree, "-m", message}
+	args := []string{"commit-tree", tree}
 	if parent != "" {
 		args = append(args, "-p", parent)
 	}
-	out, _, err := runFull(r.gitDir, cenv, nil, args...)
+	out, _, err := runFull(r.gitDir, cenv, []byte(message), args...)
 	if err != nil {
 		return "", false, err
 	}

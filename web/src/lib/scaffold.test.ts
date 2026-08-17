@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { scaffoldConfigYml, scaffoldFor, scaffoldSchemaJson } from './scaffold';
+import { scaffoldConfigYml, scaffoldFor } from './scaffold';
 import { idPattern } from './ids';
-import { parseEntities, BUILTIN_ENTITIES } from './entities';
+import { BUILTIN_ENTITIES } from './entities';
+import { DEFAULT_DRIVERS, DEFAULT_LINK_TYPES, DEFAULT_PROPERTIES, DEFAULT_STATUSES, DEFAULT_TIMED, DEFAULT_TRACEABILITY, workspaceConfig } from './config';
 import { defaultDoc } from './derive';
 
 describe('scaffold', () => {
@@ -9,17 +10,25 @@ describe('scaffold', () => {
     const yml = scaffoldConfigYml('sample-payments');
     expect(yml).toContain('project: sample-payments');
     expect(idPattern('requirement', yml)).toBe('REQ-{seq:3}');
-    // commented-out entities block must not add families
-    expect(parseEntities(yml)).toHaveLength(BUILTIN_ENTITIES.length);
   });
-  it('schema.json scaffold is valid JSON with fields and order', () => {
-    const schema = JSON.parse(scaffoldSchemaJson());
-    expect(schema.order).toContain('status');
-    expect(schema.fields.status.type).toBe('enum');
+
+  // the sample IS the default setup spelled out — importing it as-is must
+  // change nothing. This is the drift guard between scaffold.ts and config.ts.
+  it('sample config spells out exactly the built-in defaults', () => {
+    const cfg = workspaceConfig(scaffoldConfigYml('p'));
+    expect(cfg.entities).toEqual(BUILTIN_ENTITIES);
+    expect(cfg.drivers).toEqual(DEFAULT_DRIVERS);
+    expect(cfg.statuses).toEqual(DEFAULT_STATUSES);
+    expect(cfg.linkTypes).toEqual(DEFAULT_LINK_TYPES);
+    expect(cfg.traceability).toEqual(DEFAULT_TRACEABILITY);
+    expect(cfg.properties).toEqual(DEFAULT_PROPERTIES);
+    expect(cfg.timed).toEqual(DEFAULT_TIMED);
   });
-  it('scaffoldFor only knows the two workspace files', () => {
+
+  it('scaffoldFor knows config.yml and instructions.md; schema.json is combined away', () => {
     expect(scaffoldFor('.specquill/config.yml', 'p')).toContain('project: p');
-    expect(scaffoldFor('.specquill/schema.json', 'p')).toContain('"order"');
+    expect(scaffoldFor('.specquill/instructions.md', 'p')).toContain('Workspace instructions');
+    expect(scaffoldFor('.specquill/schema.json', 'p')).toBeNull();
     expect(scaffoldFor('requirements/REQ-001.md', 'p')).toBeNull();
   });
 });

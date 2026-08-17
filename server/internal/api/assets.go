@@ -34,7 +34,13 @@ func (s *Server) getRaw(w http.ResponseWriter, r *http.Request, repo *project.Pr
 	if !ok {
 		ct = "application/octet-stream"
 	}
-	content, sha, err := repo.File(r.URL.Query().Get("ref"), p)
+	// at=head serves the last COMMITTED blob instead of the worktree state —
+	// the before side of binary diffs in the changes drawer
+	read := repo.File
+	if r.URL.Query().Get("at") == "head" {
+		read = repo.FileAt
+	}
+	content, sha, err := read(r.URL.Query().Get("ref"), p)
 	if err != nil {
 		gitFail(w, err)
 		return
@@ -125,10 +131,6 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *project
 func (s *Server) putRaw(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	p := r.PathValue("path")
 	branch := r.URL.Query().Get("branch")
-	if full, err := repo.MapIn(p); err == nil && s.hub.RoomActive(repo.Key(), repo.ResolveRef(branch), full) {
-		jsonError2(w, http.StatusConflict, "a live co-editing session owns this file", "room_active")
-		return
-	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxAssetSize+1))
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())

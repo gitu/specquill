@@ -5,8 +5,6 @@ type: product_driver
 status: active
 owner: d.laurent
 sponsor: Product
-drives:
-  - requirements/REQ-063.md
 updated: 2026-06-05
 ---
 

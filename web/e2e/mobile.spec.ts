@@ -7,7 +7,7 @@ test('narrow viewport: doc reads full-width, tree opens as a drawer', async ({ p
   await page.goto('/p/trading-specs/editor/requirements/REQ-051.md');
   await expect(page.getByText('Exception Handling').first()).toBeVisible();
 
-  // rail and inline tree are gone; the copilot panel is closed
+  // rail and inline tree are gone; the speccy panel is closed
   await expect(page.getByTitle('Overview')).toHaveCount(0);
   await expect(page.getByText('TRADING-SPECS', { exact: true })).toBeHidden();
   await expect(page.getByPlaceholder(/Ask about requirements/)).toHaveCount(0);

@@ -1,20 +1,20 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRepos, useSnapshot } from '../api/hooks';
+import { api } from '../api/client';
 import { buildModel, WorkspaceModel } from '../lib/model';
-import { EntityDef, parseEntities } from '../lib/entities';
+import type { EntityDef } from '../lib/entities';
+import { DEFAULT_PROPERTIES, PropertySchema, workspaceConfig } from '../lib/config';
 import { flushAllDrafts } from '../lib/draftRegistry';
 
-export interface PropertySchema {
-  order?: string[];
-  fields?: Record<string, { label?: string; type?: string; values?: Record<string, string> }>;
-}
+export type { PropertySchema } from '../lib/config';
 
-export const VIEWS = ['dashboard', 'editor', 'changes', 'graph', 'matrix', 'model', 'prs'] as const;
+export const VIEWS = ['dashboard', 'editor', 'timed', 'changes', 'history', 'graph', 'model'] as const;
 export type ViewName = (typeof VIEWS)[number];
 
 /** every project-scoped view root a /p/<project> URL may continue with */
-export const PROJECT_VIEWS = [...VIEWS, 'diff'] as const;
+export const PROJECT_VIEWS = [...VIEWS] as const;
 
 /** theme preference: follow the OS (default) or pin light/dark */
 export type ThemeMode = 'system' | 'light' | 'dark';
@@ -30,8 +30,14 @@ interface AppState {
   switchBranch: (b: string, opts?: { carryDraft?: boolean }) => void;
   protectedBranches: string[];
   isProtectedBranch: boolean;
-  /** the caller's effective role on the active project (REQ-020) */
-  repoRole: 'viewer' | 'member' | 'admin';
+  /** the caller's effective role on the active project (REQ-020/REQ-021) */
+  repoRole: 'viewer' | 'editor' | 'maintainer' | 'admin';
+  /** ladder-derived gates — write chrome, merge-into-protected, repo admin */
+  canEdit: boolean;
+  canMerge: boolean;
+  canAdmin: boolean;
+  /** how work lands on main: in-app merge, or push + MR/PR on the forge */
+  mergeMode: 'local' | 'forge';
   theme: 'light' | 'dark';        // resolved — what actually renders
   themeMode: ThemeMode;           // the preference behind it
   systemTheme: 'light' | 'dark';  // what the OS currently prefers
@@ -40,14 +46,20 @@ interface AppState {
   userDefaultView: ViewName | null;
   workspaceDefaultView: ViewName | null;
   setDefaultView: (v: ViewName | null) => void; // null = follow workspace config
-  copilotOpen: boolean;
-  toggleCopilot: () => void;
+  speccyOpen: boolean;
+  toggleSpeccy: () => void;
+  /** bumps when sketch PNG bytes change (editor save, speccy draw/upgrade) —
+   *  embedded <img> tags append it to bust the browser cache */
+  sketchGen: number;
+  bumpSketchGen: () => void;
   aiSuggestions: boolean;
   toggleAI: () => void;
   model?: WorkspaceModel;
   entities: EntityDef[];          // effective document families (builtin + config)
   files?: Record<string, string>; // snapshot content the model was built from
   schema?: PropertySchema;
+  /** what actually resolved: config properties:, legacy schema.json, or defaults */
+  schemaSource: 'config' | 'legacy' | 'default';
   configYml?: string;
   snapshotError?: string;
 }
@@ -55,8 +67,12 @@ interface AppState {
 const Ctx = createContext<AppState>(null as unknown as AppState);
 export const useApp = () => useContext(Ctx);
 
+// REQ-021 ladder ranks — gates compare with >= so unknown roles stay closed
+const RANK = { viewer: 0, editor: 1, maintainer: 2, admin: 3 } as const;
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const repos = useRepos();
+  const qc = useQueryClient();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
   const projects = (repos.data || []).filter((r) => r.kind === 'project');
@@ -68,6 +84,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     projects.find((r) => r.id === urlPid) ||
     projects.find((r) => r.id === projectId) ||
     projects[0];
+  const repoRole = (writable?.role && writable.role in RANK ? writable.role : 'viewer') as
+    'viewer' | 'editor' | 'maintainer' | 'admin';
   const [branch, setBranch] = useState('');
 
   // remember the project the URL names (back/forward included)
@@ -84,6 +102,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (repos.data && urlPid && !projects.some((r) => r.id === urlPid)) navigate('/', { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlPid, repos.data]);
+
+  // forge mode has no background sync loops (fetching needs the user's own
+  // token) — fetch once when a project is opened so its state is fresh. The
+  // fetch can change what /api/repos and /api/projects report (in-repo
+  // `sources:`/`references:` are read from the clone, which was stale or
+  // absent until now), so those queries refetch once it lands.
+  const fetchedFor = useRef<string>('');
+  useEffect(() => {
+    const id = writable?.id;
+    if (!id || writable?.mergeMode !== 'forge' || fetchedFor.current === id) return;
+    fetchedFor.current = id;
+    api(`/api/repos/${id}/fetch`, { method: 'POST', body: '{}' })
+      .then(() => {
+        void qc.invalidateQueries({ queryKey: ['repos'] });
+        void qc.invalidateQueries({ queryKey: ['projects'] });
+        void qc.invalidateQueries({ queryKey: ['branches', id] });
+      })
+      .catch(() => { /* offline forge — stale is fine */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writable?.id, writable?.mergeMode]);
 
   // branch state never leaks across projects (URL-driven switches included)
   const prevProject = useRef(writable?.id);
@@ -105,11 +143,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
   const systemTheme: 'light' | 'dark' = systemDark ? 'dark' : 'light';
   const theme: 'light' | 'dark' = themeMode === 'system' ? systemTheme : themeMode;
-  // narrow screens never open the copilot by default (it overlays the doc)
-  const [copilotOpen, setCopilotOpen] = useState(
-    () => localStorage.getItem('specquill-copilot') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
+  // narrow screens never open the speccy by default (it overlays the doc)
+  const [speccyOpen, setSpeccyOpen] = useState(
+    () => localStorage.getItem('specquill-speccy') !== '0' && !window.matchMedia('(max-width: 900px)').matches,
   );
   const [aiSuggestions, setAI] = useState(true);
+  const [sketchGen, setSketchGen] = useState(0);
   const [userDefaultView, setUserDefaultView] = useState<ViewName | null>(() => {
     const v = localStorage.getItem('specquill-default-view');
     return VIEWS.includes(v as ViewName) ? (v as ViewName) : null;
@@ -141,10 +180,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // remembered per-project branch on reloads
   useEffect(() => {
     if (!repos.data || !writable?.id) return;
-    const m = pathname.match(/^\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
+    // read the LIVE url, not the closured one: navigate() pushes history
+    // synchronously while useLocation's update lands a render later, so a
+    // branch switch right after a programmatic nav (Speccy's "Review on
+    // <branch>") would rewrite the path this effect last SAW — sending the
+    // user back to the view they came from instead of the file they opened
+    const live = window.location;
+    const m = live.pathname.match(/^\/p\/([^/]+)(?:\/b\/([^/]+))?(\/.*)?$/);
     if (!m) return;
     const cur = m[2] ? decodeURIComponent(m[2]) : '';
-    const sp = new URLSearchParams(search);
+    const sp = new URLSearchParams(live.search);
     const legacy = sp.has('branch') && !sp.has('invite'); // pre-path-form link
     if (cur === effBranch && !legacy) return;
     if (legacy) sp.delete('branch');
@@ -174,14 +219,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('specquill-theme', themeMode);
   }, [themeMode]);
   useEffect(() => {
-    localStorage.setItem('specquill-copilot', copilotOpen ? '1' : '0');
-  }, [copilotOpen]);
+    localStorage.setItem('specquill-speccy', speccyOpen ? '1' : '0');
+  }, [speccyOpen]);
 
   const value = useMemo<AppState>(() => {
     const files = snapshot.data?.files;
-    let schema: PropertySchema | undefined;
-    try { schema = files?.['.specquill/schema.json'] ? JSON.parse(files['.specquill/schema.json']) : undefined; } catch { schema = undefined; }
     const configYml = files?.['.specquill/config.yml'] || '';
+    const wcfg = workspaceConfig(configYml);
+    // properties: config section > legacy .specquill/schema.json > defaults —
+    // a schema.json that fails to parse resolves to the defaults, and
+    // schemaSource reports what actually applied (the Model view labels it)
+    let schema: PropertySchema = wcfg.properties;
+    let schemaSource: 'config' | 'legacy' | 'default' = wcfg.hasProperties ? 'config' : 'default';
+    if (!wcfg.hasProperties && files?.['.specquill/schema.json']) {
+      try {
+        const parsed: unknown = JSON.parse(files['.specquill/schema.json']);
+        if (parsed && typeof parsed === 'object') { schema = parsed as PropertySchema; schemaSource = 'legacy'; }
+        else { schema = DEFAULT_PROPERTIES; }
+      } catch { schema = DEFAULT_PROPERTIES; }
+    }
     const wsView = (configYml.match(/^\s*default_view:\s*([\w-]+)/m) || [])[1];
     const workspaceDefaultView = VIEWS.includes(wsView as ViewName) ? (wsView as ViewName) : null;
     const protectedBranches = writable?.protectedBranches || [];
@@ -216,8 +272,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       protectedBranches,
       isProtectedBranch: protectedBranches.includes(effBranch),
       // least privilege until the repo list answers — write chrome must not
-      // flash for viewers; 'member' only as backcompat when role is absent
-      repoRole: writable ? writable.role || 'member' : 'viewer',
+      // flash for viewers
+      repoRole,
+      canEdit: RANK[repoRole] >= RANK.editor,
+      // forge mode: proposing = pushing your own branch (editor); the actual
+      // merge is gated on the forge, not here
+      canMerge: writable?.mergeMode === 'forge' ? RANK[repoRole] >= RANK.editor : RANK[repoRole] >= RANK.maintainer,
+      canAdmin: RANK[repoRole] >= RANK.admin,
+      mergeMode: writable?.mergeMode === 'forge' ? 'forge' : 'local',
       theme,
       themeMode,
       systemTheme,
@@ -230,19 +292,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         else localStorage.removeItem('specquill-default-view');
         setUserDefaultView(v);
       },
-      copilotOpen,
-      toggleCopilot: () => setCopilotOpen((v) => !v),
+      speccyOpen,
+      toggleSpeccy: () => setSpeccyOpen((v) => !v),
+      sketchGen,
+      bumpSketchGen: () => setSketchGen((g) => g + 1),
       aiSuggestions,
       toggleAI: () => setAI((v) => !v),
-      model: files ? buildModel(files) : undefined,
-      entities: parseEntities(configYml),
+      model: files ? buildModel(files, wcfg) : undefined,
+      entities: wcfg.entities,
       files,
       schema,
+      schemaSource,
       configYml: files?.['.specquill/config.yml'],
       snapshotError: snapshot.error ? String(snapshot.error) : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [writable?.id, repos.data, effBranch, theme, themeMode, copilotOpen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
+  }, [writable?.id, repos.data, effBranch, theme, themeMode, speccyOpen, sketchGen, aiSuggestions, snapshot.data, snapshot.error, userDefaultView, pathname]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

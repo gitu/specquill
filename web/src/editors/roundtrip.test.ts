@@ -33,7 +33,7 @@ async function serialize(md: string): Promise<string> {
 }
 
 const files: [string, string][] = [];
-for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes']) {
+for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings']) {
   for (const name of readdirSync(join(REPO, folder))) {
     if (name.endsWith('.md')) files.push([`${folder}/${name}`, readFileSync(join(REPO, folder, name), 'utf8')]);
   }

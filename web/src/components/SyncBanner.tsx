@@ -37,7 +37,7 @@ export function SyncBanner() {
       ? { text: `${res.branch} updated to the latest main`, kind: 'success' }
       : res.heldByRoom
         ? { text: 'A live co-editing session is open on this branch — the update runs once it ends', kind: 'info' }
-        : { text: `${res.branch} has its own commits — open a PR to bring main up to date`, kind: 'warn' });
+        : { text: `${res.branch} has its own commits — merge them to bring main up to date`, kind: 'warn' });
   };
 
   if (behind > 0 && ahead > 0) {

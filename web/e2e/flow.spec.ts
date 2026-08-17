@@ -1,5 +1,5 @@
 // End-to-end flow against a running dev server (-dev auto-auth):
-// navigate → edit → save → commit → branch → PR → approve → merge.
+// navigate → edit → save → commit → branch → merge.
 import { expect, test } from '@playwright/test';
 
 const stamp = Date.now().toString(36);
@@ -11,13 +11,13 @@ test('dashboard shows live KPIs', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByText('Trace coverage')).toBeVisible();
-  await expect(page.getByText('Requirement changes')).toBeVisible();
+  // the WHEN card comes from the documents' own validity windows
+  await expect(page.getByText('Coming up', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pending dependencies')).toBeVisible();
+  await expect(page.getByText('Traceability health')).toBeVisible();
 });
 
-test('matrix and graph render from the model', async ({ page }) => {
-  await page.goto('/p/trading-specs/matrix');
-  await expect(page.getByText('Traceability matrix')).toBeVisible();
-  await expect(page.getByText(/requirements × \d+ artifacts/)).toBeVisible();
+test('graph renders from the model', async ({ page }) => {
   await page.goto('/p/trading-specs/graph');
   await expect(page.getByText('Lineage · from links')).toBeVisible();
 });
@@ -25,15 +25,15 @@ test('matrix and graph render from the model', async ({ page }) => {
 test('search palette finds a requirement', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
-  await page.getByText('Search requirements, specs, fields, changes…').first().click();
-  const input = page.getByPlaceholder('Search requirements, specs, fields, changes…');
+  await page.getByText('Search requirements, specs, fields, documents…').first().click();
+  const input = page.getByPlaceholder('Search requirements, specs, fields, documents…');
   await input.fill('REQ-042');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/editor\/requirements\/REQ-042\.md/);
   await expect(page.getByText('Transaction Reporting').first()).toBeVisible();
 });
 
-test('branch → edit → save → commit → PR → approve → merge', async ({ page }) => {
+test('branch → edit → save → commit → merge', async ({ page }) => {
   await page.goto('/p/trading-specs/editor/specs/venue.md');
   await expect(page.getByText('Venue Identification', { exact: false }).first()).toBeVisible();
 
@@ -58,19 +58,11 @@ test('branch → edit → save → commit → PR → approve → merge', async (
   await page.locator('button', { hasText: 'Commit' }).last().click();
   await expect(page.getByText('clean').first()).toBeVisible();
 
-  // open a PR
-  await page.getByRole('button', { name: 'Open PR' }).click();
-  await page.locator('input').first().fill(`E2E venue update ${stamp}`);
-  await page.getByRole('button', { name: 'Create PR' }).click();
-  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/prs\/\d+/);
-  await expect(page.getByText(`E2E venue update ${stamp}`)).toBeVisible();
-  await expect(page.getByText(`E2E marker ${stamp}.`)).toBeVisible(); // diff line
-
-  // approve + merge
-  await page.getByRole('button', { name: /Approve/ }).click();
-  await expect(page.getByText(/approved by/)).toBeVisible();
-  await page.getByRole('button', { name: 'Merge', exact: true }).click();
-  await expect(page.getByText('merged', { exact: true })).toBeVisible();
+  // merge straight to main — the dialog previews exactly what will land
+  await page.getByRole('button', { name: 'Merge' }).click();
+  await expect(page.getByText('specs/venue.md')).toBeVisible();
+  await page.getByRole('button', { name: 'Merge', exact: true }).last().click();
+  await expect(page.getByText('Merge branch')).toBeHidden();
 
   // main now carries the change in the editor
   await page.goto('/p/trading-specs/editor/specs/venue.md');
@@ -94,14 +86,14 @@ test('rapid switching between cached files always renders', async ({ page }) => 
 
 test('default view setting controls the root redirect', async ({ page }) => {
   await page.goto('/p/trading-specs/dashboard');
-  await page.getByTitle('Settings').click();
-  await page.getByRole('combobox').last().selectOption('matrix');
+  // the preference lost its UI control (rail cleanup, 2026-08) but the stored
+  // per-user setting still governs the root redirect
+  await page.evaluate(() => localStorage.setItem('specquill-default-view', 'graph'));
   await page.goto('/');
-  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/matrix/);
-  await expect(page.getByText('Traceability matrix')).toBeVisible();
+  await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/graph/);
+  await expect(page.getByText('Lineage · from links')).toBeVisible();
   // back to workspace default
-  await page.getByTitle('Settings').click();
-  await page.getByRole('combobox').last().selectOption('');
+  await page.evaluate(() => localStorage.removeItem('specquill-default-view'));
   await page.goto('/');
   await expect(page).toHaveURL(/\/p\/[\w-]+(\/b\/[^/]+)?\/editor/);
 });

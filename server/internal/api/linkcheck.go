@@ -41,8 +41,12 @@ type linkCounts struct {
 }
 
 var (
-	lcLink   = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
-	lcFence  = regexp.MustCompile("(?s)```.*?```")
+	lcLink  = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	lcFence = regexp.MustCompile("(?s)```.*?```")
+	// inline code spans are PROSE ABOUT links, not links: the docs show
+	// `[text](/path/doc.md)` as an example of the syntax, and checking it
+	// reports the workspace's own documentation as broken
+	lcCode   = regexp.MustCompile("``[^`]*``|`[^`\n]*`")
 	lcScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
 
@@ -76,47 +80,62 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 	var srcOnce sync.Once
 	var srcAllowed map[string]bool
 	var srcFiles map[string]map[string]string
+	mgr := s.gitm(r)
 	loadSources := func() {
 		srcOnce.Do(func() {
 			srcAllowed, srcFiles = map[string]bool{}, map[string]map[string]string{}
-			t := s.tenantQuiet(r)
-			if t == nil {
-				return
-			}
-			granted, err := s.store.TenantGrantedSources(t.ID)
-			if err != nil {
-				return
-			}
-			kinds := map[string]string{}
-			for _, src := range granted {
-				kinds[src.Name] = src.Kind
-			}
-			names := make([]string, 0, len(kinds))
-			// selection ∩ grants when the in-repo config selects; all grants
-			// otherwise (same fallback as the tree's reference section)
-			if yml, _, err := repo.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
-				if cfg, err := project.ParseConfig(yml); err == nil {
-					if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
-						for _, ref := range refs {
-							names = append(names, ref.Source)
-						}
-					} else if cfg.References == nil {
-						for n := range kinds {
-							names = append(names, n)
-						}
+			var names []string
+			if s.patMode() {
+				// forge-PAT mode: the in-repo sources: definitions (read at the
+				// checked ref) are the set
+				s.registerUserSources(mgr, s.tok(r))
+				if cfg := inRepoConfig(repo, ref); cfg != nil {
+					for _, sd := range cfg.Sources {
+						s.registerSourceDef(mgr, sd)
+						names = append(names, sd.Name)
 					}
 				}
 			} else {
-				for n := range kinds {
-					names = append(names, n)
+				catalog, err := s.store.Sources()
+				if err != nil {
+					return
+				}
+				kinds := map[string]string{}
+				for _, src := range catalog {
+					kinds[src.Name] = src.Kind
+				}
+				// selection ∩ catalog when the in-repo config selects (read at
+				// the checked ref, so branch config edits count); the whole
+				// catalog otherwise (same fallback as the tree's reference section)
+				if yml, _, err := repo.File(configRef(repo, ref), ".specquill/config.yml"); err == nil {
+					if cfg, err := project.ParseConfig(yml); err == nil {
+						if refs, _ := project.EffectiveReferences(cfg, kinds); len(refs) > 0 {
+							for _, ref := range refs {
+								names = append(names, ref.Source)
+							}
+						} else if cfg.References == nil {
+							for n := range kinds {
+								names = append(names, n)
+							}
+						}
+					}
+				} else {
+					for n := range kinds {
+						names = append(names, n)
+					}
 				}
 			}
 			for _, n := range names {
 				srcAllowed[n] = true
-				if gr, ok := s.git.Repo(repo.Repo.Tenant() + "/" + n); ok {
-					if snap := s.sourceSnapshot(repo.Repo.Tenant()+"/"+n, gr); snap != nil {
-						srcFiles[n] = snap
-					}
+				gr, ok := mgr.Repo(n)
+				if !ok {
+					continue
+				}
+				if s.patMode() && gr.EnsureCloned(s.tok(r)) != nil {
+					continue // unreachable with this token — links to it stay unverified
+				}
+				if snap := s.sourceSnapshot(n, gr); snap != nil {
+					srcFiles[n] = snap
 				}
 			}
 		})
@@ -134,7 +153,7 @@ func (s *Server) getLinkCheck(w http.ResponseWriter, r *http.Request, repo *proj
 			dir = p[:i]
 		}
 		seen := map[string]bool{}
-		body := lcFence.ReplaceAllString(files[p], "")
+		body := lcCode.ReplaceAllString(lcFence.ReplaceAllString(files[p], ""), "")
 		for _, m := range lcLink.FindAllStringSubmatch(body, -1) {
 			href := m[1]
 			bare := strings.SplitN(href, "#", 2)[0]

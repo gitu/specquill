@@ -27,16 +27,24 @@ which the spec requires consumers to preserve.
   `okf_version` in the frontmatter of its root `index.md`. Scaffolded
   workspaces opt in from commit zero; existing workspaces opt in by adding
   that file.
-- **Derived reserved files, regenerated at commit time** (`internal/okf` +
+- **Derived index files, regenerated at commit time** (`internal/okf` +
   the hook in `gitx.Commit`): one `index.md` per directory of concepts
-  (grouped listings with titles/descriptions from frontmatter) and `log.md`
-  (date-grouped change history from git, including the commit being made —
-  the derived files always land in the same commit as the change they
-  describe). Generation is byte-stable, best-effort, and never blocks a
-  commit. Merge commits appear in `log.md` on the next commit after them.
-  Per the spec both files are *optional* ("MAY appear in any directory", §6/§7)
-  — generating them everywhere is a producer convenience, not a conformance
-  requirement.
+  (grouped listings with titles/descriptions from frontmatter), always
+  landing in the same commit as the change they describe. Generation is
+  byte-stable, best-effort, and never blocks a commit.
+  Per the spec both reserved files are *optional* ("MAY appear in any
+  directory", §6/§7) — generating them is a producer convenience, not a
+  conformance requirement. The app marks reserved files as generated
+  (grayed in the tree, view-only in the editor) and refuses to create,
+  edit or rename them manually — a hand edit would be overwritten at the
+  next commit.
+- **`log.md` is generated on the fly at bundle export only** — git itself is
+  the change history, so nothing is materialized in the repo (a `log.md`
+  committed by earlier producer versions is retired on the next commit).
+  When the OKF bundle is exported (the share-link zip), a date-grouped
+  `log.md` is rendered from the git history — scoped to the content root for
+  monorepo projects — and injected into the archive, so consumers of the
+  bundle still get the change log the format describes.
 - **Relative links by default** — generated index entries use standard
   relative markdown paths, so a bundle renders on any forge (GitHub et al.)
   without SpecQuill. OKF §5.1 *recommends* the `/`-absolute bundle-root form
@@ -50,7 +58,7 @@ which the spec requires consumers to preserve.
 - Reserved files (`index.md`, `log.md`) are never treated as concepts by the
   model, and links found in them create no edges.
 - Any external OKF bundle can be mounted as a **read-only reference repo**
-  today (it's just markdown); the copilot grounds on it like any other input.
+  today (it's just markdown); the speccy grounds on it like any other input.
 
 ## Notes
 

@@ -1,6 +1,6 @@
 // Package scaffold bootstraps a new specquill workspace repository: folder
 // skeleton per document type, the .specquill/ property schema, and AI authoring
-// skills the copilot grounds itself on.
+// skills the speccy grounds itself on.
 package scaffold
 
 import (
@@ -26,8 +26,9 @@ type SpecType struct {
 	Skill   string // AI authoring skill for .specquill/skills/
 }
 
-// DefaultTypes is what `init` scaffolds without an explicit --types.
-var DefaultTypes = []string{"requirements", "specs", "changes"}
+// DefaultTypes is what `init` scaffolds without an explicit --types — the
+// WHY (changes) / WHAT (requirements) / HOW (specs) / WHEN (work-items) core.
+var DefaultTypes = []string{"requirements", "specs", "changes", "work-items"}
 
 // AllTypes lists every onboardable family (requirements is always included).
 func AllTypes() []string {
@@ -58,11 +59,14 @@ func Init(dir, project string, chosen []string) error {
 		picked[k] = t
 	}
 
+	pid := strings.ToLower(strings.ReplaceAll(project, " ", "-"))
 	files := map[string]string{
 		"README.md":                    workspaceReadme(project, picked),
 		"index.md":                     "---\nokf_version: \"" + okf.Version + "\"\n---\n\n# Index\n",
-		".specquill/schema.json":         schemaJSON,
-		".specquill/skills/authoring.md": authoringSkill,
+		".specquill/config.yml":               configStarter(pid),
+		".specquill/skills/authoring.md":      authoringSkill,
+		".specquill/skills/document-model.md": documentModelSkill,
+		".specquill/instructions.md":          instructionsStarter,
 	}
 	for _, t := range picked {
 		files[".specquill/skills/"+t.Key+".md"] = t.Skill
@@ -130,6 +134,8 @@ func starterName(t SpecType) string {
 		return "REQ-001.md"
 	case "decisions":
 		return "ADR-001.md"
+	case "work-items":
+		return "WI-001.md"
 	default:
 		return "example.md"
 	}
@@ -148,26 +154,28 @@ func workspaceReadme(project string, picked map[string]SpecType) string {
 		t := picked[k]
 		fmt.Fprintf(&b, "- `%s/` — %s\n", t.Dir, t.Title)
 	}
-	b.WriteString("- `.specquill/` — property schema and AI authoring skills (the copilot follows these)\n")
-	b.WriteString("\nDocuments carry typed frontmatter links (`drivers`, `implements`, `maps_to`, `verifies`) that build the traceability graph.\n")
+	b.WriteString("- `.specquill/` — workspace config (model + property schema) and AI authoring skills (the speccy follows these)\n")
+	b.WriteString("\nDocuments carry typed frontmatter links (`drivers`, `implements`, `satisfies`, `delivers`, `maps_to`, `verifies`) that build the traceability graph.\n")
 	return b.String()
 }
 
 func serverConfigStub(project string) string {
 	return `# specquill server config stub for this workspace — merge into your specquill.yml
-repos:
+# (see specquill.example.yml for every option)
+projects:
   - id: ` + strings.ToLower(strings.ReplaceAll(project, " ", "-")) + `
-    url: <git remote url>          # server pushes/fetches with token_env
-    mode: writable
+    remote: <git remote url>       # server pushes/fetches with token_env
     default_branch: main
-    token_env: SPECQUILL_TOKEN
+    token_env: SPECQUILL_TOKEN     # not needed in forge-PAT mode (users bring tokens)
 
 ai:
   enabled: true
   base_url: https://api.openai.com/v1   # any OpenAI-compatible endpoint
-  model: <thinking-class model>          # chat + draft edits
+  model: <thinking-class model>          # chat + draft edits (needs tool support)
   quick_model: <small fast model>        # commit messages, one-shot tasks
   api_key_env: SPECQUILL_AI_KEY
+  # reasoning_effort: none              # OpenAI gpt-5.x: required for chat tools
+  # grounding_budget: 98304             # prompt-stuffed grounding cap (default 48KiB)
 `
 }
 
@@ -178,10 +186,11 @@ var families = map[string]string{
 	"regulation": "regulations",
 	"data-mapping": "data-mappings", "mapping": "data-mappings",
 	"change": "changes", "decision": "decisions", "adr": "decisions",
+	"work-item": "work-items", "wi": "work-items",
 	"glossary": "glossary",
 }
 
-var idPattern = regexp.MustCompile(`(REQ|ADR)-(\d+)`)
+var idPattern = regexp.MustCompile(`(REQ|ADR|WI)-(\d+)`)
 
 // Add creates one new document of the given family inside the workspace at
 // dir and returns its path. Numbered families (requirements → REQ-NNN,
@@ -209,10 +218,12 @@ func Add(dir, family, name string) (string, error) {
 
 	var rel, content string
 	switch fam {
-	case "requirements", "decisions":
+	case "requirements", "decisions", "work-items":
 		prefix := "REQ"
 		if fam == "decisions" {
 			prefix = "ADR"
+		} else if fam == "work-items" {
+			prefix = "WI"
 		}
 		next := 1
 		entries, _ := os.ReadDir(sub)
@@ -229,6 +240,7 @@ func Add(dir, family, name string) (string, error) {
 		if name != "" {
 			content = strings.ReplaceAll(content, "Example requirement", name)
 			content = strings.ReplaceAll(content, "Example decision", name)
+			content = strings.ReplaceAll(content, "Example work item", name)
 		}
 	default:
 		if name == "" {
@@ -236,7 +248,7 @@ func Add(dir, family, name string) (string, error) {
 		}
 		slug := strings.ToLower(strings.Join(strings.Fields(name), "-"))
 		if fam == "changes" {
-			slug = time.Now().Format("2006-01") + "-" + slug
+			slug = time.Now().UTC().Format("2006-01") + "-" + slug // UTC: the name lands in git
 		}
 		rel = t.Dir + "/" + slug + ".md"
 		if t.Starter != "" {

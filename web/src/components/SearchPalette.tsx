@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { srcMeta } from '../lib/derive';
 
 interface Hit {
   key: string;
@@ -53,7 +52,6 @@ export function SearchPalette() {
       ...M.regs.map((r) => ({ key: 'reg' + r.path, icon: '◈', color: 'var(--reg)', label: r.title, sub: r.path, to: '/editor/' + r.path })),
       ...M.maps.map((m) => ({ key: 'map' + m.path, icon: '⇄', color: 'var(--data)', label: m.name, sub: m.path, to: '/editor/' + m.path })),
       ...M.fields.map((f) => ({ key: 'field' + f.name, icon: '⊞', color: 'var(--data)', label: f.name, sub: `${f.source} → ${f.name}${f.drift ? ' · ⚠ drift' : ''}`, to: '/editor/' + f.map })),
-      ...M.changes.map((c) => ({ key: 'chg' + c.path, icon: srcMeta(c.source).icon, color: srcMeta(c.source).fg, label: c.title, sub: c.path, to: '/changes?sel=' + encodeURIComponent(c.path) })),
     ];
   }, [app.model]);
 
@@ -82,7 +80,7 @@ export function SearchPalette() {
             if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); }
             if (e.key === 'Enter' && hits[sel]) go(hits[sel]);
           }}
-          placeholder="Search requirements, specs, fields, changes…"
+          placeholder="Search requirements, specs, fields, documents…"
           style={sx('width:100%;height:46px;padding:0 16px;border:none;border-bottom:1px solid var(--border);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;outline:none')}
         />
         <div style={sx('max-height:380px;overflow-y:auto;padding:6px')}>

@@ -1,0 +1,14 @@
+# SpecQuill workspace manifest — declares where in this repository the spec
+# workspaces live. A root .specquill/config.yml is what makes a repository
+# openable as a dynamic project (REQ-025.1): a repository without one cannot
+# be opened, however far a token reaches. Without a `projects:` list the
+# repository root is the single workspace and this file is its workspace
+# config; with one, this file is a manifest only and each named entry is an
+# openable subproject (`owner/repo#name`) whose root carries its own
+# .specquill/config.yml.
+version: 2
+projects:
+  - name: trading-specs
+    root: repo
+  - name: specquill-docs
+    root: repo-product/docs/specs

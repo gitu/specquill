@@ -40,6 +40,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 ::-webkit-scrollbar-thumb:hover{background:var(--text-3);background-clip:padding-box}
 @keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
 @keyframes pulse{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.25)}}
+@keyframes skel{0%,100%{opacity:.45}50%{opacity:1}}
 .mrow:hover{background:var(--surface-2)}
 
 /* rendered-markdown typography (scoped to file-rendered docs) */
@@ -77,9 +78,6 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 /* mermaid renders on a transparent background in both themes */
 .mermaid-block svg, :is(#specquill-doc,.doc-typo) svg[id^="mmd-"] { background: transparent !important; }
 
-/* y-prosemirror remote cursors + selections */
-.ProseMirror .ProseMirror-yjs-cursor{position:relative;border-left:2px solid;margin-left:-1px;margin-right:-1px;pointer-events:none;word-break:normal}
-.ProseMirror .ProseMirror-yjs-cursor>div{position:absolute;top:-1.35em;left:-2px;padding:1px 5px;border-radius:4px 4px 4px 0;font-size:9.5px;font-weight:700;color:#fff;white-space:nowrap;line-height:1.4;user-select:none}
 .ProseMirror ::selection{background:var(--selection)}
 
 /* ---- rich editing chrome: slash menu, selection toolbar, tables, links ---- */
@@ -117,3 +115,15 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Instrument San
 .milkdown-link-edit .link-edit-confirm:hover,.milkdown-link-preview .button:hover{background:var(--surface-2);color:var(--text)}
 /* editable task-list checkboxes */
 .milkdown-editable li[data-checked] input[type="checkbox"]{accent-color:var(--data);margin-right:6px}
+
+/* Caret: the native text cursor inherits the text color, which reads faint
+   on dark surfaces — an accent caret stays visible on both themes. */
+:root{--caret:oklch(0.50 0.15 215)}
+body[data-theme="dark"]{--caret:oklch(0.88 0.11 215)}
+input,textarea,[contenteditable],[contenteditable] *{caret-color:var(--caret)}
+
+/* Embedded sketches (*.excalidraw.png) are baked pixels and cannot re-theme
+   like the mermaid/JSON renderers do — approximate dark mode by inverting
+   (the hue rotation keeps colors roughly true). The editing modal and the
+   legacy .excalidraw SVG renderer follow the theme natively. */
+body[data-theme="dark"] img[src*=".excalidraw.png"]{filter:invert(0.9) hue-rotate(180deg)}

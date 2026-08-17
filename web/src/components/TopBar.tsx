@@ -3,10 +3,13 @@ import { sx } from '../lib/sx';
 import { useNarrow } from '../hooks/useMediaQuery';
 import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
-import { useBranches, useCreateBranch, useMe, usePRs, useStatus, useSync } from '../api/hooks';
-import { activeTenant, api, switchTenant } from '../api/client';
-import { CreatePRDialog } from './CreatePRDialog';
-import { IconBranch, IconChevD, IconLock, IconMenu, IconPR, IconQuill, IconSearch, IconUp, IconDown } from './icons';
+import { useBranches, useCreateBranch, useMe, useStatus, useSync } from '../api/hooks';
+import { api, clearStoredPat } from '../api/client';
+import { useDynamicInfo } from '../api/dynamic';
+import { MergeDialog } from './MergeDialog';
+import { OpenRepoDialog } from './OpenRepoDialog';
+import { ProposeDialog } from './ProposeDialog';
+import { IconBranch, IconChevD, IconLock, IconMenu, IconMerge, IconQuill, IconSearch, IconUp, IconDown } from './icons';
 
 export function TopBar() {
   const nav = useNav();
@@ -16,16 +19,18 @@ export function TopBar() {
   const status = useStatus(app.repoId, app.branch);
   const sync = useSync(app.repoId, app.branch);
   const createBranch = useCreateBranch(app.repoId);
-  const prs = usePRs(app.repoId, 'open');
   const [open, setOpen] = useState(false);
-  const [prDialog, setPrDialog] = useState(false);
+  const [userMenu, setUserMenu] = useState(false);
+  const [mergeDialog, setMergeDialog] = useState(false);
+  const [openRepo, setOpenRepo] = useState(false);
+  const dynamic = useDynamicInfo();
   const narrow = useNarrow();
   const pathname = useAppPath();
-  const onTreeRoute = pathname.startsWith('/editor') || pathname.startsWith('/diff');
-  const branchPR = prs.data?.find((p) => p.source === app.branch);
+  const onTreeRoute = pathname.startsWith('/editor');
   const ahead = status.data?.ahead ?? 0;
   const behind = status.data?.behind ?? 0;
   const logout = async () => {
+    clearStoredPat(); // else the 401 handler would silently sign right back in
     await api('/auth/logout', { method: 'POST' });
     window.location.href = '/auth/login';
   };
@@ -60,33 +65,25 @@ export function TopBar() {
         {!narrow && <span style={sx('font-weight:700;font-size:14px;letter-spacing:-.2px')}>SpecQuill</span>}
       </div>
 
-      {/* tenant switcher (hidden with a single membership) */}
-      {(me.data?.tenants?.length ?? 0) > 1 && (
-        <select
-          value={activeTenant() || me.data!.tenants![0].tenant.slug}
-          onChange={(e) => switchTenant(e.target.value)}
-          title="Tenant"
-          style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;cursor:pointer;max-width:150px")}
-        >
-          {me.data!.tenants!.map((m) => (
-            <option key={m.tenant.slug} value={m.tenant.slug}>{m.tenant.displayName || m.tenant.slug}</option>
-          ))}
-        </select>
-      )}
-
-      {/* project switcher (hidden with a single project) */}
-      {app.projects.length > 1 && (
+      {/* project switcher (hidden with a single project — unless dynamic
+          projects can add more, REQ-025) */}
+      {(app.projects.length > 1 || dynamic.data?.enabled) && (
         <select
           value={app.repoId || ''}
-          onChange={(e) => app.switchProject(e.target.value)}
+          onChange={(e) => {
+            if (e.target.value === '__open__') setOpenRepo(true);
+            else app.switchProject(e.target.value);
+          }}
           title="Project"
           style={sx("height:26px;padding:0 6px;border:1px solid var(--border-2);border-radius:7px;background:var(--surface-2);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;cursor:pointer;max-width:170px")}
         >
           {app.projects.map((p) => (
             <option key={p.id} value={p.id}>{p.id}</option>
           ))}
+          {dynamic.data?.enabled && <option value="__open__">＋ Open repository…</option>}
         </select>
       )}
+      {openRepo && <OpenRepoDialog onClose={() => setOpenRepo(false)} />}
 
       {/* branch switcher */}
       <div style={sx('position:relative;flex:none')}>
@@ -148,7 +145,7 @@ export function TopBar() {
           style={sx('flex:0 1 340px;min-width:110px;height:30px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface-2);color:var(--text-3);cursor:pointer;overflow:hidden')}
         >
           <span style={sx('flex:none;display:inline-flex')}><IconSearch /></span>
-          <span style={sx('font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>Search requirements, specs, fields, changes…</span>
+          <span style={sx('font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')}>Search requirements, specs, fields, documents…</span>
           <div style={sx('flex:1')} />
           <span style={sx("flex:none;font-family:'JetBrains Mono',monospace;font-size:11px;padding:1px 5px;border:1px solid var(--border-2);border-radius:4px")}>⌘K</span>
         </div>
@@ -165,19 +162,46 @@ export function TopBar() {
         </div>
       )}
       <button
-        onClick={() => (branchPR ? nav(`/prs/${branchPR.number}`) : setPrDialog(true))}
-        title={branchPR ? `open PR #${branchPR.number} for ${app.branch}` : 'create a PR from ' + app.branch}
+        onClick={() => setMergeDialog(true)}
+        aria-label={app.mergeMode === 'forge' ? 'Propose changes' : 'Merge branch'}
+        title={app.mergeMode === 'forge'
+          ? 'push ' + app.branch + ' and open a merge request'
+          : 'merge ' + app.branch + ' into the default branch'}
         style={sx('flex:none;display:flex;align-items:center;gap:6px;height:30px;padding:0 ' + (narrow ? '9px' : '12px') + ';border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}
       >
-        <IconPR /> {narrow ? (branchPR ? `#${branchPR.number}` : 'PR') : branchPR ? `PR #${branchPR.number}` : 'Open PR'}
+        <IconMerge /> {narrow ? '' : app.mergeMode === 'forge' ? 'Propose' : 'Merge'}
       </button>
-      {prDialog && <CreatePRDialog onClose={() => setPrDialog(false)} />}
-      <div
-        title={me.data ? `${me.data.name} <${me.data.email}> — click to sign out` : ''}
-        onClick={logout}
-        style={sx('width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--ai),var(--prod));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:11px;cursor:pointer')}
-      >
-        {me.data?.initials || '…'}
+      {mergeDialog && (app.mergeMode === 'forge'
+        ? <ProposeDialog onClose={() => setMergeDialog(false)} />
+        : <MergeDialog onClose={() => setMergeDialog(false)} />)}
+      {/* signing out is destructive (forge mode drops the stored PAT) — it
+          sits behind the menu, never on the chip's single click */}
+      <div style={sx('position:relative;flex:none')}>
+        <button
+          title={me.data ? `${me.data.name} <${me.data.email}>` : ''}
+          aria-label="account menu"
+          aria-haspopup="menu"
+          aria-expanded={userMenu}
+          onClick={() => setUserMenu((v) => !v)}
+          style={sx('width:28px;height:28px;border:none;padding:0;border-radius:50%;background:linear-gradient(135deg,var(--ai),var(--prod));display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;font-weight:600;font-size:11px;cursor:pointer')}
+        >
+          {me.data?.initials || '…'}
+        </button>
+        {userMenu && (
+          <div role="menu" style={sx('position:absolute;right:0;top:34px;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow-lg);overflow:hidden;z-index:20')}>
+            <div style={sx('padding:9px 12px;border-bottom:1px solid var(--border)')}>
+              <div style={sx('font-size:12.5px;font-weight:600')}>{me.data?.name || '…'}</div>
+              <div style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{me.data?.email || ''}</div>
+            </div>
+            <button
+              role="menuitem"
+              onClick={() => { setUserMenu(false); void logout(); }}
+              style={sx('display:flex;align-items:center;gap:6px;width:100%;padding:8px 12px;border:none;background:transparent;text-align:left;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--reg);font-weight:600')}
+            >
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

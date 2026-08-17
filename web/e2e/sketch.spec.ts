@@ -23,7 +23,6 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
   await page.getByText(branch, { exact: true }).first().click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.locator('.milkdown-editable')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('[data-sync]')).toBeVisible({ timeout: 10_000 });
 
   // Sketch button → name prompt → modal opens on a blank canvas
   page.once('dialog', (d) => void d.accept(SLUG));
@@ -64,12 +63,6 @@ test('sketch png: draw, save, native render, reopen with scene', async ({ page, 
 
   // cleanup
   await page.goto('/p/trading-specs/dashboard');
-  await expect
-    .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
-      return rooms.filter((r) => r.users.length > 0).length;
-    }, { timeout: 20_000 })
-    .toBe(0);
   await request.delete(`/api/repos/${REPO}/files/diagrams/${SLUG}.excalidraw.png?branch=${encodeURIComponent(branch)}`, { headers: H });
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

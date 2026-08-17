@@ -17,26 +17,13 @@ import (
 
 type Manager struct {
 	dataDir   string
+	reposRoot string // clones live here, one dir per repo id
 	committer config.GitConfig
 	mu        sync.RWMutex // guards repos/order (AddRepo happens at runtime)
 	repos     map[string]*Repo
 	order     []string
 	// Notify, when set, receives coarse change hints (kind, repoKey, branch).
 	Notify func(kind, repo, branch string)
-	// TokenFor, when set, supplies push/fetch credentials for a repo (e.g.
-	// GitHub App installation tokens) and takes precedence over token_env.
-	// Tokens still reach git via child-process env only.
-	TokenFor func(r *Repo) (username, token string, ok bool)
-	// HoldBranch, when set, vetoes automatic branch-head moves — e.g. a live
-	// co-editing room owns the branch's files right now.
-	HoldBranch func(repoKey, branch string) bool
-}
-
-// holdFor adapts the HoldBranch hook to a per-repo predicate for FFBranches.
-func (m *Manager) holdFor(r *Repo) func(branch string) bool {
-	return func(branch string) bool {
-		return m.HoldBranch != nil && m.HoldBranch(r.key, branch)
-	}
 }
 
 func (m *Manager) notify(kind, repo, branch string) {
@@ -47,8 +34,8 @@ func (m *Manager) notify(kind, repo, branch string) {
 
 type Repo struct {
 	Cfg       config.RepoConfig
-	key       string   // canonical "<tenant_slug>/<repo_id>" — store rows, room keys
-	mgr       *Manager // back-pointer: Notify + TokenFor hooks
+	key       string   // canonical repo id — store rows, event payloads
+	mgr       *Manager // back-pointer: Notify hook
 	gitDir    string   // bare clone
 	wtRoot    string   // worktrees live here, one dir per branch
 	committer config.GitConfig
@@ -60,29 +47,46 @@ type Repo struct {
 	lastFetchL sync.Mutex
 	lastFetch  time.Time
 
+	ensureMu sync.Mutex
+	ensured  bool // clone verified present — EnsureCloned's fast path
+
 	done chan struct{} // closed by Manager.RemoveRepo; stops the sync loop
 }
-
-// DefaultTenant is the built-in tenant that mirrors the YAML repos list
-// (self-hosting); GitHub App installations become further tenants.
-const DefaultTenant = "default"
 
 func NewManager(cfg *config.Config) (*Manager, error) {
 	m := &Manager{
 		dataDir:   cfg.DataDir,
+		reposRoot: filepath.Join(cfg.DataDir, "repos"),
 		committer: cfg.Git,
 		repos:     map[string]*Repo{},
 	}
 	for _, rc := range cfg.Repos {
-		m.add(DefaultTenant, rc)
+		m.add(rc)
 	}
 	return m, nil
 }
 
-// add registers a repo under a tenant without cloning (see ensure/Init).
-func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
-	key := tenant + "/" + rc.ID
-	root := filepath.Join(m.dataDir, "tenants", tenant, rc.ID)
+// NewUserManager builds a manager whose clones live under a per-user scope
+// directory (forge-PAT mode: each user fetches with their own token, so no
+// clone may be shared). Repos are registered but NOT cloned — EnsureCloned
+// runs lazily, with the user's token, on first access.
+func NewUserManager(cfg *config.Config, scope string) *Manager {
+	m := &Manager{
+		dataDir:   cfg.DataDir,
+		reposRoot: filepath.Join(cfg.DataDir, "repos", scope),
+		committer: cfg.Git,
+		repos:     map[string]*Repo{},
+	}
+	for _, rc := range cfg.Repos {
+		m.add(rc)
+	}
+	return m
+}
+
+// add registers a repo without cloning (see ensure/Init).
+func (m *Manager) add(rc config.RepoConfig) *Repo {
+	key := rc.ID
+	root := filepath.Join(m.reposRoot, rc.ID)
 	r := &Repo{
 		Cfg:       rc,
 		key:       key,
@@ -100,20 +104,30 @@ func (m *Manager) add(tenant string, rc config.RepoConfig) *Repo {
 	return r
 }
 
-// AddRepo registers a tenant repo at runtime, clones it, and starts its
-// sync loop. Idempotent per (tenant, id): an existing registration is
-// returned as-is.
-func (m *Manager) AddRepo(tenant string, rc config.RepoConfig) (*Repo, error) {
-	if r, ok := m.Repo(tenant + "/" + rc.ID); ok {
+// AddRepo registers a repo at runtime, clones it with token (empty = the
+// repo's token_env), and starts its sync loop. Idempotent per id: an existing
+// registration is returned as-is.
+func (m *Manager) AddRepo(rc config.RepoConfig, token string) (*Repo, error) {
+	if r, ok := m.Repo(rc.ID); ok {
 		return r, nil
 	}
-	r := m.add(tenant, rc)
-	if err := r.ensure(); err != nil {
+	r := m.add(rc)
+	if err := r.EnsureCloned(token); err != nil {
 		m.RemoveRepo(r.key)
-		return nil, fmt.Errorf("repo %s: %w", r.key, err)
+		return nil, err
 	}
 	m.startSyncLoop(r)
 	return r, nil
+}
+
+// RegisterRepo registers a repo without cloning and without a sync loop — the
+// forge-PAT path, where clones are lazy (EnsureCloned with the user's token)
+// and fetches happen on user activity only. Idempotent per id.
+func (m *Manager) RegisterRepo(rc config.RepoConfig) *Repo {
+	if r, ok := m.Repo(rc.ID); ok {
+		return r
+	}
+	return m.add(rc)
 }
 
 // RemoveRepo drops a repo from the registry and stops its sync loop. The
@@ -135,17 +149,19 @@ func (m *Manager) RemoveRepo(key string) {
 	}
 }
 
-// Init clones any missing repos and prunes stale worktrees. Call at startup.
+// Init clones any missing repos and prunes stale worktrees. Call at startup —
+// local/dev mode only, where credentials come from token_env (forge-PAT
+// deployments clone lazily, per user, with that user's token).
 func (m *Manager) Init() error {
 	for _, r := range m.Repos() {
-		if err := r.ensure(); err != nil {
-			return fmt.Errorf("repo %s: %w", r.key, err)
+		if err := r.EnsureCloned(""); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// Repo looks up by canonical key "<tenant_slug>/<repo_id>".
+// Repo looks up by canonical key (the repo id).
 func (m *Manager) Repo(key string) (*Repo, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -163,15 +179,9 @@ func (m *Manager) Repos() []*Repo {
 	return out
 }
 
-// Key is the canonical repo identifier: "<tenant_slug>/<repo_id>". It is
-// what lands in store rows, collab room keys, and event payloads — never
-// the bare Cfg.ID, which is only unique within a tenant.
+// Key is the canonical repo identifier (the repo id) — what lands in store
+// rows and event payloads.
 func (r *Repo) Key() string { return r.key }
-
-// Tenant returns the owning tenant's slug.
-func (r *Repo) Tenant() string {
-	return strings.SplitN(r.key, "/", 2)[0]
-}
 
 func (r *Repo) Writable() bool { return r.Cfg.Mode == config.Writable }
 
@@ -198,9 +208,33 @@ func (r *Repo) lockBranch(branch string) *sync.Mutex {
 	return mu
 }
 
-func (r *Repo) ensure() error {
+// EnsureCloned makes sure the bare clone exists, cloning with token (empty =
+// the repo's token_env) when it does not. Cheap after the first success.
+func (r *Repo) EnsureCloned(token string) error {
+	r.ensureMu.Lock()
+	defer r.ensureMu.Unlock()
+	if r.ensured {
+		return nil
+	}
+	if err := r.ensure(token); err != nil {
+		return fmt.Errorf("repo %s: %w", r.key, err)
+	}
+	return nil
+}
+
+// Invalidate forgets the cached "clone is present" state so the next access
+// re-verifies on disk — the reclamation janitor (REQ-025.6) removes clones
+// out from under live managers.
+func (r *Repo) Invalidate() {
+	r.ensureMu.Lock()
+	r.ensured = false
+	r.ensureMu.Unlock()
+}
+
+func (r *Repo) ensure(token string) error {
 	if _, err := os.Stat(filepath.Join(r.gitDir, "HEAD")); err == nil {
 		_, _ = run(r.gitDir, nil, "worktree", "prune")
+		r.ensured = true
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(r.gitDir), 0o755); err != nil {
@@ -212,10 +246,27 @@ func (r *Repo) ensure() error {
 		_, err := run("", nil, "init", "--bare", "-b", r.Cfg.DefaultBranch, r.gitDir)
 		if err == nil {
 			r.setLastFetch(time.Now())
+			r.ensured = true
 		}
 		return err
 	}
-	if _, err := run("", nil, "clone", "--bare", "--", r.Cfg.Remote, r.gitDir); err != nil {
+	args, env := r.credentialArgs(token)
+	clone := func(shallow bool) error {
+		cloneArgs := append(append([]string{}, args...), "clone", "--bare")
+		if shallow {
+			cloneArgs = append(cloneArgs, "--depth", "1")
+		}
+		_, err := run("", env, append(cloneArgs, "--", r.Cfg.Remote, r.gitDir)...)
+		return err
+	}
+	err := clone(r.Cfg.Shallow)
+	if err != nil && r.Cfg.Shallow {
+		// some transports (git's dumb HTTP) refuse shallow — a full clone
+		// beats no clone; REQ-025.8's depth saving is best-effort per remote
+		_ = os.RemoveAll(r.gitDir)
+		err = clone(false)
+	}
+	if err != nil {
 		return err
 	}
 	// Writable repos keep local heads authoritative; remote state is tracked
@@ -230,11 +281,12 @@ func (r *Repo) ensure() error {
 	}
 	// populate refs/remotes/origin/* so ahead/behind works from the start
 	if r.Writable() {
-		if err := r.Fetch(); err != nil {
+		if err := r.Fetch(token); err != nil {
 			return err
 		}
 	}
 	r.setLastFetch(time.Now())
+	r.ensured = true
 	return nil
 }
 
@@ -288,11 +340,6 @@ func (r *Repo) ResolveRef(ref string) string {
 	return ref
 }
 
-// refRe constrains refs to what specquill deals in — branch names, tags and
-// shas: slash-separated segments of word chars, dots and dashes, bounded by
-// alphanumerics.
-var refRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$`)
-
 // resolveRef defaults empty refs to the configured default branch and
 // rejects anything git could misparse: option lookalikes (leading "-"),
 // traversal (".."), and meta characters. Every gitx entry point taking a
@@ -302,13 +349,20 @@ func (r *Repo) resolveRef(ref string) (string, error) {
 	if ref == "" {
 		return r.Cfg.DefaultBranch, nil
 	}
-	if strings.HasPrefix(ref, "-") || strings.Contains(ref, "..") || !refRe.MatchString(ref) {
+	if !ValidRef(ref) {
 		return "", fmt.Errorf("invalid ref %q", ref)
 	}
 	return ref, nil
 }
 
-// safeRelPath validates a client-supplied repo path: relative, no traversal.
+// relPathRe rejects control characters (incl. NUL and newlines) anywhere and
+// a leading "-": such names could masquerade as git options or split argv
+// downstream. Every path that reaches a git invocation must pass this.
+var relPathRe = regexp.MustCompile(`^[^\x00-\x1f-][^\x00-\x1f]*$`)
+
+// safeRelPath validates a client-supplied repo path: relative, no traversal,
+// no control characters, never option-shaped. The regexp match is the final
+// gate so the returned value is provably screened (CodeQL barrier).
 func safeRelPath(p string) (string, error) {
 	// ".." anywhere is rejected outright — no repo file legitimately needs
 	// it, and it keeps the traversal check independent of Clean's rewriting
@@ -320,6 +374,9 @@ func safeRelPath(p string) (string, error) {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
 	if strings.HasPrefix(clean, ".git/") || clean == ".git" {
+		return "", fmt.Errorf("invalid path %q", p)
+	}
+	if !relPathRe.MatchString(clean) {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
 	return clean, nil

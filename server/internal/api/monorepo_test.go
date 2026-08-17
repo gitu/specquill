@@ -59,11 +59,7 @@ func TestMonorepoContentRoot(t *testing.T) {
 	}
 	cfg.Normalize()
 	st := store.OpenTest(t)
-	ten, err := st.EnsureTenant(gitx.DefaultTenant, "config", 0, "Workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SyncTenantProjects(ten.ID, []store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
+	if err := st.SyncProjects([]store.Project{{ProjectID: "specs", RepoID: "specs", ContentRoot: "docs/specs"}}); err != nil {
 		t.Fatal(err)
 	}
 	hash, _ := auth.HashPassword("hunter2secret")
@@ -134,9 +130,16 @@ func TestMonorepoContentRoot(t *testing.T) {
 	if code != http.StatusOK || len(stat["dirty"].([]any)) != 0 {
 		t.Fatalf("post-commit not clean: %d %v", code, stat["dirty"])
 	}
+	// log.md is never materialized — it renders on the fly at bundle export,
+	// from history scoped to the content root
 	code, out = doJSON(t, h, cookie, "GET", "/api/repos/specs/files/log.md", nil)
-	if code != http.StatusOK || !strings.Contains(out["content"].(string), "update req") {
-		t.Fatalf("okf log under content root: %d %v", code, out)
+	if code == http.StatusOK {
+		t.Fatalf("log.md materialized under content root: %v", out)
+	}
+	repo, _ := git.Repo("specs")
+	entries, err := repo.OKFLogEntries("main", "docs/specs")
+	if err != nil || len(entries) == 0 || entries[0].Subject != "update req" {
+		t.Fatalf("on-the-fly log for content root: %v %v", entries, err)
 	}
 	code, out = doJSON(t, h, cookie, "GET", "/api/repos/specs/files/index.md", nil)
 	if code != http.StatusOK || !strings.Contains(out["content"].(string), "Login v2") {

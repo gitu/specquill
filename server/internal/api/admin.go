@@ -1,8 +1,8 @@
 package api
 
-// Management API (config-split plan, phase 2): projects, sources and grants
+// Management API (config-split plan, phase 2): projects and sources
 // administered at runtime, persisted as managed_by='api' rows that survive
-// boot reconciliation. All mutations are stage-gated: tenant `admin` role.
+// boot reconciliation. All mutations require the `admin` deployment role.
 
 import (
 	"encoding/json"
@@ -12,24 +12,22 @@ import (
 	"time"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/config"
+	"specquill/server/internal/gitx"
 	"specquill/server/internal/okf"
 	"specquill/server/internal/project"
 	"specquill/server/internal/store"
 )
 
-// roleH gates a handler on a minimum tenant role (viewer < member < admin).
-func (s *Server) roleH(minRole string, h http.HandlerFunc) http.HandlerFunc {
-	rank := map[string]int{"viewer": 0, "member": 1, "admin": 2}
+// roleH gates a handler on a minimum DEPLOYMENT role (the authz ladder
+// applied to users.role — management, not per-repo access).
+func (s *Server) roleH(minRole authz.Role, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		t, ok := s.tenant(w, r)
-		if !ok {
-			return
-		}
 		u := auth.UserFrom(r.Context())
-		role, err := s.store.MemberRole(t.ID, u.ID)
-		if err != nil || rank[role] < rank[minRole] {
-			jsonError2(w, http.StatusForbidden, "requires "+minRole+" role", "role_forbidden")
+		role, err := s.deployRole(u)
+		if err != nil || role < minRole {
+			jsonError2(w, http.StatusForbidden, "requires "+minRole.String()+" role", "role_forbidden")
 			return
 		}
 		h(w, r)
@@ -48,41 +46,61 @@ type projectInfo struct {
 	Warnings      []string                     `json:"warnings,omitempty"`
 }
 
-// GET /api/projects — the tenant's projects with their EFFECTIVE references
-// (stage-3 selection ∩ stage-2 grants, config read from the default branch).
+// GET /api/projects?ref= — the deployment's projects with their EFFECTIVE
+// references (in-repo selection ∩ catalog). The config is read at ?ref= so
+// the listing follows the currently selected branch; a project without that
+// branch (or no ref at all) answers from its default branch.
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
-	ps, err := s.store.TenantProjects(t.ID)
+	ref := r.URL.Query().Get("ref")
+	ps, err := s.store.Projects()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	granted, _ := s.store.TenantGrantedSources(t.ID)
+	catalog, _ := s.store.Sources()
 	kinds := map[string]string{}
-	for _, src := range granted {
+	for _, src := range catalog {
 		kinds[src.Name] = src.Kind
 	}
+	mgr := s.gitm(r)
 	out := []projectInfo{}
 	for _, p := range ps {
 		info := projectInfo{ID: p.ProjectID, ContentRoot: p.ContentRoot, ManagedBy: p.ManagedBy, References: []project.EffectiveReference{}}
-		if repo, ok := s.git.Repo(t.Slug + "/" + p.RepoID); ok {
+		if repo, ok := mgr.Repo(p.RepoID); ok {
+			if s.patMode() && repo.EnsureCloned(s.tok(r)) != nil {
+				out = append(out, info) // unclonable with this token — listed bare
+				continue
+			}
 			info.DefaultBranch = repo.Cfg.DefaultBranch
 			info.Protected = repo.Cfg.ProtectedBranches
 			proj := project.New(repo, p.ProjectID, p.ContentRoot, false)
-			// default branch only (D5): a feature branch cannot change the
-			// reference selection until merged
-			if yml, _, err := proj.FileAt(repo.Cfg.DefaultBranch, ".specquill/config.yml"); err == nil {
+			if yml, _, err := proj.File(configRef(proj, ref), ".specquill/config.yml"); err == nil {
 				if cfg, err := project.ParseConfig(yml); err == nil {
-					refs, warnings := project.EffectiveReferences(cfg, kinds)
+					var refs []project.EffectiveReference
+					var warnings []string
+					if s.patMode() {
+						// references resolve against the config's own sources:
+						// definitions — each user's token bounds real access
+						refs, warnings = project.EffectiveReferencesInRepo(cfg)
+						// a definition that failed validation is otherwise
+						// invisible (never registered) — say why here; valid
+						// ones register so branch-only definitions resolve
+						for _, sd := range cfg.Sources {
+							if msg := s.sourceDefError(sd); msg != "" {
+								warnings = append(warnings, "source "+sd.Name+": "+msg)
+								continue
+							}
+							s.registerSourceDef(mgr, sd)
+						}
+					} else {
+						refs, warnings = project.EffectiveReferences(cfg, kinds)
+					}
 					if refs != nil {
 						info.References = refs
 					}
 					info.Warnings = warnings
 					for i, ref := range info.References {
-						info.References[i].OKF = s.sourceIsOKF(t.Slug, ref.Source)
+						info.References[i].OKF = s.sourceIsOKF(mgr, ref.Source)
 					}
 				} else {
 					info.Warnings = []string{err.Error()}
@@ -94,29 +112,25 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
-// POST /api/sources/{name}/sync — re-import a granted, importer-backed source
-// now. Member-gated and grant-gated: a tenant can only trigger a source it has
-// been granted (stage 2). Returns the fresh import status.
+// POST /api/sources/{name}/sync — re-import a cataloged, importer-backed
+// source now. Member-gated; the catalog is the availability gate. Returns
+// the fresh import status.
 func (s *Server) syncSource(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
 	name := r.PathValue("name")
-	if _, err := s.store.GrantedSource(t.ID, name); err != nil {
-		jsonError2(w, http.StatusForbidden, "source "+name+" is not granted to this tenant", "source_forbidden")
+	if _, err := s.store.SourceByName(name); err != nil {
+		jsonError2(w, http.StatusForbidden, "source "+name+" is not in the catalog", "source_forbidden")
 		return
 	}
-	if s.importer == nil || !s.importer.Manages(t.Slug, name) {
+	if s.importer == nil || !s.importer.Manages(name) {
 		jsonError(w, http.StatusBadRequest, "source "+name+" is not an importer source")
 		return
 	}
-	rec, err := s.importer.Sync(r.Context(), t.Slug, name)
+	rec, err := s.importer.Sync(r.Context(), name)
 	if err != nil {
 		jsonError2(w, http.StatusBadGateway, err.Error(), "import_failed")
 		return
 	}
-	s.publish("repos-changed", t.Slug+"/"+name, "")
+	s.publish("repos-changed", name, "")
 	jsonOK(w, map[string]any{
 		"name": rec.Name, "status": rec.Status, "fileCount": rec.FileCount, "headSha": rec.HeadSHA,
 	})
@@ -124,8 +138,8 @@ func (s *Server) syncSource(w http.ResponseWriter, r *http.Request) {
 
 // sourceIsOKF reports whether a source's default branch is an OKF bundle
 // (root index.md declaring okf_version).
-func (s *Server) sourceIsOKF(tenantSlug, name string) bool {
-	repo, ok := s.git.Repo(tenantSlug + "/" + name)
+func (s *Server) sourceIsOKF(mgr *gitx.Manager, name string) bool {
+	repo, ok := mgr.Repo(name)
 	if !ok {
 		return false
 	}
@@ -136,10 +150,6 @@ func (s *Server) sourceIsOKF(tenantSlug, name string) bool {
 // POST /api/projects {id, remote, contentRoot?, defaultBranch?, tokenEnv?}
 // — admin only; clones the repo and registers the project (managed_by=api).
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
 	var body struct {
 		ID            string `json:"id"`
 		Remote        string `json:"remote"`
@@ -165,7 +175,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid remote")
 		return
 	}
-	if _, err := s.store.TenantProject(t.ID, body.ID); err == nil {
+	if _, err := s.store.Project(body.ID); err == nil {
 		jsonError(w, http.StatusConflict, "project "+body.ID+" already exists")
 		return
 	}
@@ -179,34 +189,35 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		ProtectedBranches: []string{body.DefaultBranch},
 		ContentRoot:       strings.Trim(body.ContentRoot, "/"),
 	}
-	if _, err := s.git.AddRepo(t.Slug, rc); err != nil {
+	if s.patMode() {
+		// no background loops in forge-PAT mode: a loop would keep fetching
+		// with whatever user token the manager saw last
+		rc.SyncInterval = 0
+	}
+	if _, err := s.gitm(r).AddRepo(rc, s.tok(r)); err != nil {
 		jsonError(w, http.StatusBadGateway, "clone failed: "+err.Error())
 		return
 	}
-	if err := s.store.UpsertTenantRepo(t.ID, store.TenantRepo{
+	if err := s.store.UpsertRepoRow(store.RepoRow{
 		RepoID: body.ID, Mode: string(config.Writable), Remote: body.Remote, DefaultBranch: body.DefaultBranch,
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := s.store.AddProject(store.Project{
-		TenantID: t.ID, ProjectID: body.ID, RepoID: body.ID, ContentRoot: rc.ContentRoot,
+		ProjectID: body.ID, RepoID: body.ID, ContentRoot: rc.ContentRoot,
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.publish("repos-changed", t.Slug+"/"+body.ID, "")
+	s.publish("repos-changed", body.ID, "")
 	jsonOK(w, map[string]string{"id": body.ID})
 }
 
 // DELETE /api/projects/{id} — admin only; unregisters (clone stays on disk).
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.tenant(w, r)
-	if !ok {
-		return
-	}
 	id := r.PathValue("id")
-	tp, err := s.store.TenantProject(t.ID, id)
+	tp, err := s.store.Project(id)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "unknown project")
 		return
@@ -215,11 +226,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusConflict, "project is config-managed — remove it from specquill.yml")
 		return
 	}
-	if err := s.store.DeleteProject(t.ID, id); err != nil {
+	if err := s.store.DeleteProject(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.git.RemoveRepo(t.Slug + "/" + tp.RepoID)
-	s.publish("repos-changed", t.Slug+"/"+id, "")
+	s.gitm(r).RemoveRepo(tp.RepoID)
+	s.publish("repos-changed", id, "")
 	jsonOK(w, map[string]bool{"ok": true})
 }

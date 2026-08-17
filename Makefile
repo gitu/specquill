@@ -1,4 +1,4 @@
-.PHONY: build web server dev dev-fixture test e2e dev-server clean
+.PHONY: build web server dev dev-fixture test e2e dev-server dev-forge shots clean
 
 build: web server                ## release build: SPA embedded in single binary
 
@@ -8,7 +8,7 @@ web:                             ## build the SPA into the server's embed dir
 server:                          ## build the Go server (embeds web build)
 	cd server && CGO_ENABLED=0 go build -o specquill ./cmd/specquill
 
-dev:                             ## hot-reload dev loop: postgres + air (Go rebuild) + vite (web HMR on :5173)
+dev:                             ## hot-reload dev loop: air (Go rebuild) + vite (web HMR, proxied at :8643)
 	./scripts/dev.sh
 
 dev-fixture:                     ## create local bare origin repos under data/origin/
@@ -26,6 +26,12 @@ e2e:                             ## needs a running dev server (make dev-server)
 
 dev-server: server dev-fixture   ## build + start the dev server with auto-auth
 	./server/specquill -config specquill.dev.yml -dev
+
+dev-forge: build                 ## secondary dev server: forge-PAT login against real GitHub (:8644, embedded SPA, no -dev)
+	./server/specquill -config specquill.dev-forge.yml
+
+shots: build                     ## regenerate docs/screenshots/ (isolated server on :8663 + mock-llm + playwright)
+	./scripts/shots.sh
 
 clean:
 	rm -rf server/specquill server/internal/webui/dist/* web/dist

@@ -2,7 +2,7 @@ name: Release
 
 # Every v* tag publishes a GitHub Release with the single-binary builds
 # (SPA embedded). The Docker image for the same tag is built by the Docker
-# workflow; Cloud Run prod rolls out from it via the deploy trigger.
+# workflow.
 
 on:
   push:
@@ -42,23 +42,80 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
           mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             GOOS="${target%/*}" GOARCH="${target#*/}"
             out="specquill_${VERSION}_${GOOS}_${GOARCH}"
+            bin=specquill; [ "$GOOS" = windows ] && bin=specquill.exe
             echo "building $out"
             (cd server && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags="-s -w" -o "../dist/$out/specquill" ./cmd/specquill)
+              go build -trimpath -ldflags="-s -w" -o "../dist/$out/$bin" ./cmd/specquill)
             cp README.md DEPLOY.md "dist/$out/"
-            tar -czf "dist/$out.tar.gz" -C dist "$out"
+            if [ "$GOOS" = windows ]; then
+              (cd dist && zip -qr "$out.zip" "$out")
+            else
+              tar -czf "dist/$out.tar.gz" -C dist "$out"
+            fi
             rm -r "dist/$out"
           done
-          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
 
       - name: create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+        # Tags are cut from the GitHub "new release" UI, so the release row
+        # already exists when this runs — upload into it instead of failing.
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            dist/*.tar.gz dist/SHA256SUMS
+          if gh release view "$GITHUB_REF_NAME" &>/dev/null; then
+            gh release upload "$GITHUB_REF_NAME" --clobber dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+          fi
+
+  homebrew:
+    name: Update Homebrew cask
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      # Mirrors nettle's tap bump. HOMEBREW_TAP_TOKEN is a PAT with push
+      # access to gitu/homebrew-tap; without the secret the job is a no-op.
+      - name: Check for tap token
+        id: token
+        run: echo "have=${{ secrets.HOMEBREW_TAP_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute darwin checksums
+        if: steps.token.outputs.have == 'true'
+        id: sums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*_darwin_*.tar.gz'
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm=$(sha256sum "specquill_v${VERSION}_darwin_arm64.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "intel=$(sha256sum "specquill_v${VERSION}_darwin_amd64.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap
+        if: steps.token.outputs.have == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: gitu/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Bump cask
+        if: steps.token.outputs.have == 'true'
+        run: |
+          cd tap
+          sed -i \
+            -e 's/^  version ".*"$/  version "${{ steps.sums.outputs.version }}"/' \
+            -e 's/^  sha256 arm:   ".*",$/  sha256 arm:   "${{ steps.sums.outputs.arm }}",/' \
+            -e 's/^         intel: ".*"$/         intel: "${{ steps.sums.outputs.intel }}"/' \
+            Casks/specquill.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/specquill.rb
+          git diff --cached --quiet || git commit -m "specquill ${{ steps.sums.outputs.version }}"
+          git push

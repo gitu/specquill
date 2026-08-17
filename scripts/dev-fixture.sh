@@ -9,11 +9,9 @@ ORIGIN=data/origin
 rm -rf "$ORIGIN"
 mkdir -p "$ORIGIN"
 
-# the store lives in the compose postgres — reset it alongside the fixtures
-# so sessions/PRs/collab logs don't reference vanished git state
-docker compose -f docker-compose.dev.yml up -d --wait postgres
-docker compose -f docker-compose.dev.yml exec -T postgres \
-  psql -q -U specquill -d specquill -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+# drop the store alongside the fixtures so sessions don't
+# reference vanished git state (-wal/-shm are WAL sidecars)
+rm -f data/runtime/specquill.db data/runtime/specquill.db-wal data/runtime/specquill.db-shm
 
 fixture_env=(-c user.name=specquill-fixture -c user.email=fixture@specquill.local)
 
@@ -35,6 +33,18 @@ make_bare trading-specs repo
 # specquill-docs: SpecQuill's own product specs — a MONOREPO example whose
 # workspace lives in the docs/specs/ subfolder (content_root project)
 make_bare specquill-docs repo-product
+# a couple of real commits on main so the change history (REQ-027) has
+# something to read: a status transition and a reworded normative statement
+tmp="$(mktemp -d)"
+git clone -q "$ORIGIN/trading-specs.git" "$tmp"
+sed -i 's/^status: draft/status: in_review/' "$tmp/requirements/REQ-063.md"
+git "${fixture_env[@]}" -C "$tmp" commit -qam "req: partial-fill reporting moves to review"
+sed -i 's/SHALL carry a `fills\[\]` array; each fill/SHALL carry a `fills[]` array of at most 500 entries; each fill/' "$tmp/requirements/REQ-063.md"
+sed -i 's/^ends: 2026-09-10/ends: 2026-09-30/' "$tmp/requirements/REQ-090.md"
+git "${fixture_env[@]}" -C "$tmp" commit -qam "req: bound the fills array, extend the retention window"
+git -C "$tmp" push -q origin main
+rm -rf "$tmp"
+
 # feature branch so the branch switcher has something to show
 tmp="$(mktemp -d)"
 git clone -q "$ORIGIN/trading-specs.git" "$tmp"

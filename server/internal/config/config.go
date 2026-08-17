@@ -3,12 +3,15 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"specquill/server/internal/forge"
 )
 
 type RepoMode string
@@ -34,12 +37,18 @@ type RepoConfig struct {
 	// an importer (kind url|openapi|confluence), not cloned/fetched from a
 	// remote. ensure() inits it empty; the importer.Runner commits snapshots.
 	Mirror bool `yaml:"-"`
+	// Shallow clones with --depth 1 — read-only reference repos in forge-PAT
+	// mode (REQ-025.8): the default-branch tip is all browsing and grounding
+	// need, full history stays on the forge.
+	Shallow bool `yaml:"-"`
+	// Forge optionally reads merge-request review threads from the git host
+	// (read-only; see internal/forge). Copied from the owning project.
+	Forge forge.Config `yaml:"-"`
 }
 
-// SourceConfig is a stage-1 catalog entry: a named external source that
-// projects may reference (repo-product/docs/specs/specs/multi-tenancy.md + the projects plan).
-// Sources are read-only downstream, always. Credentials come from the
-// environment via token_env — never from the DB or in-repo config.
+// SourceConfig is a catalog entry: a named external source that projects may
+// reference. Sources are read-only downstream, always. Credentials come from
+// the environment via token_env — never from the DB or in-repo config.
 type SourceConfig struct {
 	Name          string        `yaml:"name"`
 	Kind          string        `yaml:"kind"`   // git | url | openapi | confluence
@@ -55,6 +64,22 @@ type SourceConfig struct {
 // IsGit reports whether the source is a plain git clone (vs an importer mirror).
 func (s SourceConfig) IsGit() bool { return s.Kind == "" || s.Kind == "git" }
 
+// TargetConfig is one catalog entry of work-item destinations drift findings
+// can be filed to. Like sources, targets are server-side catalog + in-repo
+// selection (`drift.targets:`): the workspace picks from this list and can
+// never mint access. Credentials are env-only via token_env.
+type TargetConfig struct {
+	Name    string `yaml:"name"`
+	Kind    string `yaml:"kind"`     // github | gitlab | jira
+	BaseURL string `yaml:"base_url"` // forge/Jira web base, e.g. https://gitlab.example.com
+	// Project is the forge project path (owner/repo, nested groups on GitLab)
+	// or the Jira project key.
+	Project   string   `yaml:"project"`
+	TokenEnv  string   `yaml:"token_env"`
+	Labels    []string `yaml:"labels"`
+	IssueType string   `yaml:"issue_type"` // jira only; default "Task"
+}
+
 // ProjectConfig is a writable workspace: a git repo plus an optional
 // content_root subfolder (monorepo case; "" = repo root).
 type ProjectConfig struct {
@@ -65,10 +90,13 @@ type ProjectConfig struct {
 	TokenEnv          string        `yaml:"token_env"`
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	ProtectedBranches []string      `yaml:"protected_branches"`
+	// Forge (optional) shows the branch's open merge request and its comments
+	// from the git host. Read-only and opt-in — set `kind` to enable.
+	Forge forge.Config `yaml:"forge"`
 }
 
 // IsProtected reports whether direct writes/commits to branch are forbidden
-// (such branches only move via PR merges).
+// (such branches only move via merges from a workspace branch).
 func (rc *RepoConfig) IsProtected(branch string) bool {
 	for _, b := range rc.ProtectedBranches {
 		if b == branch {
@@ -83,28 +111,30 @@ type GitConfig struct {
 	CommitterEmail string `yaml:"committer_email"`
 }
 
-type OIDCConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	Issuer          string   `yaml:"issuer"`
-	ClientID        string   `yaml:"client_id"`
-	ClientSecretEnv string   `yaml:"client_secret_env"`
-	Scopes          []string `yaml:"scopes"`
+// ForgeAuthConfig turns on forge-PAT authentication: users sign in with a
+// personal access token from the deployment's git host. The token lives in
+// the user's browser (localStorage) and, per session, in server RAM — never
+// in the store. Identity, deployment role and git/forge credentials all come
+// from that token.
+type ForgeAuthConfig struct {
+	Kind    string `yaml:"kind"`     // github | gitlab
+	BaseURL string `yaml:"base_url"` // forge web base for self-hosted (e.g. https://gitlab.example.com)
+	// TokenCreateURL overrides the derived "create a token" deep link shown on
+	// the login page (prefilled name + scopes where the forge supports it).
+	TokenCreateURL string `yaml:"token_create_url"`
+	// Scopes the login page asks the user to grant; defaulted per kind
+	// (gitlab: api; github: repo).
+	Scopes []string `yaml:"scopes"`
+	// AllowedSourceHosts extends the hosts in-repo `sources:` remotes may
+	// name beyond the forge and the project remotes — e.g. a public mirror
+	// host references are allowed to read from.
+	AllowedSourceHosts []string `yaml:"allowed_source_hosts"`
 }
+
+func (f ForgeAuthConfig) Enabled() bool { return f.Kind != "" }
 
 type LocalAuthConfig struct {
 	Enabled bool `yaml:"enabled"`
-}
-
-// GitHubAuthConfig signs users in with their GitHub account (OAuth app flow —
-// GitHub is not an OIDC issuer for user login). allowed_users gates who may
-// log in at all; an empty list admits any GitHub account.
-type GitHubAuthConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	ClientID        string   `yaml:"client_id"`
-	ClientSecretEnv string   `yaml:"client_secret_env"`
-	AllowedUsers    []string `yaml:"allowed_users"` // GitHub logins admitted (empty = everyone)
-	WebBase         string   `yaml:"web_base"`      // override for GHE/tests (default https://github.com)
-	APIBase         string   `yaml:"api_base"`      // override for GHE/tests (default https://api.github.com)
 }
 
 // DevUser auto-authenticates every request as this identity — honored only
@@ -115,19 +145,18 @@ type DevUser struct {
 }
 
 type AuthConfig struct {
-	OIDC   OIDCConfig       `yaml:"oidc"`
-	GitHub GitHubAuthConfig `yaml:"github"`
-	Local  LocalAuthConfig  `yaml:"local"`
-	// AdminEmails bootstrap tenant administration: users whose email matches
-	// (case-insensitive, any provider) get the admin role in the default
-	// tenant on login. Without it a fresh deployment has members only and
-	// the management API is unreachable.
+	Forge ForgeAuthConfig `yaml:"forge"`
+	Local LocalAuthConfig `yaml:"local"`
+	// AdminEmails bootstrap administration: users whose email matches
+	// (case-insensitive, any provider) get the admin deployment role on
+	// login. Without it a fresh deployment has members only and the
+	// management API is unreachable.
 	AdminEmails []string `yaml:"admin_emails"`
 	DevUser     *DevUser `yaml:"dev_user"`
-	// DefaultRole is the role every authenticated user is auto-enrolled with
-	// in the default (config) tenant: member (default, self-host semantics),
-	// viewer, or none — with none, users reach only repos explicitly granted
-	// to them (REQ-020, restricted on-prem deployments).
+	// DefaultRole is the deployment role every authenticated user is
+	// auto-enrolled with on the authz ladder: editor (default, self-host
+	// semantics), viewer, maintainer, admin, or none — with none, users reach
+	// only repos explicitly granted to them (REQ-020, restricted deployments).
 	DefaultRole string `yaml:"default_role"`
 }
 
@@ -136,58 +165,16 @@ type SessionConfig struct {
 	CookieSecure bool          `yaml:"cookie_secure"`
 }
 
-// GitHubWebhookConfig accepts push webhooks from GitHub repositories at
-// POST /hooks/github: pushes to a registered repo's remote trigger an
-// immediate fetch (+ fast-forward of the default branch) instead of waiting
-// for the next sync interval. The HMAC secret is the only authentication.
-type GitHubWebhookConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	SecretEnv string `yaml:"secret_env"` // env var holding the webhook HMAC secret
-}
-
-type WebhooksConfig struct {
-	GitHub GitHubWebhookConfig `yaml:"github"`
-}
-
-// GitHubAppConfig turns on GitHub-App tenant management
-// (repo-product/docs/specs/specs/multi-tenancy.md): each installation becomes a tenant, installation
-// tokens authenticate git, repo permissions map to roles, and the
-// installation webhooks keep it all in sync. Enabled when app_id is set.
-type GitHubAppConfig struct {
-	AppID            int64  `yaml:"app_id"`
-	PrivateKeyEnv    string `yaml:"private_key_env"`  // PEM in an env var…
-	PrivateKeyPath   string `yaml:"private_key_path"` // …or a mounted file
-	WebhookSecretEnv string `yaml:"webhook_secret_env"`
-	APIBase          string `yaml:"api_base"` // override for tests / GHE (default https://api.github.com)
-}
-
-func (g GitHubAppConfig) Enabled() bool { return g.AppID != 0 }
-
-// DatabaseConfig locates the Postgres store (users, sessions, PR review
-// state, collab logs). Production configs must use url_env so the DSN —
-// which carries credentials — never lives in a file.
+// DatabaseConfig locates the SQLite store (users, sessions, workspace
+// claims) — a single file, by default inside data_dir, so a deployment
+// has no service to operate beside the binary. Load() resolves Path to an
+// absolute location; back it with a persistent volume, since the same disk
+// already holds the worktree drafts.
 type DatabaseConfig struct {
-	URL    string `yaml:"url"`     // local dev only (compose postgres, no secrets)
-	URLEnv string `yaml:"url_env"` // env var holding the DSN (e.g. a Neon URL)
+	Path string `yaml:"path"` // default: <data_dir>/specquill.db
 }
 
-// DSN resolves the connection string; the env var wins when set.
-func (d DatabaseConfig) DSN() (string, error) {
-	if d.URLEnv != "" {
-		if v := os.Getenv(d.URLEnv); v != "" {
-			return v, nil
-		}
-		if d.URL == "" {
-			return "", fmt.Errorf("database.url_env: %s is not set", d.URLEnv)
-		}
-	}
-	if d.URL != "" {
-		return d.URL, nil
-	}
-	return "", fmt.Errorf("database.url or database.url_env is required")
-}
-
-// AIConfig points the copilot at any OpenAI-compatible chat-completions API
+// AIConfig points the speccy at any OpenAI-compatible chat-completions API
 // (OpenAI, Gemini's /v1beta/openai endpoint, Azure, Ollama, …).
 type AIConfig struct {
 	Enabled bool   `yaml:"enabled"`
@@ -196,8 +183,22 @@ type AIConfig struct {
 	// fast one-shot model for small tasks (commit messages, titles);
 	// empty = fall back to Model
 	QuickModel string `yaml:"quick_model"`
-	APIKeyEnv  string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
-	// GroundingBudget caps the copilot system-prompt size in bytes
+	// Models an alignment recipe may name per stage, beyond the two tiers
+	// above. An ALLOWLIST, not a fallback chain: recipes are user content
+	// committed to a repository, so which models they can point this server
+	// at is deployment policy, and an id outside this set fails validation
+	// before the run starts.
+	Models []string `yaml:"models"`
+	// MaxCallsPerRun caps the model calls one alignment run may make
+	// (0 = the ai package's default of 500). A recipe multiplies stages by
+	// items by units; this is what stops an author's typo becoming an hour.
+	MaxCallsPerRun int    `yaml:"max_calls_per_run"`
+	APIKeyEnv      string `yaml:"api_key_env"` // empty = no Authorization header (local providers)
+	// ReasoningEffort is passed through as `reasoning_effort` when set.
+	// OpenAI reasoning models (gpt-5.x) default it on /chat/completions and
+	// then REFUSE function tools — set "none" there so the chat tools work.
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	// GroundingBudget caps the speccy system-prompt size in bytes
 	// (0 = package default; grows automatically when references exist).
 	GroundingBudget int `yaml:"grounding_budget"`
 }
@@ -209,16 +210,15 @@ type Config struct {
 	Database DatabaseConfig  `yaml:"database"`
 	Projects []ProjectConfig `yaml:"projects"`
 	Sources  []SourceConfig  `yaml:"sources"`
-	// Grants: source names granted to the default tenant (stage 2).
-	// Omitted/empty = all sources granted (self-host convenience).
-	Grants  []string      `yaml:"grants"`
-	Repos   []RepoConfig  `yaml:"repos"` // legacy shape — normalized into projects/sources
-	Git     GitConfig     `yaml:"git"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Session   SessionConfig   `yaml:"session"`
-	Webhooks  WebhooksConfig  `yaml:"webhooks"`
-	GitHubApp GitHubAppConfig `yaml:"github_app"`
-	AI        AIConfig        `yaml:"ai"`
+	Repos    []RepoConfig    `yaml:"repos"` // legacy shape — normalized into projects/sources
+	Git      GitConfig       `yaml:"git"`
+	Auth     AuthConfig      `yaml:"auth"`
+	Session  SessionConfig   `yaml:"session"`
+	AI       AIConfig        `yaml:"ai"`
+	Dynamic  DynamicConfig   `yaml:"dynamic"`
+	// WorkItemTargets catalogs the trackers drift findings can be filed to
+	// (in-repo drift.targets selects from it).
+	WorkItemTargets []TargetConfig `yaml:"work_item_targets"`
 }
 
 func Load(path string) (*Config, error) {
@@ -244,6 +244,11 @@ func Load(path string) (*Config, error) {
 	// resolve relative paths against the config file's directory
 	base := filepath.Dir(path)
 	cfg.DataDir = absAgainst(base, cfg.DataDir)
+	if cfg.Database.Path == "" {
+		cfg.Database.Path = filepath.Join(cfg.DataDir, "specquill.db")
+	} else {
+		cfg.Database.Path = absAgainst(base, cfg.Database.Path)
+	}
 	for i := range cfg.Projects {
 		if looksLikePath(cfg.Projects[i].Remote) {
 			cfg.Projects[i].Remote = absAgainst(base, cfg.Projects[i].Remote)
@@ -292,6 +297,15 @@ func (c *Config) Normalize() {
 	// defaults
 	for i := range c.Projects {
 		p := &c.Projects[i]
+		// forge-PAT mode: the deployment's forge is every project's forge
+		if c.Auth.Forge.Enabled() {
+			if p.Forge.Kind == "" {
+				p.Forge.Kind = c.Auth.Forge.Kind
+			}
+			if p.Forge.BaseURL == "" && c.Auth.Forge.BaseURL != "" {
+				p.Forge.BaseURL = ForgeAPIBase(c.Auth.Forge.Kind, c.Auth.Forge.BaseURL)
+			}
+		}
 		if p.DefaultBranch == "" {
 			p.DefaultBranch = "main"
 		}
@@ -318,10 +332,15 @@ func (c *Config) Normalize() {
 	// canonical clone registry: every project + every git source
 	c.Repos = c.Repos[:0]
 	for _, p := range c.Projects {
+		f := p.Forge
+		if f.TokenEnv == "" {
+			f.TokenEnv = p.TokenEnv // the push/fetch token usually covers the API too
+		}
 		c.Repos = append(c.Repos, RepoConfig{
 			ID: p.ID, Mode: Writable, Remote: p.Remote, DefaultBranch: p.DefaultBranch,
 			TokenEnv: p.TokenEnv, SyncInterval: p.SyncInterval,
 			ProtectedBranches: p.ProtectedBranches, ContentRoot: p.ContentRoot,
+			Forge: f,
 		})
 	}
 	for _, src := range c.Sources {
@@ -339,6 +358,111 @@ func (c *Config) Normalize() {
 			ID: src.Name, Mode: ReadOnly, DefaultBranch: src.DefaultBranch, Mirror: true,
 		})
 	}
+	c.Dynamic.normalize()
+}
+
+// ForgeAPIBase derives the REST API base from a forge's web base URL.
+func ForgeAPIBase(kind, webBase string) string {
+	base := strings.TrimSuffix(webBase, "/")
+	switch kind {
+	case forge.KindGitHub:
+		// exact host, not a suffix: mygithub.com and enterprise-github.com are
+		// GitHub Enterprise installs and serve the API under /api/v3
+		if u, err := url.Parse(base); err == nil && strings.EqualFold(u.Hostname(), "github.com") {
+			return "https://api.github.com"
+		}
+		return base + "/api/v3"
+	case forge.KindGitLab:
+		return base + "/api/v4"
+	}
+	return base
+}
+
+// TokenCreateLink is the "create a personal access token" deep link the login
+// page offers, prefilled where the forge supports it.
+func (c *Config) TokenCreateLink() string {
+	f := c.Auth.Forge
+	if f.TokenCreateURL != "" {
+		return f.TokenCreateURL
+	}
+	scopes := strings.Join(c.ForgeScopes(), ",")
+	base := strings.TrimSuffix(f.BaseURL, "/")
+	switch f.Kind {
+	case forge.KindGitLab:
+		if base == "" {
+			base = "https://gitlab.com"
+		}
+		return base + "/-/user_settings/personal_access_tokens?name=specquill&scopes=" + scopes
+	case forge.KindGitHub:
+		if base == "" {
+			base = "https://github.com"
+		}
+		return base + "/settings/tokens/new?description=specquill&scopes=" + scopes
+	}
+	return ""
+}
+
+// ForgeScopes is the scope list the login page asks for (config override or
+// the per-kind default that covers git push/pull plus the MR/PR API).
+func (c *Config) ForgeScopes() []string {
+	if len(c.Auth.Forge.Scopes) > 0 {
+		return c.Auth.Forge.Scopes
+	}
+	switch c.Auth.Forge.Kind {
+	case forge.KindGitLab:
+		return []string{"api"}
+	case forge.KindGitHub:
+		return []string{"repo"}
+	}
+	return nil
+}
+
+// SourceHostAllowed reports whether an in-repo source remote may name this
+// hostname. The allowlist is the deployment's own perimeter: the forge, every
+// configured project remote's host, and auth.forge.allowed_source_hosts. The
+// in-repo config is ordinary repo content — without this fence it could point
+// a source at an attacker host (which would then be offered users' tokens) or
+// at internal network services.
+func (c *Config) SourceHostAllowed(host string) bool {
+	host = strings.ToLower(host)
+	if host == "" {
+		return false
+	}
+	for _, h := range c.sourceHostAllowlist() {
+		if host == h {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) sourceHostAllowlist() []string {
+	var hosts []string
+	add := func(h string) {
+		if h = strings.ToLower(h); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	if u, err := url.Parse(c.Auth.Forge.BaseURL); err == nil {
+		add(u.Hostname())
+	}
+	if c.Auth.Forge.BaseURL == "" {
+		switch c.Auth.Forge.Kind {
+		case forge.KindGitLab:
+			add("gitlab.com")
+		case forge.KindGitHub:
+			add("github.com")
+		}
+	}
+	for _, p := range c.Projects {
+		if u, err := url.Parse(p.Remote); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+			add(u.Hostname())
+		}
+	}
+	for _, h := range c.Auth.Forge.AllowedSourceHosts {
+		add(h)
+	}
+	return hosts
 }
 
 // cleanContentRoot normalizes a project subfolder: slash-separated, no
@@ -356,16 +480,29 @@ func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir is required")
 	}
-	if !c.Auth.OIDC.Enabled && !c.Auth.GitHub.Enabled && !c.Auth.Local.Enabled {
-		return fmt.Errorf("at least one auth method (oidc, github or local) must be enabled")
+	if !c.Auth.Forge.Enabled() && !c.Auth.Local.Enabled {
+		return fmt.Errorf("at least one auth method (forge or local) must be enabled")
+	}
+	if c.Auth.Forge.Enabled() {
+		switch c.Auth.Forge.Kind {
+		case forge.KindGitHub, forge.KindGitLab:
+		default:
+			return fmt.Errorf("auth.forge.kind must be github or gitlab (got %q)", c.Auth.Forge.Kind)
+		}
+		// forge-PAT deployments read reference sources from the in-repo
+		// .specquill/config.yml `sources:` — a server-side catalog would need
+		// env credentials the per-user model deliberately does not have
+		if len(c.Sources) > 0 {
+			return fmt.Errorf("auth.forge: sources are defined in-repo (.specquill/config.yml sources:) in forge-PAT mode — remove the top-level sources: block")
+		}
 	}
 	switch c.Auth.DefaultRole {
-	case "", "member", "viewer", "none":
+	case "", "viewer", "editor", "maintainer", "admin", "none":
 	default:
-		return fmt.Errorf("auth.default_role must be member, viewer or none (got %q)", c.Auth.DefaultRole)
+		return fmt.Errorf("auth.default_role must be viewer, editor, maintainer, admin or none (got %q)", c.Auth.DefaultRole)
 	}
-	if c.Database.URL == "" && c.Database.URLEnv == "" {
-		return fmt.Errorf("database.url or database.url_env is required (Postgres DSN)")
+	if c.Dynamic.Enabled && !c.Auth.Forge.Enabled() {
+		return fmt.Errorf("dynamic.enabled requires forge-PAT auth (auth.forge) — dynamic projects are opened with each user's own token")
 	}
 	if c.Git.CommitterName == "" || c.Git.CommitterEmail == "" {
 		return fmt.Errorf("git.committer_name and git.committer_email are required")
@@ -386,6 +523,11 @@ func (c *Config) validate() error {
 		seen[p.ID] = true
 		if strings.Contains(p.ContentRoot, "..") {
 			return fmt.Errorf("project %s: content_root must not traverse (%q)", p.ID, p.ContentRoot)
+		}
+		switch p.Forge.Kind {
+		case "", forge.KindGitHub, forge.KindGitLab:
+		default:
+			return fmt.Errorf("project %s: forge.kind must be github or gitlab (got %q)", p.ID, p.Forge.Kind)
 		}
 	}
 	kinds := map[string]bool{"git": true, "url": true, "openapi": true, "confluence": true}
@@ -409,47 +551,37 @@ func (c *Config) validate() error {
 			return fmt.Errorf("source %s: confluence sources require a space", src.Name)
 		}
 	}
-	for _, g := range c.Grants {
-		found := false
-		for _, src := range c.Sources {
-			if src.Name == g {
-				found = true
-			}
-		}
-		if !found {
-			return fmt.Errorf("grants: unknown source %q", g)
-		}
-	}
-	if c.Auth.OIDC.Enabled {
-		o := c.Auth.OIDC
-		if o.Issuer == "" || o.ClientID == "" {
-			return fmt.Errorf("auth.oidc: issuer and client_id are required when enabled")
-		}
-	}
-	if c.Auth.GitHub.Enabled {
-		g := c.Auth.GitHub
-		if g.ClientID == "" || g.ClientSecretEnv == "" {
-			return fmt.Errorf("auth.github: client_id and client_secret_env are required when enabled")
-		}
-		if c.BaseURL == "" {
-			return fmt.Errorf("auth.github: base_url is required (OAuth callback URL)")
-		}
-	}
-	if c.Webhooks.GitHub.Enabled && c.Webhooks.GitHub.SecretEnv == "" {
-		return fmt.Errorf("webhooks.github: secret_env is required when enabled")
-	}
-	if c.GitHubApp.Enabled() {
-		if c.GitHubApp.PrivateKeyEnv == "" && c.GitHubApp.PrivateKeyPath == "" {
-			return fmt.Errorf("github_app: private_key_env or private_key_path is required")
-		}
-		if c.GitHubApp.WebhookSecretEnv == "" {
-			return fmt.Errorf("github_app: webhook_secret_env is required")
-		}
-	}
 	if c.AI.Enabled && (c.AI.BaseURL == "" || c.AI.Model == "") {
 		return fmt.Errorf("ai: base_url and model are required when enabled")
 	}
+	targetNames := map[string]bool{}
+	for i, t := range c.WorkItemTargets {
+		if t.Name == "" {
+			return fmt.Errorf("work_item_targets[%d]: name is required", i)
+		}
+		if targetNames[t.Name] {
+			return fmt.Errorf("duplicate work_item_target %q", t.Name)
+		}
+		targetNames[t.Name] = true
+		switch t.Kind {
+		case forge.KindGitHub, forge.KindGitLab, "jira":
+		default:
+			return fmt.Errorf("work_item_target %s: kind must be github, gitlab or jira (got %q)", t.Name, t.Kind)
+		}
+		u, err := url.Parse(t.BaseURL)
+		if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname()))) {
+			return fmt.Errorf("work_item_target %s: base_url must be an https URL (http only for loopback dev hosts)", t.Name)
+		}
+		if t.Project == "" {
+			return fmt.Errorf("work_item_target %s: project is required", t.Name)
+		}
+	}
 	return nil
+}
+
+// isLoopback allows plain-http work-item targets only for local dev mocks.
+func isLoopback(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // looksLikePath reports whether a remote is a filesystem path rather than a URL.

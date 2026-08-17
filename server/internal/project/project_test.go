@@ -91,12 +91,66 @@ func TestEffectiveReferences(t *testing.T) {
 		t.Fatalf("warnings: %v", warnings)
 	}
 	for _, w := range warnings {
-		if !strings.Contains(w, "not granted") {
+		if !strings.Contains(w, "not in the source catalog") {
 			t.Fatalf("warning wording: %q", w)
 		}
 	}
 	// nil config = no refs, no warnings
 	if refs, warnings := EffectiveReferences(nil, kinds); refs != nil || warnings != nil {
 		t.Fatal("nil config must resolve to nothing")
+	}
+}
+
+// The forge-PAT counterpart: references resolve against the config's OWN
+// sources: definitions; a reference without a definition warns, a definition
+// without name or remote defines nothing.
+func TestEffectiveReferencesInRepo(t *testing.T) {
+	cfg := &Config{
+		Sources: []SourceDef{
+			{Name: "regulations", Remote: "https://x/reg.git"},
+			{Name: "no-remote"},                               // incomplete: defines nothing
+			{Remote: "https://x/anon.git"},                    // incomplete: defines nothing
+			{Name: "unreferenced", Remote: "https://x/u.git"}, // browsable, not a reference
+		},
+		References: []Reference{
+			{Source: "regulations", Grounding: true, Paths: []string{"mifid-ii/"}},
+			{Source: "regulations"}, // duplicate: ignored
+			{Source: "no-remote"},   // defined incompletely → warning
+			{Source: "phantom"},     // never defined → warning
+			{Source: ""},            // junk
+		},
+	}
+	refs, warnings := EffectiveReferencesInRepo(cfg)
+	if len(refs) != 1 || refs[0].Source != "regulations" || refs[0].Kind != "git" || !refs[0].Grounding || refs[0].Paths[0] != "mifid-ii/" {
+		t.Fatalf("refs: %+v", refs)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+	for _, w := range warnings {
+		if !strings.Contains(w, "no matching source definition") {
+			t.Fatalf("warning wording: %q", w)
+		}
+	}
+	if refs, warnings := EffectiveReferencesInRepo(nil); refs != nil || warnings != nil {
+		t.Fatal("nil config must resolve to nothing")
+	}
+}
+
+// sources: parses alongside the existing keys and stays unknown-key-tolerant.
+func TestParseConfigSources(t *testing.T) {
+	cfg, err := ParseConfig(`
+version: 2
+sources:
+  - { name: regulations, remote: "https://x/reg.git", default_branch: master }
+references:
+  - { source: regulations, grounding: true }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sources) != 1 || cfg.Sources[0].Name != "regulations" ||
+		cfg.Sources[0].Remote != "https://x/reg.git" || cfg.Sources[0].DefaultBranch != "master" {
+		t.Fatalf("sources: %+v", cfg.Sources)
 	}
 }

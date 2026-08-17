@@ -8,19 +8,20 @@ import (
 	"strings"
 
 	"specquill/server/internal/auth"
+	"specquill/server/internal/authz"
 	"specquill/server/internal/gitx"
 )
 
 // writableH gates every mutation: the repo must be writable AND the caller
-// at least a member on it (viewers read and comment, they never write).
+// at least an editor on it (viewers read and comment, they never write).
 func (s *Server) writableH(h func(http.ResponseWriter, *http.Request, *project.Project)) http.HandlerFunc {
 	return s.repoH(func(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 		if !repo.Writable() {
 			jsonError(w, http.StatusForbidden, "repo "+repo.ID+" is read-only")
 			return
 		}
-		if roleRank[repoRoleFrom(r.Context())] < roleRank["member"] {
-			jsonError2(w, http.StatusForbidden, "requires member role", "role_forbidden")
+		if repoRoleFrom(r.Context()) < authz.Editor {
+			jsonError2(w, http.StatusForbidden, "requires editor role", "role_forbidden")
 			return
 		}
 		h(w, r, repo)
@@ -49,11 +50,6 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *project.P
 		jsonError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if full, err := repo.MapIn(r.PathValue("path")); err == nil && s.hub.RoomActive(repo.Key(), branch, full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
-		return
-	}
 	sha, err := repo.SaveFile(r.URL.Query().Get("branch"), r.PathValue("path"), body.Content, body.BaseSha)
 	if errors.Is(err, gitx.ErrStale) {
 		jsonError(w, http.StatusConflict, err.Error())
@@ -68,19 +64,20 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request, repo *project.P
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if full, err := repo.MapIn(r.PathValue("path")); err == nil && s.hub.RoomActive(repo.Key(), repo.ResolveRef(r.URL.Query().Get("branch")), full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited", "room_active")
-		return
-	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
 	if err := repo.DeleteFile(r.URL.Query().Get("branch"), r.PathValue("path")); err != nil {
 		gitFail(w, err)
 		return
 	}
+	s.publish("save", repo.Key(), branch)
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// postMove renames a file in the branch worktree via git mv; the reference
-// rewrite that usually follows is a series of ordinary PUTs from the client.
+// postMove renames a file — or, with a trailing slash on from, a whole
+// folder — in the branch worktree via git mv, and rewrites every document
+// referencing the moved path(s) to the new location (server-side, sha-guarded
+// worktree saves). The response lists the rewritten paths; folder moves also
+// report how many files moved.
 func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	var body struct{ From, To string }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.From == "" || body.To == "" {
@@ -88,16 +85,23 @@ func (s *Server) postMove(w http.ResponseWriter, r *http.Request, repo *project.
 		return
 	}
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-	if full, err := repo.MapIn(body.From); err == nil && s.hub.RoomActive(repo.Key(), branch, full) {
-		jsonError2(w, http.StatusConflict, "file is being co-edited — its live session owns the content", "room_active")
+	if strings.HasSuffix(body.From, "/") || strings.HasSuffix(body.To, "/") {
+		moved, rewritten, err := repo.MoveFolderRewriting(r.URL.Query().Get("branch"), body.From, body.To)
+		if err != nil {
+			gitFail(w, err)
+			return
+		}
+		s.publish("save", repo.Key(), branch)
+		jsonOK(w, map[string]any{"from": body.From, "to": body.To, "moved": moved, "rewritten": rewritten})
 		return
 	}
-	if err := repo.MoveFile(r.URL.Query().Get("branch"), body.From, body.To); err != nil {
+	rewritten, err := repo.MoveFileRewriting(r.URL.Query().Get("branch"), body.From, body.To)
+	if err != nil {
 		gitFail(w, err)
 		return
 	}
 	s.publish("save", repo.Key(), branch)
-	jsonOK(w, map[string]string{"from": body.From, "to": body.To})
+	jsonOK(w, map[string]any{"from": body.From, "to": body.To, "rewritten": rewritten})
 }
 
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request, repo *project.Project) {
@@ -120,40 +124,45 @@ func (s *Server) postCommit(w http.ResponseWriter, r *http.Request, repo *projec
 	}
 	u := auth.UserFrom(r.Context())
 	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
-
-	// commit barrier: live co-editing rooms flush their docs first, and every
-	// contributor besides the author lands as a Co-authored-by trailer.
-	// Hub/store key rooms by FULL repo paths — map the request's
-	// project-relative paths in.
-	fullPaths := make([]string, 0, len(body.Paths))
-	for _, rel := range body.Paths {
-		if full, err := repo.MapIn(rel); err == nil {
-			fullPaths = append(fullPaths, full)
-		}
-	}
-	_ = s.hub.FlushBranch(r.Context(), repo.Key(), branch, fullPaths)
-	message := body.Message
-	if contributors, err := s.store.Contributors(repo.Key(), branch, fullPaths); err == nil {
-		trailers := ""
-		for _, c := range contributors {
-			if c.ID == u.ID {
-				continue
-			}
-			trailers += "\nCo-authored-by: " + c.Name + " <" + c.Email + ">"
-		}
-		if trailers != "" {
-			message = strings.TrimRight(message, "\n") + "\n" + trailers
-		}
-	}
-
-	sha, err := repo.Commit(branch, message, u.Name, u.Email, body.Paths)
+	sha, err := repo.Commit(branch, body.Message, u.Name, u.Email, body.Paths)
 	if err != nil {
 		gitFail(w, err)
 		return
 	}
-	_ = s.store.ClearContributors(repo.Key(), branch, fullPaths)
 	s.publish("commit", repo.Key(), branch)
-	jsonOK(w, map[string]string{"commitSha": sha})
+	out := map[string]any{"commitSha": sha}
+	// forge-PAT mode: push the workspace branch as the commit happens
+	// (REQ-025.10) — committed work never exists only in a server-side
+	// clone. Best-effort: a failed push never undoes the commit, propose
+	// retries it anyway.
+	if s.patMode() {
+		if err := repo.Push(branch, s.tok(r)); err != nil {
+			out["pushed"] = false
+			out["pushError"] = err.Error()
+		} else {
+			out["pushed"] = true
+		}
+	}
+	jsonOK(w, out)
+}
+
+// postDiscard rejects pending (uncommitted) worktree changes — the undo
+// counterpart of postCommit. Optional paths limit it to specific files.
+func (s *Server) postDiscard(w http.ResponseWriter, r *http.Request, repo *project.Project) {
+	var body struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	branch := repo.ResolveRef(r.URL.Query().Get("branch"))
+	if err := repo.Discard(r.URL.Query().Get("branch"), body.Paths); err != nil {
+		gitFail(w, err)
+		return
+	}
+	s.publish("save", repo.Key(), branch)
+	jsonOK(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) postBranch(w http.ResponseWriter, r *http.Request, repo *project.Project) {
@@ -170,7 +179,7 @@ func (s *Server) postBranch(w http.ResponseWriter, r *http.Request, repo *projec
 }
 
 func (s *Server) postPush(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if err := repo.Push(r.URL.Query().Get("branch")); err != nil {
+	if err := repo.Push(r.URL.Query().Get("branch"), s.tok(r)); err != nil {
 		gitFail(w, err)
 		return
 	}
@@ -178,23 +187,15 @@ func (s *Server) postPush(w http.ResponseWriter, r *http.Request, repo *project.
 }
 
 func (s *Server) postFetch(w http.ResponseWriter, r *http.Request, repo *project.Project) {
-	if err := repo.Fetch(); err != nil {
+	if err := repo.Fetch(s.tok(r)); err != nil {
 		gitFail(w, err)
 		return
 	}
 	s.publish("fetch", repo.Key(), "")
-	// remote moved → local follows; branches with live rooms stay put
-	updated := repo.FFBranches(s.holdBranch(repo.Key()))
+	// remote moved → local follows
+	updated := repo.FFBranches()
 	for _, branch := range updated {
 		s.publish("pull", repo.Key(), branch)
 	}
 	jsonOK(w, map[string]any{"ok": true, "updated": updated})
-}
-
-// holdBranch adapts the collab hub's room ownership to FFBranches' veto:
-// never move a ref under a live co-editing room.
-func (s *Server) holdBranch(repoKey string) func(branch string) bool {
-	return func(branch string) bool {
-		return len(s.hub.ActiveOnBranch(repoKey, branch)) > 0
-	}
 }

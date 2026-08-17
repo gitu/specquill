@@ -1,14 +1,16 @@
-# specquill server configuration (copy to specquill.yml and adjust)
+# specquill server configuration (copy to specquill.yml and adjust — or run
+# `specquill setup` to generate one interactively)
 
-listen: ":8080"
+listen: ":8080"                     # default :8080
 data_dir: /var/lib/specquill        # bare clones + worktrees (content only)
-base_url: https://specquill.example.com
+base_url: https://specquill.example.com   # public URL (share links, forge redirects)
 
-# Postgres store: users, sessions, PR review state, collab logs. The DSN
-# carries credentials, so production must pass it via env (works great with
-# a serverless Postgres like Neon).
-database:
-  url_env: SPECQUILL_DATABASE_URL   # e.g. postgres://…neon.tech/specquill?sslmode=require
+# Store (users, sessions, workspace claims): an embedded SQLite
+# file. Defaults to <data_dir>/specquill.db, so this block is optional — set
+# it only to place the DB on another volume. Back it with persistent storage:
+# unlike data_dir's clones, it is not rebuildable.
+# database:
+#   path: /var/lib/specquill/specquill.db
 
 # projects are writable editing workspaces (a git repo, optionally rooted at a
 # content_root subfolder for monorepos)
@@ -18,15 +20,33 @@ projects:
     default_branch: main
     token_env: SPECQUILL_TOKEN_TRADING   # env var holding the push/fetch token; never in this file
     # content_root: docs/specs           # monorepo: workspace lives in a subfolder
+    # sync_interval: 2m                  # remote fetch cadence (default 2m; local-auth mode)
+    # Branches that never take direct writes or commits — they only move via
+    # merges from a workspace branch. Defaults to [default_branch]; the first
+    # edit on a protected branch auto-switches the user to ws/<user>.
+    # protected_branches: [main]
+    # Optional, read-only: show the branch's open merge request and its
+    # comments from the git host. SpecQuill merges directly and has no in-app
+    # review, so this is where forge review feedback shows up.
+    # forge:
+    #   kind: gitlab                     # gitlab | github (omit = feature off)
+    #   # base_url: https://gitlab.example.com/api/v4   # self-hosted
+    #   # project: acme/specs            # only if the remote does not name it (ssh alias)
+    #   # token_env: SPECQUILL_FORGE_TOKEN              # defaults to token_env above
 
 # sources are the read-only reference catalog projects may reference and the
-# copilot may ground on. Credentials always come from token_env — never inline.
-sources:
-  # git: a read-only input repo, fetched and never written
-  - name: regulations
-    kind: git
-    remote: https://github.com/acme/regulations.git
-    sync_interval: 5m
+# speccy may ground on. Credentials always come from token_env — never inline.
+# LOCAL-AUTH DEPLOYMENTS ONLY: with auth.forge enabled, reference sources are
+# defined inside the workspace repo (.specquill/config.yml `sources:`) and
+# fetched with each user's own token — this block must then stay empty.
+# sources:
+#   # git: a read-only input repo, fetched and never written
+#   - name: regulations
+#     kind: git                          # git (default) | url | openapi | confluence
+#     remote: https://github.com/acme/regulations.git
+#     # default_branch: main             # branch that is snapshotted (default main)
+#     # token_env: SPECQUILL_TOKEN_REGS  # only for private remotes
+#     sync_interval: 5m                  # default 5m
 
   # importers mirror non-git sources into read-only repos (materialized locally,
   # refreshed on sync_interval or on demand via POST /api/sources/{name}/sync):
@@ -48,35 +68,122 @@ sources:
   #   space: REG
   #   token_env: SPECQUILL_CONFLUENCE_TOKEN
 
-# grants attach sources to the default (self-host) tenant; omit to grant all
-grants: [regulations]
+# Work-item targets: trackers source-drift findings can be filed to. The
+# workspace SELECTS from this catalog (.specquill/config.yml drift.targets)
+# — same catalog ∩ selection shape as sources; in-repo config can never mint
+# access. The project's own forge: is always available implicitly.
+# work_item_targets:
+#   - name: backend-board
+#     kind: gitlab                          # github | gitlab | jira
+#     base_url: https://gitlab.example.com
+#     project: acme/backend                 # forge path (Jira: project key)
+#     token_env: SPECQUILL_GL_ISSUES_TOKEN
+#     labels: [from-specquill]
+#   - name: platform-jira
+#     kind: jira
+#     base_url: https://acme.atlassian.net
+#     project: PLAT
+#     issue_type: Task
+#     token_env: SPECQUILL_JIRA_TOKEN       # "email:api_token" (Cloud) or a bare PAT (Server/DC)
+#
+# Which sources a project checks, what it scopes runs to, which of these
+# targets it may file to, and WHERE its alignment reports live are declared by
+# the project itself, in its own <content_root>/.specquill/config.yml:
+#
+#   drift:
+#     references: [regulations]
+#     paths: [specs/, requirements/]
+#     targets: [backend-board]
+#     report: reports/alignment-{date}.md   # project-relative; {date}/{yyyy}/{mm}/{dd}
+#                                           # expand at run time (omit for one
+#                                           # standing report)
 
 git:
   committer_name: specquill            # service identity — recorded as a Co-authored-by
   committer_email: specquill@example.com   # trailer; the user is author AND committer
 
 auth:
-  oidc:
-    enabled: true
-    issuer: https://login.example.com
-    client_id: specquill
-    client_secret_env: SPECQUILL_OIDC_SECRET
-    scopes: [openid, profile, email]
+  # Forge-PAT auth (recommended): users sign in with a personal access token
+  # from the deployment's git host. The token stays in the user's browser
+  # (and, per session, in server RAM) — the server stores no credentials at
+  # all. Identity, the deployment role (mapped from the user's permission on
+  # the main project) and every git fetch/push/MR call use that token, and
+  # each user gets fully independent server-side clones.
+  #
+  # In this mode reference sources are defined IN the workspace repo
+  # (.specquill/config.yml `sources:` + `references:`), the in-app merge is
+  # replaced by "Propose changes" (push + MR/PR on the forge), and the
+  # top-level sources: block above must be empty.
+  forge:
+    kind: gitlab                     # gitlab | github
+    base_url: https://gitlab.example.com   # self-hosted web base; omit for gitlab.com/github.com
+    # token_create_url: …            # override the login page's "create a token" link
+    # scopes: [api]                  # override the scopes it asks for (defaults: gitlab api / github repo)
+    # In-repo source remotes may only name the forge and project hosts —
+    # list extra hosts here to allow references beyond that perimeter
+    # (e.g. a public mirror). Tokens are still only ever sent to each
+    # repo's own remote host.
+    # allowed_source_hosts: [mirror.example.org]
   local:
     enabled: true                    # fallback login page; add users with `specquill user add`
 
-session:
-  ttl: 10m
-  cookie_secure: true
+  # Users whose email matches (case-insensitive, any provider) get the admin
+  # role on login. Without this a fresh deployment has no admin and the
+  # management API/UI is unreachable.
+  admin_emails: [ops@example.com]
 
-# Copilot: any OpenAI-compatible chat-completions endpoint.
+  # Role every authenticated user is auto-enrolled with:
+  # editor (default, self-host semantics) | viewer | maintainer | admin | none
+  # (none = users only reach repos explicitly granted to them)
+  # default_role: editor
+
+  # Identity every request runs as when the server is started with -dev —
+  # local development only, ignored otherwise.
+  # dev_user:
+  #   name: Flo Dev
+  #   email: flo@dev.local
+
+session:
+  ttl: 10m               # idle timeout — expiry slides on every authenticated request (default 10m)
+  cookie_secure: true    # default true; disable only for plain-http local setups
+
+# Speccy (AI assistant): any OpenAI-compatible chat-completions endpoint.
+# The chat uses function tools (read/list/search files, ask the user,
+# edit/create documents) — pick a main model with tool support. Workspace-side
+# tuning lives in the repo, not here: authoring skills (.specquill/skills/),
+# extended instructions (.specquill/instructions.md or `speccy.instructions`
+# in .specquill/config.yml) and project memory (.specquill/memory/).
 ai:
   enabled: true
-  # OpenAI:  https://api.openai.com/v1                                model: gpt-4o-mini
+  # OpenAI:  https://api.openai.com/v1                                model: gpt-5.x / gpt-4o
   # Gemini:  https://generativelanguage.googleapis.com/v1beta/openai  model: gemini-2.0-flash
-  # Ollama:  http://127.0.0.1:11434/v1                                model: llama3.1 (no key)
+  # Ollama:  http://127.0.0.1:11434/v1                                model: qwen2.5:7b (no key)
   base_url: https://api.openai.com/v1
-  model: gpt-4o                      # main tier (thinking-class): chat + draft edits
+  model: gpt-4o                      # main tier (thinking-class, tool-capable): chat + draft edits
   quick_model: gpt-4o-mini           # fast one-shot tier: commit messages, titles
-  api_key_env: SPECQUILL_AI_KEY
+  api_key_env: SPECQUILL_AI_KEY      # env var holding the key; omit for keyless local providers
+  # Models an alignment recipe may name PER STAGE, beyond the two tiers above
+  # (a cheap one to survey, a thinking-class one to judge). This is an
+  # ALLOWLIST, not a fallback chain: recipes live in the repository and are
+  # written by users, so which models they can point this server at is a
+  # deployment decision. A recipe naming anything else fails validation before
+  # its run starts. The tier names `default` and `quick` always work.
+  # models:
+  #   - gpt-4.1-mini
+  # Ceiling on model calls ONE alignment run may make (default 500). A recipe
+  # multiplies stages by items by units; a run that hits this stops as
+  # `capped` — resumable, with everything it found kept. The alignment page's
+  # dry run projects the count before you start.
+  max_calls_per_run: 500
+  # OpenAI reasoning models (gpt-5.x) refuse function tools on
+  # /chat/completions unless reasoning_effort is explicitly "none". The
+  # client detects that refusal and retries with "none" automatically;
+  # setting it here just skips the wasted round trip. Omit for providers
+  # that don't know the parameter.
+  # reasoning_effort: none
+  # Byte cap for the prompt-stuffed grounding (workspace snapshot + sources
+  # marked `grounding: true`). Default 48KiB; raise it for models with big
+  # contexts. Everything selected stays reachable through the chat's
+  # list_files/search/read_file tools regardless of this cap.
+  # grounding_budget: 98304
 

@@ -1,12 +1,18 @@
--- specquill review/auth metadata (Postgres). Content lives in git; this DB
--- holds only users, sessions, PR review state, and the collab update log.
+-- specquill auth/session metadata (SQLite, a file in the data dir). Content
+-- lives in git; this DB holds only users, sessions and workspace claims —
+-- never documents. Single-tenant: one deployment serves one workspace; the
+-- canonical repo key in all other tables is the plain repo id.
+--
+-- Foreign keys are enforced (PRAGMA foreign_keys=ON in store.Open) — the
+-- repo_grants / repo_grant_invites cascades depend on it.
 
 CREATE TABLE IF NOT EXISTS users (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   provider   TEXT NOT NULL,             -- 'oidc' | 'local'
   subject    TEXT NOT NULL,             -- OIDC sub / local username
   name       TEXT NOT NULL,
   email      TEXT NOT NULL,
+  role       TEXT NOT NULL DEFAULT '',  -- admin | member | viewer | '' (not enrolled)
   UNIQUE(provider, subject)
 );
 
@@ -24,66 +30,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 
--- tenancy (docs/multi-tenancy.md): tenant = GitHub App installation, or the
--- built-in 'default' tenant mirroring the YAML repos list (self-hosting).
--- The canonical repo key in all other tables is '<tenant_slug>/<repo_id>'.
-CREATE TABLE IF NOT EXISTS tenants (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  slug            TEXT UNIQUE NOT NULL,
-  provider        TEXT NOT NULL,          -- 'config' | 'github'
-  installation_id BIGINT,                 -- GitHub App installation (NULL for config)
-  display_name    TEXT NOT NULL DEFAULT '',
-  created_at      BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS tenant_repos (
-  tenant_id      BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id        TEXT NOT NULL,           -- short id, unique within the tenant
+-- the deployment's repo registry, mirroring the YAML list at boot
+-- (managed_by='config'); rows added through the API persist across boots.
+CREATE TABLE IF NOT EXISTS repos (
+  repo_id        TEXT PRIMARY KEY,
   mode           TEXT NOT NULL,           -- writable | readonly
   remote         TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
-  gh_full_name   TEXT NOT NULL DEFAULT '',
   managed_by     TEXT NOT NULL DEFAULT 'config',  -- config rows reconcile at boot
-  created_at     BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id)
-);
-ALTER TABLE tenant_repos ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'config';
-
-CREATE TABLE IF NOT EXISTS tenant_members (
-  tenant_id BIGINT NOT NULL REFERENCES tenants(id),
-  user_id   BIGINT NOT NULL REFERENCES users(id),
-  role      TEXT NOT NULL DEFAULT 'member',   -- admin | member | viewer
-  synced_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, user_id)
+  created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS prs (
-  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  repo          TEXT NOT NULL,
-  number        INTEGER NOT NULL,
-  title         TEXT NOT NULL,
-  body          TEXT,
-  source_branch TEXT NOT NULL,
-  target_branch TEXT NOT NULL,
-  author_id     BIGINT NOT NULL REFERENCES users(id),
-  state         TEXT NOT NULL DEFAULT 'open',   -- open|merged|closed
-  merged_commit TEXT,
-  created_at    BIGINT NOT NULL,
-  merged_at     BIGINT,
-  UNIQUE(repo, number)
-);
 
-CREATE TABLE IF NOT EXISTS pr_comments (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  pr_id           BIGINT NOT NULL REFERENCES prs(id),
-  author_id       BIGINT NOT NULL REFERENCES users(id),
-  file_path       TEXT,                 -- NULL = general comment
-  line            INTEGER,
-  anchored_commit TEXT,
-  body            TEXT NOT NULL,
-  resolved        BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at      BIGINT NOT NULL
-);
 
 -- personal workspace branch ownership (ws/<slug> claimed per user)
 CREATE TABLE IF NOT EXISTS workspace_branches (
@@ -94,60 +52,27 @@ CREATE TABLE IF NOT EXISTS workspace_branches (
   UNIQUE (repo, branch)
 );
 
--- real-time co-editing: room state, opaque Yjs update log, contributor sets
-CREATE TABLE IF NOT EXISTS collab_rooms (
-  repo        TEXT NOT NULL,
-  branch      TEXT NOT NULL,
-  path        TEXT NOT NULL,
-  last_seq    BIGINT NOT NULL DEFAULT 0,
-  seed_seq    BIGINT NOT NULL DEFAULT 0,
-  flushed_seq BIGINT NOT NULL DEFAULT 0,
-  flushed_sha TEXT NOT NULL DEFAULT '',
-  updated_at  BIGINT NOT NULL,
-  PRIMARY KEY (repo, branch, path)
-);
-CREATE TABLE IF NOT EXISTS collab_updates (
-  repo    TEXT NOT NULL,
-  branch  TEXT NOT NULL,
-  path    TEXT NOT NULL,
-  seq     BIGINT NOT NULL,
-  payload BYTEA NOT NULL,
-  PRIMARY KEY (repo, branch, path, seq)
-);
-CREATE TABLE IF NOT EXISTS collab_contributors (
-  repo       TEXT NOT NULL,
-  branch     TEXT NOT NULL,
-  path       TEXT NOT NULL,
-  user_id    BIGINT NOT NULL REFERENCES users(id),
-  updated_at BIGINT NOT NULL,
-  PRIMARY KEY (repo, branch, path, user_id)
-);
+-- real-time co-editing was removed (July 2026); this schema runs on every
+-- store.Open, so the drops clean up databases from older versions
+DROP TABLE IF EXISTS collab_updates;
+DROP TABLE IF EXISTS collab_contributors;
+DROP TABLE IF EXISTS collab_rooms;
 
-CREATE TABLE IF NOT EXISTS pr_approvals (
-  pr_id      BIGINT NOT NULL REFERENCES prs(id),
-  user_id    BIGINT NOT NULL REFERENCES users(id),
-  commit_sha TEXT NOT NULL,             -- approval pinned to head commit
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (pr_id, user_id)
-);
 
 -- projects & sources (config-split plan): a project is a writable workspace
 -- (repo + content_root); a source is a catalog entry projects may reference.
 -- managed_by: 'config' rows reconcile to the YAML at boot, 'api' rows persist.
-CREATE TABLE IF NOT EXISTS tenant_projects (
-  tenant_id    BIGINT NOT NULL REFERENCES tenants(id),
-  project_id   TEXT NOT NULL,
-  repo_id      TEXT NOT NULL,           -- tenant_repos.repo_id (same tenant)
+CREATE TABLE IF NOT EXISTS projects (
+  project_id   TEXT PRIMARY KEY,
+  repo_id      TEXT NOT NULL,           -- repos.repo_id
   content_root TEXT NOT NULL DEFAULT '',
   managed_by   TEXT NOT NULL DEFAULT 'config',   -- config | api
-  created_at   BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at   BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sources (
-  id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id      BIGINT REFERENCES tenants(id),  -- NULL = global (app YAML / platform)
-  name           TEXT NOT NULL,
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL UNIQUE,
   kind           TEXT NOT NULL,                  -- git | url | openapi | confluence
   remote         TEXT NOT NULL,
   token_env      TEXT NOT NULL DEFAULT '',       -- env var NAME; never a secret value
@@ -155,74 +80,146 @@ CREATE TABLE IF NOT EXISTS sources (
   default_branch TEXT NOT NULL DEFAULT 'main',
   sync_interval  BIGINT NOT NULL DEFAULT 300,    -- seconds
   managed_by     TEXT NOT NULL DEFAULT 'config',
-  created_at     BIGINT NOT NULL,
-  UNIQUE (tenant_id, name)
+  created_at     BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS source_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  source_id  BIGINT NOT NULL REFERENCES sources(id),
-  granted_by BIGINT REFERENCES users(id),        -- NULL = boot sync
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, source_id)
-);
-
--- last-import status per non-git (importer) source, keyed by tenant + source
--- name. Populated by importer.Runner; surfaced in the sources list + sync API.
+-- last-import status per non-git (importer) source, keyed by source name.
+-- Populated by importer.Runner; surfaced in the sources list + sync API.
 CREATE TABLE IF NOT EXISTS source_syncs (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  name       TEXT NOT NULL,
+  name       TEXT PRIMARY KEY,
   status     TEXT NOT NULL,                       -- ok | error
   error      TEXT NOT NULL DEFAULT '',
   file_count INT NOT NULL DEFAULT 0,
   head_sha   TEXT NOT NULL DEFAULT '',
-  synced_at  BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, name)
+  synced_at  BIGINT NOT NULL
 );
 
--- the GitHub @handle behind a github-provider user — what permission
--- lookups and allow-lists match on (subjects are the immutable numeric id)
-ALTER TABLE users ADD COLUMN IF NOT EXISTS login TEXT NOT NULL DEFAULT '';
+-- source-drift runs: one row per AI drift check over a doc scope. Derived
+-- state (like source_syncs) — the durable artifact of a filed finding is the
+-- work-items frontmatter entry in the document itself.
+CREATE TABLE IF NOT EXISTS drift_runs (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_key           TEXT NOT NULL,
+  branch             TEXT NOT NULL,
+  mode               TEXT NOT NULL DEFAULT 'drift', -- the recipe slug: drift | gaps | extract | a project's own
+  status             TEXT NOT NULL,               -- running | ok | error | cancelled | interrupted | capped
+  error              TEXT NOT NULL DEFAULT '',
+  scope_json         TEXT NOT NULL DEFAULT '[]',  -- frozen resolved doc list (gaps: source list)
+  docs_total         INT NOT NULL DEFAULT 0,
+  docs_done          INT NOT NULL DEFAULT 0,
+  dropped_unverified INT NOT NULL DEFAULT 0,      -- findings whose evidence failed verification
+  head_sha           TEXT NOT NULL DEFAULT '',
+  activity_json      TEXT NOT NULL DEFAULT '[]',  -- per-unit progress lines (live feedback)
+  report_path        TEXT NOT NULL DEFAULT '',    -- the in-repo report doc this run maintains
+  report_branch      TEXT NOT NULL DEFAULT '',
+  extractions_json   TEXT NOT NULL DEFAULT '[]',  -- persisted application inventories [{source,path}]
+  sources_json       TEXT NOT NULL DEFAULT '[]',  -- reference names this run was restricted to (resume)
+  focus              TEXT NOT NULL DEFAULT '',    -- gaps: the area the sweep was aimed at (resume)
+  resumed_from       INT NOT NULL DEFAULT 0,      -- the run this one picked up where it stopped
+  -- the RESOLVED recipe, frozen at start: a run stays reproducible and
+  -- resumable after its recipe document is edited underneath it
+  recipe_json        TEXT NOT NULL DEFAULT '',
+  -- per-stage checkpoint for the IN-FLIGHT unit only (pruned when a unit
+  -- completes, so it is bounded by one unit's intermediate output): a resume
+  -- re-enters at the stage that was interrupted instead of redoing the unit
+  stage_state_json   TEXT NOT NULL DEFAULT '',
+  ai_calls           INT NOT NULL DEFAULT 0,      -- model calls spent (against ai.max_calls_per_run)
+  started_at         BIGINT NOT NULL,
+  finished_at        BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS drift_runs_repo ON drift_runs(repo_key, branch, id);
+
+-- drift findings, keyed by the anchor-based fingerprint so dismissals stick
+-- and re-runs upsert instead of duplicating. resolved_at != 0 = the last run
+-- over the doc no longer reported it. Coverage gaps (mode 'gaps') have
+-- doc_path = '' — no document covers them yet; suggested_path is where one
+-- should live and draft_path the reverse-engineered draft once created.
+CREATE TABLE IF NOT EXISTS drift_findings (
+  repo_key         TEXT NOT NULL,
+  branch           TEXT NOT NULL,
+  fingerprint      TEXT NOT NULL,
+  run_id           BIGINT NOT NULL,
+  doc_path         TEXT NOT NULL,
+  suggested_path   TEXT NOT NULL DEFAULT '',
+  draft_path       TEXT NOT NULL DEFAULT '',
+  remedy_path      TEXT NOT NULL DEFAULT '',   -- in-repo change/work-item doc created to remedy it
+  remedy_kind      TEXT NOT NULL DEFAULT '',   -- change | work_item
+  documents_json   TEXT NOT NULL DEFAULT '[]', -- every document created for it [{kind,path}]
+  anchor           TEXT NOT NULL DEFAULT '',
+  source           TEXT NOT NULL DEFAULT '',
+  kind             TEXT NOT NULL DEFAULT '',
+  severity         TEXT NOT NULL DEFAULT 'medium',
+  title            TEXT NOT NULL DEFAULT '',
+  detail           TEXT NOT NULL DEFAULT '',
+  evidence_json    TEXT NOT NULL DEFAULT '[]',
+  status           TEXT NOT NULL DEFAULT 'open',  -- open | dismissed | filed
+  work_item_url    TEXT NOT NULL DEFAULT '',
+  work_item_target TEXT NOT NULL DEFAULT '',
+  created_at       BIGINT NOT NULL,
+  updated_at       BIGINT NOT NULL,
+  resolved_at      BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (repo_key, branch, fingerprint)
+);
 
 -- unauthenticated OKF-bundle share links: the URL token is the only
 -- credential (LLM copy-paste use case). One active link per project;
 -- minting again rotates the token, deleting revokes access.
 CREATE TABLE IF NOT EXISTS share_links (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  project_id TEXT NOT NULL,
+  project_id TEXT PRIMARY KEY,
   token      TEXT NOT NULL UNIQUE,
   created_by BIGINT NOT NULL REFERENCES users(id),
-  created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, project_id)
+  created_at BIGINT NOT NULL
 );
 
--- per-repo user grants (REQ-020): explicit access layered on derived roles;
--- effective role = max(derived, granted). Role sync never touches these —
--- that is the point: a GitHub revocation must not drop an explicit grant.
+-- token-scoped dynamic projects (REQ-025): PER-USER rows — one user's opened
+-- repositories are their own state, never another's. project_id is the
+-- derived stable id (dyn.<forge repo id>[.<name>]); role is the user's forge
+-- permission on the repository, refreshed at every open (REQ-025.3).
+CREATE TABLE IF NOT EXISTS user_projects (
+  user_id        BIGINT NOT NULL REFERENCES users(id),
+  project_id     TEXT NOT NULL,
+  forge_repo_id  TEXT NOT NULL,
+  name           TEXT NOT NULL DEFAULT '',      -- manifest subproject name ('' = repo root)
+  spelling       TEXT NOT NULL,                 -- human form owner/repo[#name]
+  remote         TEXT NOT NULL,
+  content_root   TEXT NOT NULL DEFAULT '',
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  role           TEXT NOT NULL DEFAULT 'viewer',
+  created_at     BIGINT NOT NULL,
+  last_used      BIGINT NOT NULL,
+  PRIMARY KEY (user_id, project_id)
+);
+
+-- last-use stamps per user clone (scope = 'u<id>'), fed by request
+-- resolution and read by the reclamation janitor (REQ-025.6).
+CREATE TABLE IF NOT EXISTS clone_uses (
+  scope     TEXT NOT NULL,
+  repo_id   TEXT NOT NULL,
+  last_used BIGINT NOT NULL,
+  PRIMARY KEY (scope, repo_id)
+);
+
+-- per-repo user grants (REQ-020): explicit access layered on the deployment
+-- role; effective role = max(deployment role, granted).
 CREATE TABLE IF NOT EXISTS repo_grants (
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
   user_id    BIGINT NOT NULL REFERENCES users(id),
-  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is tenant-scoped)
+  role       TEXT   NOT NULL DEFAULT 'viewer',   -- viewer | member (repo/project management is admin-scoped)
   granted_by BIGINT REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, repo_id, user_id),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  PRIMARY KEY (repo_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS repo_grants_user ON repo_grants(user_id);
 
 -- pending grants for users who have not logged in yet; the matcher is a
--- lowercased email or GitHub login, claimed (converted to repo_grants rows)
--- and deleted on the invitee's first login.
+-- lowercased email, claimed (converted to repo_grants rows) and deleted on
+-- the invitee's first login.
 CREATE TABLE IF NOT EXISTS repo_grant_invites (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id  BIGINT NOT NULL REFERENCES tenants(id),
-  repo_id    TEXT   NOT NULL,
-  kind       TEXT   NOT NULL,                    -- 'email' | 'github'
-  matcher    TEXT   NOT NULL,                    -- lowercased
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id    TEXT   NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
+  matcher    TEXT   NOT NULL,                    -- lowercased email
   role       TEXT   NOT NULL DEFAULT 'viewer',
   granted_by BIGINT NOT NULL REFERENCES users(id),
   created_at BIGINT NOT NULL,
-  UNIQUE (tenant_id, repo_id, kind, matcher),
-  FOREIGN KEY (tenant_id, repo_id) REFERENCES tenant_repos(tenant_id, repo_id) ON DELETE CASCADE
+  UNIQUE (repo_id, matcher)
 );

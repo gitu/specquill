@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -20,9 +19,9 @@ func LockDataDir(dataDir string) (release func(), err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(f); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("data dir %s is locked by another specquill instance", dataDir)
+		return nil, fmt.Errorf("lock data dir %s (another specquill instance running?): %w", dataDir, err)
 	}
 	return func() { _ = f.Close() }, nil
 }
@@ -53,14 +52,16 @@ func (m *Manager) startSyncLoop(r *Repo) {
 				return
 			default:
 			}
-			if err := r.Fetch(); err != nil {
+			// local/dev mode only (forge-PAT deployments start no sync
+			// loops): credentials come from the repo's token_env
+			if err := r.Fetch(""); err != nil {
 				log.Printf("sync %s: %v", r.Cfg.ID, err)
 				continue
 			}
 			m.notify("fetch", r.Key(), "")
 			// remote moved → local follows: ff every clean branch that is
 			// strictly behind its remote-tracking ref
-			for _, branch := range r.FFBranches(m.holdFor(r)) {
+			for _, branch := range r.FFBranches() {
 				m.notify("pull", r.Key(), branch)
 			}
 		}

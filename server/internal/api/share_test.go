@@ -3,6 +3,7 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,10 +12,12 @@ import (
 
 // Share links: minting needs a session, downloading needs ONLY the token in
 // the URL (the LLM copy-paste use case). Rotation and revocation kill old
-// links immediately.
+// links immediately. OKF-opted bundles get a log.md generated on the fly.
 func TestShareLinkLifecycle(t *testing.T) {
-	h, _, _ := testGroundingServer(t)
+	h, st, git := testGroundingServer(t)
 	cookie := login(t, h)
+	// minting is maintainer-gated (REQ-021) — promote the enrolled editor
+	promoteRole(t, st, "flo@test.local", "maintainer")
 
 	// no link yet
 	code, out := doJSON(t, h, cookie, "GET", "/api/repos/w/share", nil)
@@ -49,6 +52,43 @@ func TestShareLinkLifecycle(t *testing.T) {
 	}
 	if !names[".specquill/config.yml"] {
 		t.Fatalf("bundle missing workspace files, got %v", names)
+	}
+	// no OKF opt-in → no log.md invented
+	if names["log.md"] {
+		t.Fatal("log.md in bundle without OKF opt-in")
+	}
+
+	// opt into OKF and commit; the bundle now carries a log.md generated on
+	// the fly from git history — nothing is materialized in the repo
+	repo, _ := git.Repo("w")
+	if _, err := repo.SaveFile("main", "index.md", "---\nokf_version: \"0.1\"\n---\n\n# Index\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit("main", "adopt OKF", "Jane", "jane@t", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.File("main", "log.md"); err == nil {
+		t.Fatal("log.md materialized in the repo")
+	}
+	rec = download(url)
+	zr, err = zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("not a zip: %v", err)
+	}
+	logMd := ""
+	for _, f := range zr.File {
+		if f.Name == "log.md" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			logMd = string(b)
+		}
+	}
+	if !strings.Contains(logMd, "# Log") || !strings.Contains(logMd, "adopt OKF (Jane)") {
+		t.Fatalf("bundle log.md not generated on the fly:\n%q", logMd)
 	}
 
 	// unknown token → 404

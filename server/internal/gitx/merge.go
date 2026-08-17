@@ -14,6 +14,14 @@ type MergeCheck struct {
 
 // CheckMerge dry-runs the merge via merge-tree without touching any worktree.
 func (r *Repo) CheckMerge(target, source string) (*MergeCheck, error) {
+	target, err := r.resolveRef(target)
+	if err != nil {
+		return nil, err
+	}
+	source, err = r.resolveRef(source)
+	if err != nil {
+		return nil, err
+	}
 	_, conflicts, err := r.mergeTree(target, source)
 	if err != nil {
 		return nil, err
@@ -92,12 +100,13 @@ func (r *Repo) Merge(target, source, message, authorName, authorEmail, strategy 
 		"GIT_AUTHOR_NAME=" + authorName, "GIT_AUTHOR_EMAIL=" + authorEmail,
 		"GIT_COMMITTER_NAME=" + authorName, "GIT_COMMITTER_EMAIL=" + authorEmail,
 	}
+	// the message is arbitrary user text — commit-tree reads it from stdin,
+	// so it never becomes a command-line argument
 	args := []string{"commit-tree", tree, "-p", oldTarget}
 	if strategy != "squash" {
 		args = append(args, "-p", sourceSha)
 	}
-	args = append(args, "-m", r.withServiceTrailer(message))
-	out, err := run(r.gitDir, env, args...)
+	out, _, err := runFull(r.gitDir, env, []byte(r.withServiceTrailer(message)), args...)
 	if err != nil {
 		return "", nil, err
 	}

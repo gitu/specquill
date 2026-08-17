@@ -5,7 +5,7 @@ import '@excalidraw/excalidraw/index.css';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
 import { useDeleteFile, useFileQuery, useSaveFile } from '../api/hooks';
-import { putRaw, rawUrl } from '../api/client';
+import { ApiError, putRaw, rawUrl } from '../api/client';
 import { IconPen } from '../components/icons';
 
 // Excalidraw is heavy — load it only when a sketch is actually opened.
@@ -57,7 +57,7 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
         const res = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-SpecQuill': '1' } });
         if (res.status === 404) {
           // fresh sketch: file is created on first save
-          if (!gone) setPngScene({ scene: { elements: [], appState: {}, files: {} }, sha: '' });
+          if (!gone) setPngScene({ scene: { elements: [], appState: { currentItemRoundness: 'sharp' }, files: {} }, sha: '' });
           return;
         }
         if (!res.ok) throw new Error(`load failed (${res.status})`);
@@ -69,7 +69,8 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
           setPngScene({
             scene: {
               elements: (restored.elements as unknown[]) || [],
-              appState: { viewBackgroundColor: 'transparent' },
+              // square edges by default — existing elements keep their own shape
+              appState: { viewBackgroundColor: 'transparent', currentItemRoundness: 'sharp' },
               files: (restored.files as Record<string, unknown>) || {},
             },
             sha,
@@ -98,9 +99,9 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
     if (png) return pngScene!.scene;
     try {
       const parsed = JSON.parse(file.data!.content);
-      return { elements: parsed.elements || [], appState: { viewBackgroundColor: 'transparent' }, files: parsed.files || {} };
+      return { elements: parsed.elements || [], appState: { viewBackgroundColor: 'transparent', currentItemRoundness: 'sharp' }, files: parsed.files || {} };
     } catch {
-      return { elements: [], appState: {} };
+      return { elements: [], appState: { currentItemRoundness: 'sharp' } };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.data, png, pngScene]);
@@ -112,15 +113,32 @@ export function ExcalidrawModal({ path, onClose, onSaved }: { path: string; onCl
     setSaving(true);
     try {
       if (png) {
-        // PNG with the scene embedded: natively viewable, still editable
+        // PNG with the scene embedded: natively viewable, still editable.
+        // ALWAYS exported light — the canonical pixels render right on any
+        // forge, and dark mode in-app comes from the CSS invert filter
+        // (a dark-baked export would double-invert there).
         const { exportToBlob } = await import('@excalidraw/excalidraw');
         const blob = await exportToBlob({
           elements: api.getSceneElements() as never,
-          appState: { exportEmbedScene: true, exportBackground: false } as never,
+          appState: { exportEmbedScene: true, exportBackground: false, exportWithDarkMode: false, theme: 'light' } as never,
           files: api.getFiles() as never,
           mimeType: 'image/png',
         });
-        const res = await putRaw(app.repoId!, app.branch, path, blob, pngScene?.sha || '');
+        let res: { sha: string };
+        try {
+          res = await putRaw(app.repoId!, app.branch, path, blob, pngScene?.sha || '');
+        } catch (e) {
+          // stale base: the background pixel upgrade (or a speccy redraw)
+          // saved under the open editor. The only writers on a workspace
+          // branch are this user's own flows, and the canvas in front of
+          // them is the intended result — rebase onto the current sha once
+          if (!(e instanceof ApiError) || e.status !== 409) throw e;
+          const cur = await fetch(rawUrl(app.repoId!, app.branch, path), { headers: { 'X-SpecQuill': '1' } });
+          if (!cur.ok) throw e;
+          const sha = (cur.headers.get('ETag') || '').replace(/"/g, '');
+          console.warn('sketch save rebased onto concurrent update:', path);
+          res = await putRaw(app.repoId!, app.branch, path, blob, sha);
+        }
         setPngScene((p) => (p ? { ...p, sha: res.sha } : p));
       } else {
         const scene = {

@@ -6,7 +6,7 @@ import { knownTargets, linkifyReferences, suggestReferences } from './refs';
 
 const REPO = join(process.cwd(), '../repo');
 const files: Record<string, string> = {};
-for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings', 'changes']) {
+for (const folder of ['regulations', 'requirements', 'specs', 'data-mappings']) {
   for (const name of readdirSync(join(REPO, folder))) {
     files[`${folder}/${name}`] = readFileSync(join(REPO, folder, name), 'utf8');
   }

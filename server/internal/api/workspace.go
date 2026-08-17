@@ -52,9 +52,7 @@ func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *pro
 			}
 		}
 	}
-	// a live co-editing room owns its file — never move the ref under it
-	noFF := len(s.hub.ActiveOnBranch(repo.Key(), branch)) > 0
-	ws, err := repo.EnsureWorkspace(branch, noFF)
+	ws, err := repo.EnsureWorkspace(branch)
 	if err != nil {
 		gitFail(w, err)
 		return
@@ -62,20 +60,13 @@ func (s *Server) postWorkspace(w http.ResponseWriter, r *http.Request, repo *pro
 	s.publish("workspace", repo.Key(), branch)
 	jsonOK(w, map[string]any{
 		"branch": ws.Branch, "created": ws.Created, "state": ws.State, "base": ws.Base,
-		// tells the client the ff was withheld, not impossible
-		"heldByRoom": noFF && ws.State == "behind",
 	})
 }
 
 // POST /api/repos/{repo}/pull?branch= — fast-forward onto origin.
 func (s *Server) postPull(w http.ResponseWriter, r *http.Request, repo *project.Project) {
 	branch := r.URL.Query().Get("branch")
-	// never move a ref while a co-editing room is live on the branch
-	if paths := s.hub.ActiveOnBranch(repo.Key(), repo.ResolveRef(branch)); len(paths) > 0 {
-		jsonError2(w, http.StatusConflict, "live co-editing session on "+strings.Join(paths, ", "), "room_active")
-		return
-	}
-	head, updated, err := repo.Pull(branch)
+	head, updated, err := repo.Pull(branch, s.tok(r))
 	switch {
 	case errors.Is(err, gitx.ErrDirtyWorktree):
 		jsonError2(w, http.StatusConflict, err.Error(), "dirty")

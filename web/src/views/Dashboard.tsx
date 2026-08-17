@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useNav } from '../state/nav';
 import { sx } from '../lib/sx';
 import { useApp } from '../state/AppContext';
-import { useMe, usePRs } from '../api/hooks';
-import { buildDashboard, srcMeta } from '../lib/derive';
-import { LinkCheckCard } from '../components/LinkCheck';
+import { useBranches, useMergePreview } from '../api/hooks';
+import { buildDashboard, statusMeta, windowPhrase } from '../lib/derive';
+import { LinksSummary } from '../components/LinksSummary';
+import { ForgeReview } from '../components/ForgeReview';
+import { AlignmentSummary } from '../components/AlignmentSummary';
 import { NewDocDialog } from '../components/NewDocDialog';
 
 // one row in the "Needs your review" card — derived, never hard-coded
@@ -13,41 +15,46 @@ interface ReviewItem { key: string; icon: string; fg: string; bg: string; title:
 export function Dashboard() {
   const nav = useNav();
   const app = useApp();
-  const me = useMe();
-  const prs = usePRs(app.repoId);
+  const branches = useBranches(app.repoId);
+  const defaultBranch = branches.data?.find((b) => b.isDefault)?.name;
+  const onFeature = !!defaultBranch && app.branch !== defaultBranch;
+  const merge = useMergePreview(app.repoId, onFeature ? app.branch : undefined, defaultBranch);
   const [newDoc, setNewDoc] = useState(false);
   if (!app.model) return <Loading />;
   const d = buildDashboard(app.model);
   const covColor = d.cov > 80 ? 'var(--data)' : d.cov > 60 ? 'var(--prod)' : 'var(--reg)';
 
-  // needs-your-review: open PRs (yours vs. awaiting your approval), mapping
-  // docs with drifted fields, and change records still in triage
+  // needs-your-attention: committed work not yet on the default branch,
+  // mapping docs with drifted fields (only when the workspace HAS mappings),
+  // and timed dependencies at risk of missing their window
   const review: ReviewItem[] = [];
-  for (const p of prs.data || []) {
-    const mine = p.author.id === me.data?.id;
-    const approvedByMe = p.approvals.some((a) => a.current && a.user.id === me.data?.id);
-    const state = mine ? (p.approvals.some((a) => a.current) ? 'approved — ready to merge' : 'your open PR')
-      : approvedByMe ? 'you approved' : 'awaiting your review';
-    const comments = p.commentCount ? ` · ${p.commentCount} comment${p.commentCount === 1 ? '' : 's'}` : '';
+  const pending = merge.data?.files?.length ?? 0;
+  if (pending > 0) {
     review.push({
-      key: 'pr' + p.number, icon: '⑂', fg: 'var(--prod)', bg: 'var(--prod-bg)',
-      title: `PR #${p.number} · ${p.title}`,
-      sub: state + comments,
-      go: `/prs/${p.number}`,
+      key: 'merge', icon: '⑂', fg: 'var(--prod)', bg: 'var(--prod-bg)',
+      title: `${pending} file${pending === 1 ? '' : 's'} ready to merge`,
+      sub: `committed on ${app.branch}, not yet on ${defaultBranch} — use Merge in the header`,
     });
   }
-  const driftByMap: Record<string, number> = {};
-  app.model.fields.forEach((f) => { if (f.drift) driftByMap[f.map] = (driftByMap[f.map] || 0) + 1; });
-  Object.entries(driftByMap).forEach(([map, n]) => review.push({
-    key: 'drift' + map, icon: '⇄', fg: 'var(--data)', bg: 'var(--data-bg)',
-    title: (map.split('/').pop() || map) + ' mapping',
-    sub: `${n} drift${n === 1 ? '' : 's'} to confirm`,
-    go: '/editor/' + map,
+  if (d.mapEntity) {
+    const driftByMap: Record<string, number> = {};
+    app.model.fields.forEach((f) => { if (f.drift) driftByMap[f.map] = (driftByMap[f.map] || 0) + 1; });
+    Object.entries(driftByMap).forEach(([map, n]) => review.push({
+      key: 'drift' + map, icon: '⇄', fg: 'var(--data)', bg: 'var(--data-bg)',
+      title: (map.split('/').pop() || map) + ' mapping',
+      sub: `${n} drift${n === 1 ? '' : 's'} to confirm`,
+      go: '/editor/' + map,
+    }));
+  }
+  // timed dependencies whose window opens (or closes) inside the horizon
+  // while the document or something depending on it is not ready yet
+  d.atRisk.forEach((t) => review.push({
+    key: 'timed' + t.path, icon: '⧗', fg: 'var(--reg)', bg: 'var(--reg-bg)',
+    title: t.title || t.name,
+    sub: `${windowPhrase(t)} · ${t.readyCount}/${t.deps.length} dependents ready`,
+    go: '/timed?sel=' + encodeURIComponent(t.path),
   }));
-  app.model.changes.filter((c) => c.status === 'triage').forEach((c) => review.push({
-    key: 'chg' + c.path, icon: '⚑', fg: 'var(--reg)', bg: 'var(--reg-bg)',
-    title: c.name, sub: 'change in triage', go: '/changes?sel=' + encodeURIComponent(c.path),
-  }));
+  const kpiCols = d.tiles.length + (d.showCov ? 1 : 0);
 
   return (
     <div style={sx('flex:1;min-height:0;overflow-y:auto;background:var(--bg)')}>
@@ -58,57 +65,67 @@ export function Dashboard() {
             <h1 style={sx('margin:5px 0 0;font-size:25px;font-weight:700;letter-spacing:-.5px')}>Overview</h1>
           </div>
           <div style={sx('display:flex;gap:8px')}>
-            <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New requirement</button>
-            <button onClick={() => nav('/changes')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
-              Review changes · {d.openCount}
-            </button>
+            {d.newDoc && (
+              <button onClick={() => setNewDoc(true)} style={sx('height:32px;padding:0 13px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>+ New {d.newDoc.label}</button>
+            )}
+            {d.hasTimed && (
+              <button onClick={() => nav('/timed')} style={sx('height:32px;padding:0 13px;border:none;border-radius:8px;background:var(--text);color:var(--bg);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer')}>
+                Timed dependencies · {d.timedCounts.pending}
+              </button>
+            )}
           </div>
         </div>
 
-        <div style={sx('display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px')}>
-          <Kpi label="Open changes" value={String(d.openCount)} sub={`${d.bySource.regulatory} regulatory · ${d.bySource.product} product · ${d.bySource.technical} tech`} />
-          <Kpi label="Requirements" value={String(d.reqCount)} sub={`${d.specCount} specs linked`} />
-          <Kpi label="Mapping drifts" value={String(d.drifts)} sub="need re-validation" valueStyle="color:var(--reg)" />
-          <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)')}>
-            <div style={sx('font-size:11.5px;color:var(--text-2)')}>Trace coverage</div>
-            <div style={sx('display:flex;align-items:baseline;gap:8px;margin-top:8px')}>
-              <span style={sx('font-size:27px;font-weight:700;letter-spacing:-.5px')}>{d.cov}<span style={sx('font-size:15px')}>%</span></span>
+        <div style={sx(`display:grid;grid-template-columns:repeat(${Math.max(kpiCols, 1)},1fr);gap:14px;margin-top:22px`)}>
+          {d.tiles.map((t) => (
+            <Kpi key={t.key} label={t.label} value={t.value} sub={t.sub} valueStyle={t.valueStyle} />
+          ))}
+          {d.showCov && (
+            <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)')}>
+              <div style={sx('font-size:11.5px;color:var(--text-2)')}>Trace coverage</div>
+              <div style={sx('display:flex;align-items:baseline;gap:8px;margin-top:8px')}>
+                <span style={sx('font-size:27px;font-weight:700;letter-spacing:-.5px')}>{d.cov}<span style={sx('font-size:15px')}>%</span></span>
+              </div>
+              <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
+                <div style={sx(`width:${d.cov}%;height:100%;background:${covColor}`)} />
+              </div>
             </div>
-            <div style={sx('height:5px;border-radius:3px;background:var(--surface-2);margin-top:8px;overflow:hidden')}>
-              <div style={sx(`width:${d.cov}%;height:100%;background:${covColor}`)} />
-            </div>
-          </div>
+          )}
         </div>
 
-        <div style={sx('display:grid;grid-template-columns:1.65fr 1fr;gap:18px;margin-top:20px;align-items:start')}>
+        <div style={sx(`display:grid;grid-template-columns:${d.hasTimed ? '1.65fr 1fr' : '1fr'};gap:18px;margin-top:20px;align-items:start`)}>
+          {d.hasTimed && (
           <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
             <div style={sx('display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--border)')}>
-              <span style={sx('font-weight:700;font-size:13.5px')}>Requirement changes</span>
-              <span style={sx('font-size:11px;color:var(--text-3)')}>— all sources</span>
+              <span style={sx('font-weight:700;font-size:13.5px')}>Coming up</span>
+              <span style={sx('font-size:11px;color:var(--text-3)')}>— validity windows</span>
               <div style={sx('flex:1')} />
-              <span onClick={() => nav('/changes')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Open inbox →</span>
+              <span onClick={() => nav('/timed')} style={sx('font-size:11.5px;color:var(--prod);cursor:pointer;font-weight:600')}>Open timeline →</span>
             </div>
-            {d.feed.map((c) => {
-              const m = srcMeta(c.source);
-              return (
-                <div key={c.path} onClick={() => nav('/changes?sel=' + encodeURIComponent(c.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
-                  <span style={sx(`flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:${m.bg};color:${m.fg}`)}>
-                    {m.icon} {m.label}
-                  </span>
-                  <div style={sx('flex:1;min-width:0')}>
-                    <div style={sx('display:flex;align-items:baseline;gap:8px')}>
-                      <span style={sx('font-weight:600;font-size:13px')}>{c.title}</span>
-                      <div style={sx('flex:1')} />
-                      <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{c.ago}</span>
-                    </div>
-                    <div style={sx('font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.5')}>
-                      <span style={sx('color:var(--ai);font-weight:600')}>✦</span> {c.summary}
-                    </div>
+            {d.upcoming.map((t) => (
+              <div key={t.path} onClick={() => nav('/timed?sel=' + encodeURIComponent(t.path))} style={sx('display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer')}>
+                <span style={sx('flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:600;' +
+                  (t.atRisk ? 'background:var(--reg-bg);color:var(--reg)' : 'background:var(--surface-2);color:var(--text-2)'))}>
+                  {windowPhrase(t)}
+                </span>
+                <div style={sx('flex:1;min-width:0')}>
+                  <div style={sx('display:flex;align-items:baseline;gap:8px')}>
+                    <span style={sx('font-weight:600;font-size:13px')}>{t.title || t.name}</span>
+                    <div style={sx('flex:1')} />
+                    <span style={sx("font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-3)")}>{t.governing}</span>
+                  </div>
+                  <div style={sx('font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.5')}>
+                    {statusMeta(t.status).label || 'no status'}
+                    {t.deps.length ? ` · ${t.readyCount}/${t.deps.length} dependents ready` : ' · no dependents'}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ))}
+            {d.upcoming.length === 0 && (
+              <div style={sx('padding:14px 16px;font-size:12px;color:var(--text-3)')}>no open windows — everything on the timeline has expired</div>
+            )}
           </div>
+          )}
 
           <div style={sx('display:flex;flex-direction:column;gap:18px')}>
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden')}>
@@ -131,6 +148,7 @@ export function Dashboard() {
                 </div>
               )}
             </div>
+            {d.health.length > 0 && (
             <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);padding:14px 16px')}>
               <div style={sx('font-weight:700;font-size:13.5px;margin-bottom:12px')}>Traceability health</div>
               <div style={sx('display:flex;flex-direction:column;gap:11px')}>
@@ -147,11 +165,14 @@ export function Dashboard() {
                 ))}
               </div>
             </div>
-            <LinkCheckCard />
+            )}
+            <AlignmentSummary repo={app.repoId} branch={app.branch} />
+            <LinksSummary />
+            <ForgeReview repo={app.repoId} branch={app.branch} />
           </div>
         </div>
       </div>
-      {newDoc && <NewDocDialog initialKind="requirement" onClose={() => setNewDoc(false)} />}
+      {newDoc && d.newDoc && <NewDocDialog initialKind={d.newDoc.kind} onClose={() => setNewDoc(false)} />}
     </div>
   );
 }

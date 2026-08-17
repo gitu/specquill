@@ -23,7 +23,7 @@ func mirrorManager(t *testing.T) *Repo {
 	if err := m.Init(); err != nil {
 		t.Fatal(err)
 	}
-	r, _ := m.Repo("default/mirror")
+	r, _ := m.Repo("mirror")
 	return r
 }
 
@@ -94,7 +94,7 @@ func TestSnapshotMirrorRejectsEmptyAndNonMirror(t *testing.T) {
 
 	// a normal (non-mirror) repo refuses SnapshotMirror
 	m, _ := fixture(t)
-	w, _ := m.Repo("default/w")
+	w, _ := m.Repo("w")
 	if _, _, err := w.SnapshotMirror("x", map[string]string{"a.md": "b"}); err == nil {
 		t.Fatal("non-mirror repo should refuse SnapshotMirror")
 	}

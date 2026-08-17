@@ -78,18 +78,12 @@ func TestGenerateIndexes(t *testing.T) {
 	}
 }
 
-func TestWriteLog(t *testing.T) {
-	root := t.TempDir()
-	wrote, err := WriteLog(root, []LogEntry{
+func TestRenderLog(t *testing.T) {
+	s := RenderLog([]LogEntry{
 		{Date: "2026-07-09", Author: "Flo", Subject: "add venue spec"},
 		{Date: "2026-07-09", Author: "Anna", Subject: "req: tighten RTS 22 deadline"},
 		{Date: "2026-07-01", Author: "Flo", Subject: "remove stale mapping"},
 	})
-	if err != nil || !wrote {
-		t.Fatalf("WriteLog: %v %v", wrote, err)
-	}
-	b, _ := os.ReadFile(filepath.Join(root, "log.md"))
-	s := string(b)
 	for _, want := range []string{
 		"# Log", "## 2026-07-09", "## 2026-07-01",
 		"- **Added** add venue spec (Flo)",
@@ -102,9 +96,5 @@ func TestWriteLog(t *testing.T) {
 	}
 	if strings.Index(s, "2026-07-09") > strings.Index(s, "2026-07-01") {
 		t.Fatal("log not newest-first")
-	}
-	// idempotent
-	if wrote, _ = WriteLog(root, []LogEntry{{Date: "2026-07-09", Author: "Flo", Subject: "add venue spec"}, {Date: "2026-07-09", Author: "Anna", Subject: "req: tighten RTS 22 deadline"}, {Date: "2026-07-01", Author: "Flo", Subject: "remove stale mapping"}}); !wrote {
-		// content unchanged → wrote=false is the expected steady state
 	}
 }

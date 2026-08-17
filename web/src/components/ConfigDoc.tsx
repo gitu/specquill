@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { sx } from '../lib/sx';
 import { parseEntities } from '../lib/entities';
-import { parseTaxonomy } from '../lib/derive';
+import { rawTaxonomy, type PropertySchema } from '../lib/config';
 import { idSchemes } from '../lib/ids';
 
 // ConfigDoc — the view-mode renderer for workspace config files. The two
@@ -14,7 +14,8 @@ interface Span { text: string; style: string }
 
 // line-based highlighting in the design's string-style idiom — comments,
 // keys, and quoted strings are enough color for config-sized files
-function yamlSpans(line: string): Span[] {
+// (exported: the Model view's sample-config dialog renders with it too)
+export function yamlSpans(line: string): Span[] {
   if (/^\s*#/.test(line)) return [{ text: line, style: 'color:var(--text-3)' }];
   const m = line.match(/^(\s*(?:- )?)([\w.-]+):(.*)$/);
   const value = (v: string): Span[] =>
@@ -56,7 +57,9 @@ const chip = (extra = '') =>
   sx('display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;font-weight:600;' + extra);
 
 function ConfigSummary({ raw }: { raw: string }) {
-  const tax = parseTaxonomy(raw);
+  // the file's OWN sections — the effective model (defaults merged in) lives
+  // in the Model view; this summary shows what THIS file overrides
+  const tax = rawTaxonomy(raw);
   const entities = parseEntities(raw).filter((e) => !e.builtin);
   const schemes = idSchemes(raw);
   const view = (raw.match(/^\s*default_view:\s*([\w-]+)/m) || [])[1];
@@ -103,6 +106,16 @@ function ConfigSummary({ raw }: { raw: string }) {
           ))}
         </Section>
       )}
+      {tax.links.length > 0 && (
+        <Section title="Link types" hint="typed edges of the traceability graph">
+          {tax.links.map((l) => (
+            <span key={l.name} style={chip()}>
+              <span style={sx(MONO + 'font-size:11px;color:var(--prod)')}>{l.name}</span>
+              <span style={sx(MONO + 'font-size:10px;color:var(--text-3)')}>{l.from} → {l.to}</span>
+            </span>
+          ))}
+        </Section>
+      )}
       <Section title="References" hint="read-only sources this project selects">
         {refs.length
           ? refs.map((r) => <span key={r} style={chip(MONO + 'font-size:11px')}>~{r}</span>)
@@ -112,9 +125,7 @@ function ConfigSummary({ raw }: { raw: string }) {
   );
 }
 
-function SchemaSummary({ raw }: { raw: string }) {
-  let schema: { order?: string[]; fields?: Record<string, { label?: string; type?: string; values?: Record<string, string> }> };
-  try { schema = JSON.parse(raw); } catch { return null; }
+function PropertiesTable({ schema }: { schema: PropertySchema }) {
   const keys = (schema.order || Object.keys(schema.fields || {})).filter((k) => (schema.fields || {})[k]);
   if (!keys.length) return null;
   const TYPE_COLOR: Record<string, string> = {
@@ -146,12 +157,26 @@ function SchemaSummary({ raw }: { raw: string }) {
   );
 }
 
+// legacy stand-alone property schema (.specquill/schema.json) — still honored
+// while the config has no properties: section
+function SchemaSummary({ raw }: { raw: string }) {
+  let schema: PropertySchema;
+  try { schema = JSON.parse(raw); } catch { return null; }
+  return <PropertiesTable schema={schema} />;
+}
+
+function ConfigProperties({ raw }: { raw: string }) {
+  const props = rawTaxonomy(raw).properties;
+  return props ? <PropertiesTable schema={props} /> : null;
+}
+
 export function ConfigDoc({ path, raw }: { path: string; raw: string }) {
   const isJson = path.endsWith('.json');
   const spansOf = isJson ? jsonSpans : yamlSpans;
   return (
     <div>
       {path.endsWith('.specquill/config.yml') && <ConfigSummary raw={raw} />}
+      {path.endsWith('.specquill/config.yml') && <ConfigProperties raw={raw} />}
       {path.endsWith('.specquill/schema.json') && <SchemaSummary raw={raw} />}
       <div style={sx('border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden')}>
         <div style={sx('display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)')}>

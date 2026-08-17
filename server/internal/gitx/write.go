@@ -145,54 +145,6 @@ func (r *Repo) SaveFile(branch, path, content, baseSha string) (sha string, err 
 	return strings.TrimSpace(newSha), nil
 }
 
-// SaveFileForce writes room-owned content without an optimistic-concurrency
-// check — collaboration rooms are the single writer for their file while
-// active. Protection still applies.
-func (r *Repo) SaveFileForce(branch, path, content string) (sha string, err error) {
-	branch, err = r.resolveRef(branch)
-	if err != nil {
-		return "", err
-	}
-	if err := r.protectedErr(branch); err != nil {
-		return "", err
-	}
-	path, err = safeRelPath(path)
-	if err != nil {
-		return "", err
-	}
-	wt, err := r.Worktree(branch)
-	if err != nil {
-		return "", err
-	}
-	mu := r.lockBranch(branch)
-	mu.Lock()
-	defer mu.Unlock()
-	abs := filepath.Join(wt, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "", err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(abs), ".specquill-*")
-	if err != nil {
-		return "", err
-	}
-	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp.Name(), abs); err != nil {
-		return "", err
-	}
-	newSha, err := runFull2(wt, nil, []byte(content), "hash-object", "-t", "blob", "--stdin")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(newSha), nil
-}
-
 // MoveFile renames a file inside the branch worktree. Tracked files move via
 // `git mv` so the rename is staged explicitly; untracked drafts (not yet
 // known to git) fall back to a plain filesystem rename.
@@ -265,6 +217,48 @@ func (r *Repo) DeleteFile(branch, path string) error {
 	return os.Remove(abs)
 }
 
+// Discard rejects uncommitted worktree changes: tracked paths (including
+// staged adds/renames) are restored to HEAD, untracked drafts are removed.
+// Empty paths discard the whole worktree. Commits are never touched.
+func (r *Repo) Discard(branch string, paths []string) error {
+	branch, err := r.resolveRef(branch)
+	if err != nil {
+		return err
+	}
+	if err := r.protectedErr(branch); err != nil {
+		return err
+	}
+	specs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		clean, err := safeRelPath(p)
+		if err != nil {
+			return err
+		}
+		specs = append(specs, clean)
+	}
+	if len(specs) == 0 {
+		specs = []string{"."}
+	}
+	wt, err := r.Worktree(branch)
+	if err != nil {
+		return err
+	}
+	mu := r.lockBranch(branch)
+	mu.Lock()
+	defer mu.Unlock()
+	// per spec: a batch restore aborts wholesale when ONE pathspec is unknown
+	// to git (an untracked draft) — the others must still be restored
+	for _, spec := range specs {
+		if _, err := run(wt, nil, "restore", "--source=HEAD", "--staged", "--worktree", "--", spec); err != nil &&
+			!strings.Contains(err.Error(), "did not match") {
+			return err
+		}
+	}
+	// restore leaves untracked files behind — clean removes them
+	_, err = run(wt, nil, append([]string{"clean", "-fdq", "--"}, specs...)...)
+	return err
+}
+
 // Commit stages and commits worktree changes. The logged-in user is the
 // author and committer; the service identity lands as a Co-authored-by trailer.
 func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []string) (string, error) {
@@ -291,19 +285,25 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 			return "", err
 		}
 	} else {
-		args := append([]string{"add", "-A", "--"}, paths...)
+		// validate first, then build argv from what the check returned —
+		// git must never see a path that has not been through safeRelPath
+		args := make([]string, 0, len(paths)+3)
+		args = append(args, "add", "-A", "--")
 		for _, p := range paths {
-			if _, err := safeRelPath(p); err != nil {
+			clean, err := safeRelPath(p)
+			if err != nil {
 				return "", err
 			}
+			args = append(args, clean)
 		}
 		if _, err := run(wt, nil, args...); err != nil {
 			return "", err
 		}
 	}
-	// OKF bundles: regenerate index.md/log.md so the derived reserved files
-	// ride in the same commit (no-op unless the workspace opted in)
-	r.regenerateOKF(wt, message, authorName)
+	// OKF bundles: regenerate the index.md listings so they ride in the same
+	// commit (no-op unless the workspace opted in); log.md is generated only
+	// when the bundle is exported
+	r.regenerateOKF(wt)
 
 	// the human is both author AND committer; the service records its
 	// involvement as a Co-authored-by trailer instead
@@ -311,9 +311,10 @@ func (r *Repo) Commit(branch, message, authorName, authorEmail string, paths []s
 		"GIT_COMMITTER_NAME=" + authorName,
 		"GIT_COMMITTER_EMAIL=" + authorEmail,
 	}
+	// -F - takes the message on stdin: arbitrary user text never reaches argv
 	message = r.withServiceTrailer(message)
-	if _, err := run(wt, env, "commit", "--no-verify",
-		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-m", message); err != nil {
+	if _, _, err := runFull(wt, env, []byte(message), "commit", "--no-verify",
+		"--author", fmt.Sprintf("%s <%s>", authorName, authorEmail), "-F", "-"); err != nil {
 		return "", err
 	}
 	sha, err := run(wt, nil, "rev-parse", "HEAD")

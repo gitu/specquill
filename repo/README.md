@@ -28,8 +28,6 @@ trading-specs/
 ├─ diagrams/                  standalone diagram sources
 │  ├─ reporting.mermaid
 │  └─ data-flow.excalidraw
-└─ changes/                   change records (any source, not just regulatory)
-   └─ 2026-06-mifid-rts22.md
 ```
 
 ## The model
@@ -40,8 +38,10 @@ trading-specs/
   graph and matrix are computed from.
 - **Diagrams** live inline in specs as fenced ` ```mermaid ` blocks or as embedded
   `.excalidraw` files.
-- **Changes** record an incoming delta from any source, its AI-assessed impact, and the
-  PR that carries the edits.
+- Documents that only apply for a period carry a **validity window** in their
+  frontmatter (`starts`/`ends`, or regulatory wording like `effective_from`) — those
+  are the workspace's timed dependencies. What CHANGED is read from git history, not
+  from documents about changes.
 
 ## How the UI maps to files
 | UI object | File |
@@ -51,6 +51,5 @@ trading-specs/
 | Inline mermaid block | fenced block in `specs/txn-report.md` + `diagrams/reporting.mermaid` |
 | Inline excalidraw block | `diagrams/data-flow.excalidraw` |
 | Data-mapping table | `data-mappings/trade.md` |
-| Copilot "change detected" | `changes/2026-06-mifid-rts22.md` |
 | Diff / PR #128 | git diff of the above on `feature/mifid-update` |
-| Traceability graph / matrix | computed from `drives` / `implements` / `maps_to` / `verifies` links |
+| Traceability graph | computed from `drivers` / `implements` / `maps_to` / `verifies` links |

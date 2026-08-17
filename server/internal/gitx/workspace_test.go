@@ -9,7 +9,7 @@ import (
 // protect marks main as protected on the writable fixture repo.
 func protect(t *testing.T, m *Manager) *Repo {
 	t.Helper()
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 	repo.Cfg.ProtectedBranches = []string{"main"}
 	return repo
 }
@@ -47,7 +47,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	repo := protect(t, m)
 
 	// create
-	ws, err := repo.EnsureWorkspace("ws/jane", false)
+	ws, err := repo.EnsureWorkspace("ws/jane")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	}
 
 	// reuse clean+current
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.Created || ws.State != "current" {
 		t.Fatalf("reuse: %+v", ws)
 	}
@@ -71,7 +71,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	repo.Cfg.ProtectedBranches = []string{"main"}
 
 	// clean + behind → fast-forwarded
-	ws, err = repo.EnsureWorkspace("ws/jane", false)
+	ws, err = repo.EnsureWorkspace("ws/jane")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	if _, err := repo.Commit("ws/jane", "own work", "J", "j@t", nil); err != nil {
 		t.Fatal(err)
 	}
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.State != "ahead" {
 		t.Fatalf("want ahead, got %+v", ws)
 	}
@@ -98,7 +98,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	_, _ = repo.SaveFile("main", "specs/a.md", "---\ntitle: A\n---\n\n# A3\n", mustSha(t, repo, "main", "specs/a.md"))
 	_, _ = repo.Commit("main", "more main", "J", "j@t", nil)
 	repo.Cfg.ProtectedBranches = []string{"main"}
-	ws, _ = repo.EnsureWorkspace("ws/jane", false)
+	ws, _ = repo.EnsureWorkspace("ws/jane")
 	if ws.State != "diverged" {
 		t.Fatalf("want diverged, got %+v", ws)
 	}
@@ -106,7 +106,7 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 	// dirty → reused untouched
 	_ = repo.CreateBranch("ws/bob", "main")
 	_, _ = repo.SaveFile("ws/bob", "notes.txt", "wip\n", mustSha(t, repo, "ws/bob", "notes.txt"))
-	ws, _ = repo.EnsureWorkspace("ws/bob", false)
+	ws, _ = repo.EnsureWorkspace("ws/bob")
 	if ws.State != "dirty" {
 		t.Fatalf("want dirty, got %+v", ws)
 	}
@@ -119,14 +119,14 @@ func TestEnsureWorkspaceLifecycle(t *testing.T) {
 func TestEnsureWorkspaceRejectsProtectedName(t *testing.T) {
 	m, _ := fixture(t)
 	repo := protect(t, m)
-	if _, err := repo.EnsureWorkspace("main", false); !errors.Is(err, ErrProtected) {
+	if _, err := repo.EnsureWorkspace("main"); !errors.Is(err, ErrProtected) {
 		t.Fatalf("want ErrProtected, got %v", err)
 	}
 }
 
 func TestPullFastForwardAndRefusals(t *testing.T) {
 	m, origin := fixture(t)
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 
 	// advance origin directly (another clone pushes)
 	tmp := t.TempDir()
@@ -135,7 +135,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	mustRun(t, tmp, "-c", "user.name=o", "-c", "user.email=o@t", "commit", "-am", "origin edit")
 	mustRun(t, tmp, "push", "-q", "origin", "main")
 
-	head, updated, err := repo.Pull("main")
+	head, updated, err := repo.Pull("main", "")
 	if err != nil || !updated {
 		t.Fatalf("pull: %v updated=%v", err, updated)
 	}
@@ -143,7 +143,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	if content != "from origin\n" {
 		t.Fatalf("pull content: %q", content)
 	}
-	if _, updated, _ = repo.Pull("main"); updated {
+	if _, updated, _ = repo.Pull("main", ""); updated {
 		t.Fatal("second pull should be a no-op")
 	}
 	_ = head
@@ -153,7 +153,7 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	mustWrite(t, tmp+"/notes.txt", "origin again\n")
 	mustRun(t, tmp, "-c", "user.name=o", "-c", "user.email=o@t", "commit", "-am", "origin edit 2")
 	mustRun(t, tmp, "push", "-q", "origin", "main")
-	if _, _, err := repo.Pull("main"); !errors.Is(err, ErrDirtyWorktree) {
+	if _, _, err := repo.Pull("main", ""); !errors.Is(err, ErrDirtyWorktree) {
 		t.Fatalf("want ErrDirtyWorktree, got %v", err)
 	}
 	// clean up dirt, then diverge locally
@@ -161,14 +161,14 @@ func TestPullFastForwardAndRefusals(t *testing.T) {
 	if _, err := repo.Commit("main", "local commit", "J", "j@t", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.Pull("main"); !errors.Is(err, ErrDiverged) {
+	if _, _, err := repo.Pull("main", ""); !errors.Is(err, ErrDiverged) {
 		t.Fatalf("want ErrDiverged, got %v", err)
 	}
 }
 
 func TestDiffWorktreeIncludesUntracked(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 	if _, err := repo.SaveFile("main", "specs/new-doc.md", "# New\n\nline two\n", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -190,9 +190,44 @@ func TestDiffWorktreeIncludesUntracked(t *testing.T) {
 	}
 }
 
+// a MODIFIED binary emits no ---/+++ lines — the path must come from the
+// diff header, else the changes drawer shows a nameless card with a broken
+// preview (added binaries were fine via the untracked listing)
+func TestDiffWorktreeBinaryModificationKeepsPath(t *testing.T) {
+	m, _ := fixture(t)
+	repo, _ := m.Repo("w")
+	png := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 1, 2, 3})
+	if _, err := repo.SaveFile("main", "diagrams/sketch.excalidraw.png", png, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit("main", "add sketch", "T", "t@t", nil); err != nil {
+		t.Fatal(err)
+	}
+	sha := mustSha(t, repo, "main", "diagrams/sketch.excalidraw.png")
+	if _, err := repo.SaveFile("main", "diagrams/sketch.excalidraw.png", png+"\x00changed", sha); err != nil {
+		t.Fatal(err)
+	}
+	files, err := repo.DiffWorktree("main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hit *DiffFile
+	for i := range files {
+		if files[i].Path == "diagrams/sketch.excalidraw.png" {
+			hit = &files[i]
+		}
+	}
+	if hit == nil {
+		t.Fatalf("modified binary lost its path: %+v", files)
+	}
+	if hit.Status != "M" || !hit.BinaryLike || len(hit.Hunks) != 0 {
+		t.Fatalf("binary modification: %+v", hit)
+	}
+}
+
 func TestStatusBehindDefault(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 	_ = repo.CreateBranch("feature/bd", "main")
 	_, _ = repo.SaveFile("main", "notes.txt", "move main\n", mustSha(t, repo, "main", "notes.txt"))
 	if _, err := repo.Commit("main", "advance", "J", "j@t", nil); err != nil {
@@ -213,7 +248,7 @@ func TestStatusBehindDefault(t *testing.T) {
 
 func TestFileAtIgnoresWorktree(t *testing.T) {
 	m, _ := fixture(t)
-	repo, _ := m.Repo("default/w")
+	repo, _ := m.Repo("w")
 	_, _ = repo.SaveFile("main", "notes.txt", "uncommitted\n", mustSha(t, repo, "main", "notes.txt"))
 	head, _, err := repo.FileAt("main", "notes.txt")
 	if err != nil {

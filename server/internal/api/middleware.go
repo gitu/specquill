@@ -9,6 +9,11 @@ import (
 
 // requireAuth resolves the session (or the -dev auto-user) and attaches the
 // user to the request context; /api requests without a session get 401.
+//
+// Forge-PAT mode additionally requires the session's token to be present in
+// the RAM vault: after a server restart the session row survives in SQLite
+// but the token does not, so the request 401s and the SPA silently re-logs-in
+// with the token from localStorage.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.devUser != nil {
@@ -17,10 +22,29 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		u := s.sessions.Resolve(r)
 		if u == nil {
+			// the session is gone (expired or deleted) — drop any token still
+			// held for it rather than pinning it until the sweeper runs
+			if c, err := r.Cookie(auth.SessionCookie); err == nil {
+				s.vault.Delete(c.Value)
+			}
 			jsonError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), u)))
+		ctx := auth.WithUser(r.Context(), u)
+		if s.patMode() {
+			c, err := r.Cookie(auth.SessionCookie)
+			if err != nil {
+				jsonError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			token, ok := s.vault.Get(c.Value)
+			if !ok {
+				jsonError2(w, http.StatusUnauthorized, "session has no forge token — sign in again", "token_gone")
+				return
+			}
+			ctx = auth.WithToken(ctx, token)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -30,10 +54,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			// exempt: the OIDC callback (IdP POST binding) and webhooks,
-			// which authenticate with an HMAC signature instead
-			if !strings.HasPrefix(r.URL.Path, "/auth/callback") && !strings.HasPrefix(r.URL.Path, "/hooks/") &&
-				r.Header.Get("X-SpecQuill") != "1" {
+			if !strings.HasPrefix(r.URL.Path, "/hooks/") && r.Header.Get("X-SpecQuill") != "1" {
 				jsonError(w, http.StatusForbidden, "missing X-SpecQuill header")
 				return
 			}

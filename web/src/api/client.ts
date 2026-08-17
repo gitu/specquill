@@ -9,34 +9,94 @@ export class ApiError extends Error {
   }
 }
 
-/** The pinned tenant (multi-tenant setups); '' lets the server infer the
- * user's only membership. Every API call carries it as X-SpecQuill-Tenant. */
-export function activeTenant(): string {
-  return localStorage.getItem('specquill-tenant') || '';
+// Forge-PAT deployments keep the personal access token here — it is the
+// credential of record; sessions are just its short-lived server-side shadow.
+const PAT_KEY = 'specquill-pat';
+
+export const getStoredPat = () => localStorage.getItem(PAT_KEY);
+export const storePat = (token: string) => localStorage.setItem(PAT_KEY, token);
+export const clearStoredPat = () => localStorage.removeItem(PAT_KEY);
+
+// A failed silent re-login parks its reason here; the login page surfaces it.
+// The stored PAT itself is NEVER discarded automatically — replacing it is
+// the user's call (a revoked token, a forge outage and a missing scope all
+// look the same to code and completely different to a person).
+const LOGIN_ERROR_KEY = 'specquill-login-error';
+
+/** The last silent re-login failure, consumed (read-once) by the login page. */
+export function takeLoginError(): string | null {
+  const v = sessionStorage.getItem(LOGIN_ERROR_KEY);
+  sessionStorage.removeItem(LOGIN_ERROR_KEY);
+  return v;
 }
 
-/** Pin a tenant and reload — all cached state is tenant-scoped. */
-export function switchTenant(slug: string) {
-  if (slug) localStorage.setItem('specquill-tenant', slug);
-  else localStorage.removeItem('specquill-tenant');
-  window.location.href = '/';
+// One in-flight re-login at a time: a burst of 401s (page load after a server
+// restart) must not fire N parallel logins.
+let reauth: Promise<boolean> | null = null;
+
+/** Re-establish the session from the stored PAT. Resolves false when there is
+ * no stored token or the login failed — the failure reason is parked for the
+ * login page, the token stays put. */
+function reloginWithPat(): Promise<boolean> {
+  if (reauth) return reauth; // a login is already in flight — join it
+  const attempt = (async () => {
+    const token = getStoredPat();
+    if (!token) return false;
+    try {
+      const res = await fetch('/auth/pat/login', {
+        method: 'POST',
+        headers: { 'X-SpecQuill': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep statusText */ }
+        sessionStorage.setItem(LOGIN_ERROR_KEY, msg);
+      } else {
+        sessionStorage.removeItem(LOGIN_ERROR_KEY); // recovered — drop any stale reason
+      }
+      return res.ok;
+    } catch {
+      // offline/aborted — keep the token, retry on the next 401; still leave
+      // a reason in case the browser ends up on the login page
+      sessionStorage.setItem(LOGIN_ERROR_KEY, 'the server could not be reached — check your connection and try again');
+      return false;
+    }
+  })();
+  reauth = attempt;
+  // released as soon as it settles: callers already in flight hold the
+  // promise itself, and a LATER 401 deserves a fresh attempt rather than
+  // this one's stale verdict
+  void attempt.finally(() => { if (reauth === attempt) reauth = null; });
+  return attempt;
+}
+
+/** fetch + session care: a 401 triggers one silent PAT re-login and retry;
+ * without a recoverable session the browser goes to the login page. */
+export async function authFetch(path: string, init: RequestInit): Promise<Response> {
+  let res = await fetch(path, init);
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    if (await reloginWithPat()) {
+      res = await fetch(path, init);
+    }
+    if (res.status === 401) {
+      window.location.href = '/auth/login';
+      throw new ApiError(401, 'unauthenticated');
+    }
+  }
+  return res;
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await authFetch(path, {
     ...init,
     headers: {
       'X-SpecQuill': '1',
-      ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}),
       // FormData bodies set their own multipart boundary
       ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
   });
-  if (res.status === 401 && !path.startsWith('/auth/')) {
-    window.location.href = '/auth/login';
-    throw new ApiError(401, 'unauthenticated');
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep statusText */ }
@@ -45,18 +105,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** URL serving a repo file's raw bytes (images embedded in documents).
- * Carries the tenant as a query param — <img> tags can't send headers. */
+/** URL serving a repo file's raw bytes (images embedded in documents). */
 export function rawUrl(repo: string, ref: string, path: string): string {
-  const tenant = activeTenant() ? `&tenant=${encodeURIComponent(activeTenant())}` : '';
-  return `/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}${tenant}`;
+  return `/api/repos/${repo}/raw/${path}?ref=${encodeURIComponent(ref)}`;
 }
 
 /** binary-safe file save (excalidraw PNGs); same baseSha contract as PUT files */
 export async function putRaw(repo: string, branch: string, path: string, body: Blob, baseSha: string): Promise<{ sha: string }> {
-  const res = await fetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
+  const res = await authFetch(`/api/repos/${repo}/raw/${path}?branch=${encodeURIComponent(branch)}&baseSha=${encodeURIComponent(baseSha)}`, {
     method: 'PUT',
-    headers: { 'X-SpecQuill': '1', ...(activeTenant() ? { 'X-SpecQuill-Tenant': activeTenant() } : {}) },
+    headers: { 'X-SpecQuill': '1' },
     body,
   });
   if (!res.ok) {
@@ -89,7 +147,8 @@ export interface RepoInfo {
   defaultBranch: string;
   protectedBranches: string[];
   syncedAt?: string;
-  role?: 'viewer' | 'member' | 'admin'; // the caller's effective role on this repo
+  role?: 'viewer' | 'editor' | 'maintainer' | 'admin'; // the caller's effective role on this repo (REQ-021)
+  mergeMode?: 'local' | 'forge'; // how work lands on main: in-app merge, or push + MR/PR on the forge
 }
 export interface Branch { name: string; head: string; isDefault: boolean; isRemote?: boolean; ahead: number; behind: number }
 export interface FileResp { content: string; sha: string }

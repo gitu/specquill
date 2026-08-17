@@ -31,7 +31,6 @@ test('slash menu, selection toolbar, link dialog and outline', async ({ page, re
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.locator('.milkdown-editable')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('[data-sync]')).toBeVisible({ timeout: 10_000 });
 
   // slash menu → insert a table (anchor the cursor in a concrete paragraph;
   // the settle waits let PM process the click before synthetic keys arrive)
@@ -74,13 +73,7 @@ test('slash menu, selection toolbar, link dialog and outline', async ({ page, re
   // the table widget's floating handles can overlap the chip mid-doc)
   await expect(page.locator('[data-outline]')).toBeVisible();
 
-  // cleanup: close the room, delete the scratch file
+  // cleanup: delete the scratch file
   await page.goto('/p/trading-specs/dashboard');
-  await expect
-    .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
-      return rooms.filter((r) => r.users.length > 0).length;
-    }, { timeout: 20_000 })
-    .toBe(0);
   await request.delete(`/api/repos/${REPO}/files/${DOC}?branch=${encodeURIComponent(branch)}`, { headers: H });
 });

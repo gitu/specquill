@@ -87,7 +87,7 @@ test('drafts survive navigation away and back', async ({ page, request }) => {
   expect(file.content).toContain(marker);
 });
 
-test('changes drawer shows the uncommitted diff', async ({ page, request }) => {
+test('changes drawer shows the uncommitted diff and discard rejects it', async ({ page, request }) => {
   const branch = await wsBranch(request);
   const cur = (await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string; sha: string };
   await request.put(`/api/repos/${REPO}/files/specs/venue.md?branch=${encodeURIComponent(branch)}`, {
@@ -100,7 +100,17 @@ test('changes drawer shows the uncommitted diff', async ({ page, request }) => {
   await page.getByText(branch, { exact: true }).click();
   await page.getByText('1 change', { exact: false }).first().click();
   await expect(page.getByText('Uncommitted changes')).toBeVisible();
-  await expect(page.getByText('Drawer marker line.')).toBeVisible();
+  // scope to the drawer's diff — the editor body behind it shows the marker too
+  await expect(page.locator('[id="file-specs/venue.md"]').getByText('Drawer marker line.').first()).toBeVisible();
+
+  // "Discard all" rejects the pending change and restores the committed state
+  const head = (await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}&at=head`)).json()) as { content: string };
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: 'Discard all' }).click();
+  await expect(page.getByText('working tree clean — nothing to commit')).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () =>
+    ((await (await request.get(`/api/repos/${REPO}/files/specs/venue.md?ref=${encodeURIComponent(branch)}`)).json()) as { content: string }).content,
+  { timeout: 15_000 }).toBe(head.content);
 });
 
 test('sync banner offers a workspace update after main moves', async ({ page, request }) => {
@@ -108,19 +118,18 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
   const stamp = Date.now().toString(36);
 
   // the workspace may carry real commits (diverged) — land them through the
-  // normal PR flow first so the update below can fast-forward
+  // normal merge flow first so the update below can fast-forward
   const st = (await (await request.get(`/api/repos/${REPO}/status?branch=${encodeURIComponent(branch)}`)).json()) as { ahead: number };
   const ws0 = (await (await request.post(`/api/repos/${REPO}/workspace`, { headers: H, data: {} })).json()) as { state: string };
   if (ws0.state === 'diverged' || ws0.state === 'ahead') {
-    const pr0 = (await (await request.post(`/api/repos/${REPO}/prs`, {
-      headers: H, data: { title: `land workspace ${stamp}`, source: branch },
-    })).json()) as { number: number };
-    const merged = await request.post(`/api/repos/${REPO}/prs/${pr0.number}/merge`, { headers: H, data: {} });
+    const merged = await request.post(`/api/repos/${REPO}/merge`, {
+      headers: H, data: { source: branch, message: `land workspace ${stamp}` },
+    });
     test.skip(!merged.ok(), 'workspace commits conflict with main — cannot set up an ff-able workspace');
   }
   void st;
 
-  // move main via a feature branch + PR merge (main itself is protected)
+  // move main via a feature branch merge (main itself is protected)
   const fb = `feature/banner-${stamp}`;
   await request.post(`/api/repos/${REPO}/branches`, { headers: H, data: { name: fb, from: 'main' } });
   const f = (await (await request.get(`/api/repos/${REPO}/files/notes-banner-${stamp}.md?ref=${fb}`)).json()) as { error?: string };
@@ -129,22 +138,13 @@ test('sync banner offers a workspace update after main moves', async ({ page, re
     headers: H, data: { content: `# banner ${stamp}\n`, baseSha: '' },
   });
   await request.post(`/api/repos/${REPO}/commit?branch=${fb}`, { headers: H, data: { message: `banner ${stamp}` } });
-  const pr = (await (await request.post(`/api/repos/${REPO}/prs`, { headers: H, data: { title: `banner ${stamp}`, source: fb } })).json()) as { number: number };
-  await request.post(`/api/repos/${REPO}/prs/${pr.number}/merge`, { headers: H, data: {} });
+  await request.post(`/api/repos/${REPO}/merge`, { headers: H, data: { source: fb, message: `banner ${stamp}` } });
 
   // sit on the (now stale) workspace → banner appears → update clears it
   await page.goto('/p/trading-specs/editor/specs/venue.md');
   await page.locator('header').getByText('main', { exact: true }).first().click();
   await page.getByText(branch, { exact: true }).click();
   await expect(page.locator('[data-banner]')).toBeVisible({ timeout: 20_000 });
-  // the ff is withheld while a co-editing room is still live (5s grace after
-  // the previous test) — wait for it to close
-  await expect
-    .poll(async () => {
-      const rooms = (await (await request.get(`/api/repos/${REPO}/presence`)).json()) as { users: unknown[] }[];
-      return rooms.filter((r) => r.users.length > 0).length;
-    }, { timeout: 20_000 })
-    .toBe(0);
   await page.getByRole('button', { name: 'Update workspace' }).click();
   await expect(page.locator('[data-banner]')).toBeHidden({ timeout: 10_000 });
 });

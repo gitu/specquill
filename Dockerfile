@@ -6,15 +6,18 @@
 # Stage 2 (server) — static Go build with the SPA embedded.
 # Stage 3 (runner) — alpine + git (specquill requires git >= 2.38) + the binary.
 #
-# The runtime config is baked in from deploy/specquill.cloud.yml — it contains
-# no secrets (tokens/keys are referenced by env-var NAME and injected at
-# deploy time, e.g. from Secret Manager — see cloudbuild.yaml).
+# A default runtime config is baked in from deploy/specquill.docker.yml — it
+# contains no secrets (tokens/keys are referenced by env-var NAME and injected
+# at run time). Mount your own over /etc/specquill/specquill.yml to override,
+# and mount a persistent volume at /var/lib/specquill — see deploy/local.md.
 
 ARG GO_VERSION=1.26
 ARG NODE_VERSION=24
 
 # ---------- web ----------
-FROM node:${NODE_VERSION}-alpine AS web
+# Build stages run on the build host's own arch and cross-compile; only the
+# runner stage is per-platform (arm64 images for Docker on Apple Silicon).
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS web
 WORKDIR /src
 # manifests first so `npm ci` caches across source-only commits
 COPY web/package.json web/package-lock.json web/
@@ -24,13 +27,15 @@ COPY web/ web/
 RUN mkdir -p server/internal/webui/dist && cd web && npm run build
 
 # ---------- server ----------
-FROM golang:${GO_VERSION}-alpine AS server
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS server
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
 COPY --from=web /src/server/internal/webui/dist internal/webui/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /specquill ./cmd/specquill
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' -o /specquill ./cmd/specquill
 
 # ---------- runner ----------
 FROM alpine:3.24 AS runner
@@ -39,7 +44,7 @@ RUN apk add --no-cache git ca-certificates tzdata \
  && adduser -D -H -u 10001 specquill \
  && mkdir -p /var/lib/specquill && chown specquill /var/lib/specquill
 COPY --from=server /specquill /usr/local/bin/specquill
-COPY deploy/specquill.cloud.yml /etc/specquill/specquill.yml
+COPY deploy/specquill.docker.yml /etc/specquill/specquill.yml
 USER specquill
 EXPOSE 8080
 ENTRYPOINT ["specquill"]

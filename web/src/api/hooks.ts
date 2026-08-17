@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Branch, FileResp, RepoInfo, SnapshotResp, TreeEntry } from './client';
+import { ForgeKind } from '../lib/forge';
 
 export interface StatusResp {
   branch: string;
@@ -9,8 +10,10 @@ export interface StatusResp {
   behindDefault: number;
 }
 
-export interface Membership { tenant: { slug: string; provider: string; displayName: string }; role: string }
-export interface Me { id: number; name: string; email: string; provider: string; initials: string; tenants?: Membership[] }
+export interface Me {
+  id: number; name: string; email: string; provider: string; initials: string; role: string;
+  mergeMode?: 'local' | 'forge';
+}
 
 export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/api/me'), staleTime: 60_000 });
@@ -25,21 +28,11 @@ export interface ProjectInfo {
   id: string; contentRoot?: string; defaultBranch: string; managedBy: string;
   references: ProjectRef[]; warnings?: string[];
 }
-export function useProjects() {
-  return useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectInfo[]>('/api/projects') });
-}
-
-export interface PresencePeer { connId: number; userId: number; name: string }
-export interface PresenceRoom { branch: string; path: string; users: PresencePeer[]; orphaned: boolean }
-
-/** who is co-editing what (live rooms + orphaned unflushed sessions) */
-export function usePresence(repo: string | undefined) {
-  return useQuery({
-    queryKey: ['presence', repo],
-    queryFn: () => api<PresenceRoom[]>(`/api/repos/${repo}/presence`),
-    enabled: !!repo,
-    refetchInterval: 10_000,
-  });
+// ref = the selected branch: references/warnings follow its .specquill/config.yml
+// (the server falls back to the default branch for projects without that branch)
+export function useProjects(ref?: string) {
+  const url = ref ? `/api/projects?ref=${encodeURIComponent(ref)}` : '/api/projects';
+  return useQuery({ queryKey: ['projects', ref ?? ''], queryFn: () => api<ProjectInfo[]>(url) });
 }
 
 export function useSnapshot(repo: string | undefined, ref: string) {
@@ -87,83 +80,443 @@ export function useStatus(repo: string | undefined, branch: string) {
   });
 }
 
-// ---------------------------------------------------------------- PRs
+// ---------------------------------------------------------------- diffs
 
-export interface PRUser { id: number; name: string; email: string }
-export interface PRApproval { user: PRUser; commitSha: string; createdAt: number; current: boolean }
-export interface PR {
-  repo: string; number: number; title: string; body: string;
-  source: string; target: string; author: PRUser; state: 'open' | 'merged' | 'closed';
-  mergedCommit?: string; createdAt: number; mergedAt?: number;
-  headSha: string; mergeable?: boolean; conflicts?: string[];
-  approvals: PRApproval[]; commentCount: number;
-}
 export interface DiffLine { op: string; text: string }
 export interface DiffHunk { header: string; lines: DiffLine[] }
 export interface DiffFile {
   path: string; oldPath?: string; status: string;
   additions: number; deletions: number; binaryLike: boolean; hunks: DiffHunk[] | null;
 }
-export interface PRComment {
-  id: number; author: PRUser; filePath?: string; line?: number;
-  anchoredCommit?: string; body: string; resolved: boolean; createdAt: number; outdated: boolean;
+
+// ---------------------------------------------------------------- history
+
+export interface CommitFile { status: string; path: string; oldPath?: string }
+export interface Commit {
+  sha: string; parent?: string; author: string; email: string; date: string; subject: string;
+  files: CommitFile[];
+}
+export interface PropChange { key: string; before?: string; after?: string }
+export interface StmtChange { id: string; op: string; before?: string; after?: string }
+export interface DocDelta {
+  path: string; status: string;
+  props?: PropChange[]; statements?: StmtChange[]; sections?: string[]; plain?: boolean;
+}
+export interface CommitDetail { sha: string; files: DiffFile[]; deltas: DocDelta[] }
+
+/** The workspace's commits, newest first (REQ-027). */
+export function useLog(repo: string | undefined, ref: string, since?: string, limit = 50) {
+  const q = new URLSearchParams({ ref, limit: String(limit) });
+  if (since) q.set('since', since);
+  return useQuery({
+    queryKey: ['log', repo, ref, since ?? '', limit],
+    queryFn: () => api<Commit[]>(`/api/repos/${repo}/log?${q}`),
+    enabled: !!repo,
+    staleTime: 30_000,
+  });
 }
 
-export function usePRs(repo: string | undefined, state = 'open') {
+/** One commit: file diffs plus the semantic delta of each document. */
+export function useCommitDetail(repo: string | undefined, sha?: string, parent?: string) {
   return useQuery({
-    queryKey: ['prs', repo, state],
-    queryFn: () => api<PR[]>(`/api/repos/${repo}/prs?state=${state}`),
+    queryKey: ['commit', repo, sha],
+    queryFn: () => api<CommitDetail>(`/api/repos/${repo}/commit?sha=${sha}&parent=${parent ?? ''}`),
+    enabled: !!repo && !!sha,
+    staleTime: Infinity, // commits are immutable
+  });
+}
+
+/** Quick-tier summary of a commit; absent when no model is configured (501). */
+export function useCommitSummary(repo: string | undefined, sha?: string, parent?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['commitsummary', repo, sha],
+    queryFn: () => api<{ sha: string; summary: string; model: string }>(
+      `/api/repos/${repo}/commit/summary?sha=${sha}&parent=${parent ?? ''}`),
+    enabled: !!repo && !!sha && enabled,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+// ---------------------------------------------------------------- merging
+
+export interface MergePreview {
+  source: string; target: string;
+  dirty?: string[]; mergeable?: boolean; conflicts?: string[]; files: DiffFile[];
+}
+
+/** What merging `source` into `target` would land — diff, conflicts, dirty files. */
+export function useMergePreview(repo: string | undefined, source: string | undefined, target: string | undefined) {
+  return useQuery({
+    queryKey: ['mergepreview', repo, source, target],
+    queryFn: () => api<MergePreview>(
+      `/api/repos/${repo}/merge?source=${encodeURIComponent(source!)}&target=${encodeURIComponent(target ?? '')}`),
+    enabled: !!repo && !!source,
+  });
+}
+
+/** Land a branch on the target. 409 `dirty` means commit first. */
+export function useMerge(repo: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { source: string; target?: string; strategy?: string; message?: string }) =>
+      api<{ mergedCommit: string }>(`/api/repos/${repo}/merge`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mergepreview', repo] });
+      qc.invalidateQueries({ queryKey: ['snapshot'] });
+      qc.invalidateQueries({ queryKey: ['branches', repo] });
+      qc.invalidateQueries({ queryKey: ['status'] });
+      qc.invalidateQueries({ queryKey: ['history'] });
+    },
+  });
+}
+
+
+export interface ProposeResp {
+  number: number; url: string; title: string; created: boolean;
+  kind?: ForgeKind; // names the object the way the host does (MR vs PR)
+}
+
+/** Forge mode: push the branch and open (or re-use) a merge request there. */
+export function usePropose(repo: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { source: string; title?: string; body?: string }) =>
+      api<ProposeResp>(
+        `/api/repos/${repo}/propose`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (_, { source }) => {
+      qc.invalidateQueries({ queryKey: ['forge', repo, source] });
+      qc.invalidateQueries({ queryKey: ['status', repo, source] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------- forge
+
+export interface ForgeComment {
+  author: string; body: string; path?: string; line?: number; createdAt: string; url?: string;
+}
+export interface ForgeRequest {
+  number: number; title: string; state: string; author: string; url: string; comments: ForgeComment[];
+}
+export interface ForgeResp {
+  enabled: boolean;
+  kind?: ForgeKind;                // gitlab | github — drives MR/PR wording
+  request?: ForgeRequest | null;   // null = the branch has no open merge request
+  error?: string;                  // forge unreachable/misconfigured — panel degrades
+}
+
+/** The open merge request for a branch on the configured forge, read-only. */
+export function useForgeRequest(repo: string | undefined, branch: string | undefined) {
+  return useQuery({
+    queryKey: ['forge', repo, branch],
+    queryFn: () => api<ForgeResp>(`/api/repos/${repo}/forge/request?branch=${encodeURIComponent(branch!)}`),
+    enabled: !!repo && !!branch,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+// ---------------------------------------------------------------- source drift
+
+export interface DriftEvidence { path: string; quote: string }
+/**
+ * A run's pipeline: the built-in slugs, or a project recipe's own slug from
+ * .specquill/alignment/. It is a string, not a union — the whole point of the
+ * recipe engine is that a project adds its own.
+ */
+export type DriftMode = string;
+/** One finding kind a recipe declares — how to label it, and whether it
+ *  proposes a NEW document (which gates the draft/plan/create actions). */
+export interface DriftKind { kind: string; label: string; draftable: boolean }
+export interface DriftFinding {
+  fingerprint: string; runId: number; docPath: string; anchor: string; source: string;
+  // coverage gaps (docPath '') carry where the missing doc should live and
+  // the reverse-engineered draft once one was created
+  suggestedPath: string; draftPath: string;
+  // the in-repo change/work-item document created to remedy it
+  remedyPath: string; remedyKind: string;
+  documents: { kind: string; path: string }[]; // every document created for it
+  kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string;
+  evidence: DriftEvidence[]; status: 'open' | 'dismissed' | 'filed';
+  workItemUrl: string; workItemTarget: string; updatedAt: number;
+}
+export interface DriftRun {
+  // 'interrupted' = the server restarted mid-run; the units it had already
+  // checked stand, and `resumable` says the rest can be picked up
+  // 'capped' = the run spent the deployment's model-call budget; like
+  // 'interrupted' it is a stopping point, not a fault, and stays resumable
+  id: number; mode: DriftMode;
+  status: 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted' | 'capped';
+  error: string;
+  scope: string[]; docsTotal: number; docsDone: number; droppedUnverified: number;
+  headSha: string; startedAt: number; finishedAt: number;
+  recipeName: string;   // the recipe's own name, for the run panel
+  kinds: DriftKind[];   // the finding kinds THIS run's recipe declares
+  aiCalls: number;      // model calls spent, against maxCallsPerRun
+  activity: string[];             // live per-unit narration of the run
+  reportPath: string;             // git-native run report doc ('' = none)
+  reportBranch: string;
+  focus: string; resumedFrom: number; resumable: boolean;
+}
+/** One row of the run history: a run's shape, without its scope or activity. */
+export interface DriftRunSummary {
+  id: number; mode: DriftMode; status: DriftRun['status']; error: string;
+  docsTotal: number; docsDone: number; droppedUnverified: number;
+  sources: string[]; focus: string; reportPath: string; reportBranch: string;
+  resumedFrom: number; resumable: boolean; startedAt: number; finishedAt: number;
+  findings: number; // its live findings — what the run is still worth
+}
+export interface DriftTarget { name: string; kind: string; project: string }
+export interface DriftResp {
+  enabled: boolean; run: DriftRun | null; findings: DriftFinding[]; targets: DriftTarget[];
+  runs: DriftRunSummary[]; // the branch's run history, newest first
+  activeRunId: number;     // the run in flight (0 = none), whichever one is shown
+  sources: string[]; // the references a gaps run would sweep
+  reports: string[]; // existing report docs a run can continue (incl. the default)
+  defaultReport: string; // the project's standing report (its drift.report:)
+  // the analyzed application inventories persisted beside the report
+  extractions: { source: string; path: string }[];
+}
+
+/**
+ * One source-drift run + its findings, plus the branch's run history. `runId`
+ * picks which run to look at (0 = the newest, and keep following it); asking
+ * for an older one narrows the findings to what THAT run found. Polls while a
+ * run is in flight — including while an older run is on screen.
+ */
+export function useDrift(repo: string | undefined, branch: string, runId = 0) {
+  return useQuery({
+    queryKey: ['drift', repo, branch, runId],
+    queryFn: () => api<DriftResp>(`/api/repos/${repo}/drift?branch=${encodeURIComponent(branch)}` +
+      (runId ? `&run=${runId}` : '')),
+    enabled: !!repo,
+    refetchInterval: (q) => (q.state.data?.activeRunId ? 2_500 : false),
+  });
+}
+
+export function useRunDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // `branch` overrides the hook's branch: the caller may have just been
+    // moved onto their workspace branch and the run must target THAT one
+    mutationFn: ({ branch: on, ...body }: { mode?: DriftMode; recipe?: string; paths?: string[]; report?: string; branch?: string; sources?: string[]; focus?: string; resume?: number }) =>
+      api<{ runId: number; docsTotal: number; mode: DriftMode; recipe: string; stages: number; resumedFrom: number }>(
+        `/api/repos/${repo}/drift/run?branch=${encodeURIComponent(on || branch)}`,
+        { method: 'POST', body: JSON.stringify(body) }),
+    // prefix key: a run started on a freshly switched branch must refresh too
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo] }),
+  });
+}
+
+/** One alignment pipeline this branch offers: shipped, or the project's own. */
+export interface AlignmentRecipe {
+  slug: string; name: string; description: string;
+  builtin: boolean; path: string;           // path '' for the shipped ones
+  units: 'docs' | 'sources'; output: 'findings' | 'extraction';
+  model: string; sources: string[] | null; paths: string[] | null;
+  stages: { id: string; label: string; over: string; produces: string; batch: number; model: string }[];
+  findings: { kind: string; label: string; severity: string; draftable: boolean }[];
+  files: { include: string[] | null; exclude: string[] | null; describe: string };
+  warnings: string[];  // non-fatal problems worth showing the author
+}
+export interface RecipesResp {
+  dir: string;                       // where a project's own recipes live
+  recipes: AlignmentRecipe[];
+  errors: Record<string, string>;    // recipes that are there but do not load
+  models: string[];                  // what a recipe may name per stage
+  maxCallsPerRun: number;
+  starter: string;                   // the document "New recipe" writes
+}
+
+/** The pipelines this branch offers. */
+export function useAlignmentRecipes(repo: string | undefined, branch: string) {
+  return useQuery({
+    queryKey: ['recipes', repo, branch],
+    queryFn: () => api<RecipesResp>(
+      `/api/repos/${repo}/alignment/recipes?branch=${encodeURIComponent(branch)}`),
     enabled: !!repo,
   });
 }
 
-export function usePR(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['pr', repo, n],
-    queryFn: () => api<PR>(`/api/repos/${repo}/prs/${n}`),
-    enabled: !!repo && !!n,
+export interface RecipeCheck {
+  ok: boolean; error?: string; warnings: string[] | null;
+  recipe?: AlignmentRecipe;
+  units: number; unitKind: string; unitList: string[]; sources: number;
+  stages: { id: string; label: string; over: string; produces: string;
+    callsPerUnit: number; calls: number; files?: Record<string, number>; describeCalls?: number }[];
+  estimatedCalls: number; estimated: boolean; maxCallsPerRun: number;
+  overCeiling?: boolean; note?: string;
+}
+
+/**
+ * Dry run: what a recipe would actually do, before it does it. A recipe
+ * multiplies stages by items by units, so the difference between a good one
+ * and a typo is measured in wall-clock — and you cannot see it by reading the
+ * document.
+ */
+export function useCheckRecipe(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (body: { recipe?: string; content?: string; sources?: string[]; paths?: string[] }) =>
+      api<RecipeCheck>(
+        `/api/repos/${repo}/alignment/recipes/validate?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify(body) }),
   });
 }
 
-export function usePRDiff(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['prdiff', repo, n],
-    queryFn: () => api<{ files: DiffFile[] }>(`/api/repos/${repo}/prs/${n}/diff`),
-    enabled: !!repo && !!n,
+export interface PlannedDoc {
+  kind: string; title: string; path: string; purpose: string;
+  field?: string; linkTargets?: string[];
+}
+
+/** Propose WHICH documents to create for a finding (read-only). */
+export function usePlanDocuments(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (fingerprint: string) =>
+      api<{ rationale: string; documents: PlannedDoc[] }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/plan?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
   });
 }
 
-export function usePRComments(repo: string | undefined, n: number | undefined) {
-  return useQuery({
-    queryKey: ['prcomments', repo, n],
-    queryFn: () => api<PRComment[]>(`/api/repos/${repo}/prs/${n}/comments`),
-    enabled: !!repo && !!n,
-  });
-}
-
-export function useCreatePR(repo: string | undefined) {
+/** Draft and write a planned SET of documents, wired together. */
+export function useCreateDocuments(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { title: string; body?: string; source: string; target?: string }) =>
-      api<PR>(`/api/repos/${repo}/prs`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['prs', repo] }),
+    mutationFn: ({ fingerprint, documents }: { fingerprint: string; documents: PlannedDoc[] }) =>
+      api<{ created: { kind: string; path: string }[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/create?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ documents }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
   });
 }
 
-export function usePRAction(repo: string | undefined, n: number | undefined) {
+/** Create the in-repo change record / work item that tracks fixing a finding. */
+export function useRemedyFinding(repo: string | undefined, branch: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ action, payload }: { action: 'approve' | 'merge' | 'close' | 'comments'; payload?: unknown }) =>
-      api(`/api/repos/${repo}/prs/${n}/${action}`, { method: 'POST', body: JSON.stringify(payload ?? {}) }),
-    onSuccess: (_, { action }) => {
-      qc.invalidateQueries({ queryKey: ['pr', repo, n] });
-      qc.invalidateQueries({ queryKey: ['prs', repo] });
-      qc.invalidateQueries({ queryKey: ['prcomments', repo, n] });
-      if (action === 'merge') {
-        qc.invalidateQueries({ queryKey: ['snapshot'] });
-        qc.invalidateQueries({ queryKey: ['branches', repo] });
-        qc.invalidateQueries({ queryKey: ['status'] });
-      }
+    mutationFn: ({ fingerprint, kind }: { fingerprint: string; kind: 'change' | 'work_item' }) =>
+      api<{ path: string; kind: string; branch: string; linked?: string; existing?: boolean }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/remedy?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ kind }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the remedy doc (and possibly the affected doc) are worktree saves
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
+  });
+}
+
+export interface FocusArea { name: string; reason: string; sources: string[] }
+
+/** Ask where to aim the next gap sweep (read-only: no run, no writes). */
+export function useFocusAreas(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: (sources?: string[]) =>
+      api<{ areas: FocusArea[] }>(
+        `/api/repos/${repo}/drift/focus?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ sources: sources ?? [] }) }),
+  });
+}
+
+/** Reverse-engineer the missing requirement doc from a coverage-gap finding. */
+export function useDraftRequirement(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint }: { fingerprint: string }) =>
+      api<{ path: string; branch: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/draft?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the draft is an uncommitted save on resp.branch
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['tree', repo, resp.branch] });
+    },
+  });
+}
+
+export function useCancelDrift(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean }>(`/api/repos/${repo}/drift/cancel?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export function useDismissFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, reopen }: { fingerprint: string; reopen?: boolean }) =>
+      api<{ status: string }>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/dismiss?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ reopen: !!reopen }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drift', repo, branch] }),
+  });
+}
+
+export interface FileFindingResp {
+  url: string; created: boolean; target: string;
+  backlinked: boolean; backlinkBranch?: string; backlinkError?: string;
+}
+
+/** File a finding as a work item; the backlink save may touch an open doc. */
+export function useFileFinding(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fingerprint, target }: { fingerprint: string; target: string; docPath: string }) =>
+      api<FileFindingResp>(
+        `/api/repos/${repo}/drift/findings/${fingerprint}/file?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: JSON.stringify({ target }) }),
+    onSuccess: (resp, { docPath }) => {
+      qc.invalidateQueries({ queryKey: ['drift', repo, branch] });
+      // the backlink is a worktree save — refresh an open editor instead of
+      // letting it stale into a baseSha conflict
+      const wb = resp.backlinkBranch ?? branch;
+      qc.invalidateQueries({ queryKey: ['file', repo, wb, docPath] });
+      qc.invalidateQueries({ queryKey: ['status', repo, wb] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, wb] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------- linker
+
+export interface LinkProposal { from: string; field: string; to: string; reason?: string }
+
+/** Ask the AI for missing typed links between documents (nothing is written). */
+export function useProposeLinks(repo: string | undefined, branch: string) {
+  return useMutation({
+    mutationFn: () =>
+      api<{ proposals: LinkProposal[]; dropped: number }>(
+        `/api/repos/${repo}/linker/propose?branch=${encodeURIComponent(branch)}`,
+        { method: 'POST', body: '{}' }),
+  });
+}
+
+/** Write accepted link proposals into the from-docs' frontmatter (drafts). */
+export function useApplyLinks(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ links, branch: on }: { links: LinkProposal[]; branch?: string }) =>
+      api<{ applied: LinkProposal[]; failures: string[]; branch: string }>(
+        `/api/repos/${repo}/linker/apply?branch=${encodeURIComponent(on || branch)}`,
+        { method: 'POST', body: JSON.stringify({ links }) }),
+    onSuccess: (resp) => {
+      qc.invalidateQueries({ queryKey: ['file', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, resp.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, resp.branch] });
     },
   });
 }
@@ -226,6 +579,25 @@ export function useSaveFile(repo: string | undefined, branch: string) {
       qc.invalidateQueries({ queryKey: ['file', repo, branch, path] });
       qc.invalidateQueries({ queryKey: ['status', repo, branch] });
       qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
+    },
+  });
+}
+
+// reject pending (uncommitted) worktree changes; no paths = everything
+export function useDiscard(repo: string | undefined, branch: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ paths }: { paths?: string[] }) =>
+      api<{ ok: boolean }>(`/api/repos/${repo}/discard?branch=${encodeURIComponent(branch)}`, {
+        method: 'POST',
+        body: JSON.stringify({ paths: paths || [] }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['file', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['fileathead', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['status', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', repo, branch] });
+      qc.invalidateQueries({ queryKey: ['worktreediff', repo, branch] });
     },
   });
 }

@@ -3,10 +3,6 @@ listen: ":8643"
 data_dir: ./data/runtime
 base_url: http://localhost:8643
 
-# store: the compose postgres (docker compose -f docker-compose.dev.yml up -d postgres)
-database:
-  url: postgres://specquill:specquill@127.0.0.1:5433/specquill?sslmode=disable
-
 projects:
   - id: trading-specs
     remote: ./data/origin/trading-specs.git
@@ -22,19 +18,30 @@ sources:
     remote: ./data/origin/regulations.git
     sync_interval: 1m
   # importer demo: an OpenAPI spec the server serves to itself (web/public/),
-  # mirrored into a read-only repo so the copilot can ground on the API contract
+  # mirrored into a read-only repo so the speccy can ground on the API contract
   - name: platform-api
     kind: openapi
     remote: http://127.0.0.1:8643/demo-openapi.json
     sync_interval: 1h
+
+# drift work-item filing demo: scripts/mock-forge.py (:8992) plays the
+# tracker — issue endpoints are not auth-gated on the mock, so no token env
+# is needed. The trading-specs workspace selects this target via its
+# .specquill/config.yml drift.targets.
+work_item_targets:
+  - name: dev-board
+    kind: gitlab
+    base_url: http://127.0.0.1:8992
+    project: acme/backend
+    labels: [from-specquill]
 
 git:
   committer_name: specquill
   committer_email: specquill@dev.local
 
 auth:
-  oidc:
-    enabled: false                 # dev: dex via docker-compose.dev.yml exercises OIDC
+  # forge-PAT mode (the v1 deployment shape) is exercised by the Go tests and
+  # scripts/mock-forge.py — dev runs local auth + the -dev auto-user
   local:
     enabled: true
   dev_user:                        # only honored with the -dev flag
@@ -45,10 +52,12 @@ session:
   ttl: 10m
   cookie_secure: false             # plain http in dev
 
-# dev copilot: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
+# dev speccy: local ollama (swap base_url to :8991 for scripts/mock-llm.py,
 # or to a cloud provider — see specquill.example.yml)
+# speccy e2e needs the deterministic mock instead:
+#   python3 scripts/mock-llm.py &   → base_url: http://127.0.0.1:8991/v1, model+quick_model: mock-1
 ai:
   enabled: true
   base_url: http://127.0.0.1:11434/v1
-  model: qwen2.5:7b                  # main tier: chat + draft edits
+  model: qwen2.5:7b                  # main tier: chat + draft edits (tool-capable)
   quick_model: qwen2.5:7b            # fast one-shot tier: commit messages

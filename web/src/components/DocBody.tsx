@@ -61,10 +61,14 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
       if (/\.excalidraw$/.test(src)) { drawExc(files?.[resolveDocHref(dir, src)], img); return; }
       if (/^(https?:|data:|blob:)/.test(src)) return;
       // repo-relative image: serve through the raw endpoint (reference-repo
-      // docs carry a ~repo/ prefix and read at their default branch)
+      // docs carry a ~repo/ prefix and read at their default branch).
+      // Sketch PNGs get the sketchGen buster — their bytes change under a
+      // stable path (editor save, speccy draw/upgrade) and the viewed doc
+      // must show the new pixels, not the browser-cached ones.
       const resolved = resolveDocHref(dir, src);
       const m = resolved.match(/^~([^/]+)\/(.*)$/);
-      img.src = m ? rawUrl(m[1], '', m[2]) : rawUrl(app.repoId || '', app.branch, resolved);
+      const bust = /\.excalidraw\.png$/i.test(resolved) ? '&v=' + app.sketchGen : '';
+      img.src = m ? rawUrl(m[1], '', m[2]) : rawUrl(app.repoId || '', app.branch, resolved) + bust;
       img.style.maxWidth = '100%';
     });
     const embed = el.querySelector('[data-excalidraw]');
@@ -72,14 +76,14 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
 
     el.querySelectorAll('a[href]').forEach((a) => {
       const href = a.getAttribute('href') || '';
-      if (/^(https?:|#|mailto:)/.test(href) || !/\.(md|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
+      if (/^(https?:|#|mailto:)/.test(href) || !/\.(md|adoc|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
       (a as HTMLElement).style.cursor = 'pointer';
       a.addEventListener('click', (e) => {
         e.preventDefault();
         nav('/editor/' + resolveDocHref(dir, href));
       });
     });
-  }, [html, docPath, app.theme, app.repoId, app.branch, files, nav]);
+  }, [html, docPath, app.theme, app.repoId, app.branch, app.sketchGen, files, nav]);
 
   return <div id="specquill-doc" ref={host} />;
 }

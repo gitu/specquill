@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Full dev loop: postgres + Go hot-rebuild (air) + vite HMR.
-# Frontend: http://localhost:5173 (HMR, proxies /api + /auth to :8643)
-# API:      http://localhost:8643 (serves the last *embedded* SPA — stale in dev, use :5173)
+# Full dev loop: Go hot-rebuild (air) + vite HMR. The store is an embedded
+# SQLite file under data/runtime — no service to start.
+# Browse:   http://localhost:8643 — in -dev mode the Go server reverse-proxies
+#           the SPA (HMR ws included) to vite on 127.0.0.1:5643, falling back
+#           to the embedded build when vite is down. :5643 works directly too.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 command -v air >/dev/null || { echo "air not found — install: go install github.com/air-verse/air@latest" >&2; exit 1; }
 
-docker compose -f docker-compose.dev.yml up -d postgres
-
-# First run only; for a full reset use `make dev-fixture` (also recreates the pg schema).
+# First run only; for a full reset use `make dev-fixture` (also drops the store).
 [ -d data/runtime ] || ./scripts/dev-fixture.sh
 
 # Both run as background jobs so a signal interrupts `wait` and cleanup runs

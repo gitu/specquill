@@ -13,7 +13,7 @@ export const IconBranch = () => svg(13, 'var(--text-2)', 2, <>
 
 export const IconSearch = () => svg(14, 'currentColor', 2, <><circle cx="11" cy="11" r="7" /><P d="M20 20l-3.5-3.5" /></>);
 
-export const IconPR = () => svg(13, 'var(--prod)', 2, <>
+export const IconMerge = () => svg(13, 'var(--prod)', 2, <>
   <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="18" r="2.4" />
   <P d="M6 8.4v7.2M18 15.6c0-5-12-2-12-9.6" /></>);
 
@@ -26,18 +26,32 @@ export const IconFolder = () => svg(19, 'currentColor', 1.8,
 
 export const IconChanges = () => svg(19, 'currentColor', 1.8, <P d="M4 12h6M14 12h6M8 8l-4 4 4 4M16 16l4-4-4-4" />);
 
+// timed dependencies: a clock — validity windows opening and closing
+export const IconClock = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) =>
+  svg(size, 'currentColor', width, <><circle cx="12" cy="12" r="8.5" /><P d="M12 7v5.3l3.4 2" /></>);
+
+// change history: commits on a line
+export const IconHistory = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) =>
+  svg(size, 'currentColor', width, <>
+    <circle cx="7" cy="6" r="2.2" /><circle cx="7" cy="18" r="2.2" /><P d="M7 8.2v7.6" />
+    <P d="M11.5 6h8.5M11.5 18h8.5" /></>);
+
 export const IconTrace = ({ size = 19, width = 1.8 }: { size?: number; width?: number }) => svg(size, 'currentColor', width, <>
   <circle cx="6" cy="6" r="2.3" /><circle cx="18" cy="6" r="2.3" /><circle cx="12" cy="18" r="2.3" />
   <P d="M7.5 7.4l3.3 8.4M16.5 7.4l-3.3 8.4M8 6h8" /></>);
-
-export const IconMatrix = () => svg(19, 'currentColor', 1.8, <>
-  <rect x="3" y="4" width="18" height="16" rx="1.6" /><P d="M3 9h18M3 14h18M9 4v16M15 4v16" /></>);
 
 export const IconModel = () => svg(19, 'currentColor', 1.8, <>
   <P d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><P d="M12 3v18M4 7.5l8 4.5 8-4.5" /></>);
 
 export const IconSpark = ({ size = 19, stroke = 'currentColor', width = 1.8 }: { size?: number; stroke?: string; width?: number }) =>
   svg(size, stroke, width, <P d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />);
+
+// guided authoring: a wand drawing a document. Distinct from IconQuill (the
+// SpecQuill brand mark) and IconSpark (the chat panel) on purpose — three
+// different things must not share a glyph.
+export const IconWand = () => svg(19, 'currentColor', 1.8, <>
+  <P d="M4 20l9.5-9.5M15 4.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" />
+  <P d="M19.5 14l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" /></>);
 
 export const IconGear = () => svg(18, 'currentColor', 1.8, <>
   <circle cx="12" cy="12" r="3" /><P d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></>);
@@ -88,3 +102,6 @@ export const IconQuill = ({ size = 14 }: { size?: number }) => (
     <path d="M3.6 20.7l2-1.9" />
   </svg>
 );
+
+export const IconAlign = () => svg(19, 'currentColor', 1.8, <>
+  <circle cx="12" cy="12" r="8.2" /><P d="M8.4 12.2l2.4 2.4 4.8-5" /><P d="M12 2v2.6M12 19.4V22M2 12h2.6M19.4 12H22" /></>);

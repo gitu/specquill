@@ -1,4 +1,5 @@
 data/
+specquill.shots.yml
 node_modules/
 web/dist/
 server/internal/webui/dist/*
@@ -12,3 +13,4 @@ playwright-report/
 # committed, secret-free Cloud Run config)
 specquill.yml
 .env
+web/tsconfig.tsbuildinfo

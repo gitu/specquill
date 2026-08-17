@@ -6,8 +6,6 @@ authority: EDPB
 jurisdiction: EU
 status: active
 anchors: [art-5-storage-limitation, art-17-erasure]
-drives:
-  - requirements/REQ-090.md
 updated: 2026-03-11
 ---
 
