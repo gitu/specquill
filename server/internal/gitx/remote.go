@@ -107,6 +107,7 @@ func (r *Repo) FFBranches() (updated []string) {
 	}
 	out, err := run(r.gitDir, nil, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads")
 	if err != nil {
+		log.Printf("sync %s: list branches: %v", r.Cfg.ID, err)
 		return nil
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

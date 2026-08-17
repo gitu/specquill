@@ -43,11 +43,14 @@ export function TopBar() {
   };
   const localBranches = (branches.data || []).filter((b) => !b.isRemote);
   const remoteBranches = (branches.data || []).filter((b) => b.isRemote);
-  // a remote-only branch has no local head yet — materialize it on switch
+  // a remote-only branch has no local head yet — materialize it on switch.
+  // Close the menu before awaiting: a still-open menu invites a double-click
+  // and a second CreateBranch ("already exists").
   const switchToRemote = async (name: string) => {
+    if (createBranch.isPending) return;
+    setOpen(false);
     await createBranch.mutateAsync({ name, from: 'origin/' + name });
     app.switchBranch(name);
-    setOpen(false);
   };
 
   return (
