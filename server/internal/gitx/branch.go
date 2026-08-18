@@ -10,8 +10,9 @@ type Branch struct {
 	Name      string `json:"name"`
 	Head      string `json:"head"`
 	IsDefault bool   `json:"isDefault"`
-	Ahead     int    `json:"ahead"`  // vs remote-tracking ref, writable repos only
-	Behind    int    `json:"behind"` //
+	IsRemote  bool   `json:"isRemote"` // exists only on origin — no local head yet
+	Ahead     int    `json:"ahead"`    // vs remote-tracking ref, writable repos only
+	Behind    int    `json:"behind"`   //
 }
 
 func (r *Repo) Branches() ([]Branch, error) {
@@ -20,6 +21,7 @@ func (r *Repo) Branches() ([]Branch, error) {
 		return nil, err
 	}
 	var branches []Branch
+	local := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
@@ -33,6 +35,26 @@ func (r *Repo) Branches() ([]Branch, error) {
 			b.Ahead, b.Behind = r.aheadBehind(b.Name)
 		}
 		branches = append(branches, b)
+		local[b.Name] = true
+	}
+	// remote-only branches: fetched under refs/remotes/origin/* but never
+	// materialized locally. Read-only repos fast-forward heads directly and
+	// mirror repos have no remote — only writable repos carry these refs.
+	if r.Writable() && !r.Cfg.Mirror {
+		out, err := run(r.gitDir, nil, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/origin")
+		if err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				parts := strings.SplitN(line, "\x00", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				name := strings.TrimPrefix(parts[0], "refs/remotes/origin/")
+				if name == parts[0] || name == "HEAD" || local[name] {
+					continue
+				}
+				branches = append(branches, Branch{Name: name, Head: parts[1], IsRemote: true})
+			}
+		}
 	}
 	return branches, nil
 }

@@ -191,5 +191,11 @@ func (s *Server) postFetch(w http.ResponseWriter, r *http.Request, repo *project
 		gitFail(w, err)
 		return
 	}
-	jsonOK(w, map[string]bool{"ok": true})
+	s.publish("fetch", repo.Key(), "")
+	// remote moved → local follows
+	updated := repo.FFBranches()
+	for _, branch := range updated {
+		s.publish("pull", repo.Key(), branch)
+	}
+	jsonOK(w, map[string]any{"ok": true, "updated": updated})
 }

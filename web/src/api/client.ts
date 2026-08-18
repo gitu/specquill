@@ -150,7 +150,7 @@ export interface RepoInfo {
   role?: 'viewer' | 'editor' | 'maintainer' | 'admin'; // the caller's effective role on this repo (REQ-021)
   mergeMode?: 'local' | 'forge'; // how work lands on main: in-app merge, or push + MR/PR on the forge
 }
-export interface Branch { name: string; head: string; isDefault: boolean; ahead: number; behind: number }
+export interface Branch { name: string; head: string; isDefault: boolean; isRemote?: boolean; ahead: number; behind: number }
 export interface FileResp { content: string; sha: string }
 export interface SnapshotResp { ref: string; files: Record<string, string> }
 export interface TreeEntry { path: string; size: number }
