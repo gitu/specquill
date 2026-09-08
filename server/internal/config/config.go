@@ -201,6 +201,15 @@ type AIConfig struct {
 	// GroundingBudget caps the speccy system-prompt size in bytes
 	// (0 = package default; grows automatically when references exist).
 	GroundingBudget int `yaml:"grounding_budget"`
+	// ToolBudget caps the tool-result bytes one chat conversation may read
+	// (0 = the ai package's default of 64 KiB). Models with large contexts
+	// and workspaces with reference sources to read through want more.
+	ToolBudget int `yaml:"tool_budget"`
+	// ExtractURL is a document-extraction endpoint (multipart `file` in,
+	// `{text}` or `{pages:[{text}]}` out) for chat attachments that are not
+	// text, HTML or images — PDF, Office, scans. Authenticated with the same
+	// key as the chat API. Empty = such attachments are refused.
+	ExtractURL string `yaml:"extract_url"`
 }
 
 type Config struct {

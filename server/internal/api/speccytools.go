@@ -109,6 +109,7 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 	str, obj := toolStr, toolObj
 	tools := append(tb.readSpecs(), ai.ToolSpec{
 		Name:        "ask_user",
+		Acts:        true,
 		Description: "Ask the user ONE clarifying question when the request is ambiguous or a decision is theirs to make. ALWAYS use this tool for questions and confirmations — never ask in plain text; only this tool renders clickable answer options. Provide 2-5 concrete options; the user may also answer in free text. The conversation pauses until they answer.",
 		Parameters: obj(map[string]any{
 			"question": str("the question to ask, one sentence"),
@@ -122,6 +123,7 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 	tools = append(tools,
 		ai.ToolSpec{
 			Name:        "edit_file",
+			Acts:        true,
 			Description: "Edit one workspace file by replacing a unique text occurrence. search must be copied VERBATIM from the file and occur exactly once; keep edits minimal. Reference sources (~source/...) are read-only. The save is an uncommitted draft on the current branch." + vocab,
 			Parameters: obj(map[string]any{
 				"path":    str("workspace-relative path of the file to edit"),
@@ -131,6 +133,7 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 		},
 		ai.ToolSpec{
 			Name:        "create_file",
+			Acts:        true,
 			Description: "Create a new workspace file (fails if it already exists). Markdown documents must start with complete frontmatter (type, title, status, links); follow the family conventions." + vocab,
 			Parameters: obj(map[string]any{
 				"path":    str("workspace-relative path for the new file, in the right family folder"),
@@ -139,6 +142,7 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 		},
 		ai.ToolSpec{
 			Name:        "move_file",
+			Acts:        true,
 			Description: "Move or rename one workspace file — or a whole folder when both paths end with a slash (notes/ → archive/notes/). Inbound references in other documents (typed frontmatter links and body links) are rewritten automatically. Reference sources (~source/...) are read-only. The move is an uncommitted draft on the current branch.",
 			Parameters: obj(map[string]any{
 				"from": str("current workspace-relative path (trailing / moves the folder)"),
@@ -147,11 +151,13 @@ func (tb *speccyToolbox) specs(files map[string]string) []ai.ToolSpec {
 		},
 		ai.ToolSpec{
 			Name:        "delete_file",
+			Acts:        true,
 			Description: "Delete one workspace file (uncommitted draft on the current branch). Inbound references are NOT removed — search for them first, and confirm via ask_user when other documents still reference the file.",
 			Parameters:  obj(map[string]any{"path": str("workspace-relative path of the file to delete")}, "path"),
 		},
 		ai.ToolSpec{
 			Name:        "draw_sketch",
+			Acts:        true,
 			Description: "Create or replace an excalidraw sketch (path must end .excalidraw.png — the server renders the scene into a PNG with the scene embedded: natively viewable anywhere, editable in the sketch editor). Scene: {\"elements\": [...]}. Element subset that renders everywhere: {type: rectangle|ellipse|diamond, x, y, width, height, label?, strokeColor?, backgroundColor?}, {type: arrow, x, y, points: [[0,0],[dx,dy]], label?}, {type: text, x, y, text, fontSize?}. ALWAYS caption boxes and arrows via their own label property (the server centers, sizes and wraps it) — standalone text elements are only for free-floating notes. Coordinates in px; keep boxes around 170x60 with 40px gaps, connect with arrows between box edges. To change an existing sketch: read_file it (returns the embedded scene), modify the scene, and draw_sketch the SAME path.",
 			Parameters: obj(map[string]any{
 				"path":  str("workspace-relative path ending in .excalidraw.png, e.g. diagrams/flow.excalidraw.png"),

@@ -28,8 +28,9 @@ type Server struct {
 	vault        *auth.TokenVault
 	store        *store.Store
 	sessions     *auth.Sessions
-	ai           *ai.Client  // nil when disabled
-	bus          *events.Bus // nil-safe
+	ai           *ai.Client    // nil when disabled
+	extract      *ai.Extractor // nil when ai.extract_url is unset (chat attachments beyond text/html/images)
+	bus          *events.Bus   // nil-safe
 	devUser      *store.User
 	srcCache     *srcCache        // grounding source snapshots, keyed by repo key + head SHA
 	forgeCache   *forgeCache      // forge review threads, keyed by user + repo key + branch
@@ -61,7 +62,7 @@ func New(cfg *config.Config, git *gitx.Manager, opts Options) http.Handler {
 }
 
 func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handler, *Server) {
-	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), summaryCache: newSummaryCache(), vault: auth.NewTokenVault(), drift: newDriftRegistry()}
+	s := &Server{cfg: cfg, git: git, store: opts.Store, sessions: opts.Sessions, ai: opts.AI, extract: ai.NewExtractor(cfg.AI), bus: opts.Bus, importer: opts.Importer, srcCache: newSrcCache(), forgeCache: newForgeCache(), summaryCache: newSummaryCache(), vault: auth.NewTokenVault(), drift: newDriftRegistry()}
 	// drift workers died with the previous process — re-running is the resume
 	if n, err := opts.Store.MarkInterruptedDriftRuns(); err == nil && n > 0 {
 		log.Printf("drift: marked %d interrupted run(s)", n)
@@ -147,6 +148,7 @@ func NewServer(cfg *config.Config, git *gitx.Manager, opts Options) (http.Handle
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/chat", s.writableH(s.speccyChat))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/draft", s.writableH(s.speccyDraft))
 	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/title", s.writableViewH(s.postSpeccyTitle))
+	apiMux.HandleFunc("POST /api/repos/{repo}/speccy/attach", s.writableH(s.speccyAttach))
 	// guided authoring (wizard.go). The stages themselves only read, but they
 	// exist to produce a document — editor role, same gate as the chat, so a
 	// viewer is refused up front instead of burning model tokens on a draft

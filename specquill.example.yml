@@ -186,4 +186,16 @@ ai:
   # contexts. Everything selected stays reachable through the chat's
   # list_files/search/read_file tools regardless of this cap.
   # grounding_budget: 98304
+  # Tool-result bytes one chat conversation may read (default 64 KiB). The
+  # write tools and ask_user stay available once it is spent, so a long
+  # investigation still ends in an edit; raise it for large-context models
+  # and workspaces whose skills ask the speccy to read code as evidence.
+  # tool_budget: 262144
+  # Chat attachments: files dropped into the speccy panel are archived on the
+  # branch (references/assets/ + a source page under references/archive/) and
+  # read — text and HTML locally, images through the model's vision input,
+  # everything else (PDF, Office, scans) through this extraction endpoint:
+  # multipart `file` in, `{text}` or `{pages:[{text}]}` out, same key as above.
+  # Unset = such attachments are refused with a clear message.
+  # extract_url: https://gateway.example/v1/extract
 

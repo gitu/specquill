@@ -4,7 +4,7 @@ import { useApp } from '../state/AppContext';
 import { useAppPath, useNav } from '../state/nav';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { buildTimed, daysLabel, todayISO } from '../lib/derive';
-import { ChatMessage, DraftResult, PendingAsk, ToolEvent, draftEdits, nameChat, streamChat, useSpeccyInfo } from '../api/speccy';
+import { Attachment, ChatMessage, DraftResult, PendingAsk, ToolEvent, attachFile, draftEdits, nameChat, streamChat, useSpeccyInfo } from '../api/speccy';
 import { useQueryClient } from '@tanstack/react-query';
 import { IconSend, IconSpark } from './icons';
 import { appendEntry, autoTitle, dismissChat, nameChatOnce, newChat, setActiveChat, updateChat, useChats } from '../state/chats';
@@ -64,6 +64,10 @@ export function Speccy() {
   const entries = chat?.entries ?? [];
   const streamChatId = useRef('');
   const [input, setInput] = useState('');
+  // files waiting to go with the next message: dropped, pasted or picked
+  const [pending, setPending] = useState<File[]>([]);
+  const [attaching, setAttaching] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
   const [streamText, setStreamText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -93,7 +97,7 @@ export function Speccy() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [entries, streamText]);
 
-  const runChat = async (chatId: string, messages: ChatMessage[]) => {
+  const runChat = async (chatId: string, messages: ChatMessage[], attachments: Attachment[] = []) => {
     setError('');
     setBusy(true);
     streamChatId.current = chatId;
@@ -110,7 +114,7 @@ export function Speccy() {
       const drawnSketches = new Set<string>();
       const result = await streamChat(
         app.repoId,
-        { messages, focusPath, branch: app.branch, allowEdits },
+        { messages, focusPath, branch: app.branch, allowEdits, ...(attachments.length ? { attachments } : {}) },
         (t) => { lastText = t; setStreamText(t); },
         (t) => {
           sawTool = true;
@@ -186,19 +190,52 @@ export function Speccy() {
       return [];
     });
 
+  const addFiles = (list: Iterable<File>) => {
+    const files = [...list].filter((f) => f.size > 0);
+    if (files.length) setPending((prev) => [...prev, ...files]);
+  };
+
   const ask = async (question: string) => {
-    if (!question.trim() || busy || !enabled) return;
+    const files = pending;
+    if ((!question.trim() && !files.length) || busy || !enabled) return;
+    // attachments are drafts on the branch — the same door the write tools use
+    if (files.length && (!allowEdits || !app.repoId)) {
+      setError('Attachments are saved on your workspace branch — switch to it (✎ can edit) first.');
+      return;
+    }
     setInput('');
+    setPending([]);
     const id = chat?.id ?? newChat(repoKey);
     const history: ChatMessage[] = chat ? textHistory() : [];
-    appendEntry(repoKey, id, { kind: 'msg', msg: { role: 'user', content: question } });
+    const shown = files.length ? `${question.trim()}\n\n${files.map((f) => '📎 ' + f.name).join('\n')}`.trim() : question;
+    appendEntry(repoKey, id, { kind: 'msg', msg: { role: 'user', content: shown } });
+    // archive each file first; the message then carries what arrived
+    const attachments: Attachment[] = [];
+    if (files.length) {
+      setBusy(true);
+      try {
+        for (const f of files) {
+          setAttaching(f.name);
+          attachments.push(await attachFile(app.repoId!, app.branch, f, question.trim() || undefined));
+        }
+      } catch (e) {
+        setError('attach: ' + (e as Error).message);
+        setBusy(false);
+        setAttaching('');
+        return;
+      }
+      setAttaching('');
+      qc.invalidateQueries({ queryKey: ['status', app.repoId, app.branch] });
+      qc.invalidateQueries({ queryKey: ['snapshot', app.repoId, app.branch] });
+    }
+    const content = question.trim() || `(see the attached file${files.length === 1 ? '' : 's'})`;
     if (!chat || chat.entries.length === 0) {
       // auto-name on the first message: deterministic fallback right away,
       // upgraded by the quick-model title when/if it arrives
       nameChatOnce(repoKey, id, autoTitle(question));
       if (app.repoId) void nameChat(app.repoId, question).then((r) => nameChatOnce(repoKey, id, r.title, true)).catch(() => { /* keep fallback */ });
     }
-    await runChat(id, [...history, { role: 'user', content: question }]);
+    await runChat(id, [...history, { role: 'user', content }], attachments);
   };
 
   // answering a pending speccy question: replay the conversation + the tool
@@ -367,7 +404,22 @@ export function Speccy() {
         >
           <span style={sx('width:34px;height:3px;border-radius:2px;background:var(--border-2)')} />
         </div>
-        <div style={sx('border:1px solid var(--border-2);border-radius:11px;background:var(--surface-2);padding:9px 11px')}>
+        <div
+          onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+          onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } }}
+          style={sx('border:1px solid var(--border-2);border-radius:11px;background:var(--surface-2);padding:9px 11px')}
+        >
+          {pending.length > 0 && (
+            <div style={sx('display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px')}>
+              {pending.map((f, i) => (
+                <span key={i} title={f.name} style={sx("display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:'JetBrains Mono',monospace;font-size:10px")}>
+                  📎 {f.name}
+                  <span onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))} style={sx('cursor:pointer;opacity:.7')} title="remove">✕</span>
+                </span>
+              ))}
+              {attaching && <span style={sx('font-size:10px;color:var(--text-3)')}>archiving {attaching}…</span>}
+            </div>
+          )}
           {focusPath && (
             <div style={sx("display:flex;align-items:center;gap:6px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;font-size:10px")}>
               <span style={sx('padding:2px 6px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--text-2)')}>@ {focusPath.split('/').pop()}</span>
@@ -377,16 +429,28 @@ export function Speccy() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              // pasted files (screenshots, mock-ups) attach; pasted text stays text
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (!files.length) return;
+                e.preventDefault();
+                addFiles(files.map((f, i) => (f.name ? f : new File([f], `pasted-${Date.now()}-${i}.png`, { type: f.type }))));
+              }}
               // cmd/ctrl+enter sends; plain enter is a normal newline
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void ask(input); } }}
               title="⌘/Ctrl+Enter sends — Enter starts a new line"
-              placeholder={enabled ? 'Ask about requirements, deadlines, mappings… (⌘⏎ to send)' : 'Configure ai: in specquill.yml to enable Speccy'}
+              placeholder={enabled ? 'Ask, or drop an idea, a screenshot, a PDF, a mock-up… (⌘⏎ to send)' : 'Configure ai: in specquill.yml to enable Speccy'}
               disabled={!enabled || busy}
               rows={1}
               style={{ ...sx('flex:1;border:none;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;resize:none;outline:none;line-height:1.5'), height: composerH, overflowY: 'auto' }}
             />
-            <button onClick={() => void ask(input)} disabled={!enabled || busy || !input.trim()}
-              style={sx('width:28px;height:28px;flex:none;border:none;border-radius:8px;background:var(--ai);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;' + (!enabled || busy || !input.trim() ? 'opacity:.5' : ''))}>
+            <button onClick={() => fileInput.current?.click()} disabled={!enabled || busy} title="Attach a file — it is archived on your branch and the speccy reads it"
+              style={sx('width:28px;height:28px;flex:none;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;' + (!enabled || busy ? 'opacity:.5' : ''))}>
+              📎
+            </button>
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
+            <button onClick={() => void ask(input)} disabled={!enabled || busy || (!input.trim() && !pending.length)}
+              style={sx('width:28px;height:28px;flex:none;border:none;border-radius:8px;background:var(--ai);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;' + (!enabled || busy || (!input.trim() && !pending.length) ? 'opacity:.5' : ''))}>
               <IconSend />
             </button>
           </div>
