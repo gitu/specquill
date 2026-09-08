@@ -278,3 +278,49 @@ func TestStreamToolsIterationCapForcesAnswer(t *testing.T) {
 		t.Fatal("capped round must go out tool-less")
 	}
 }
+
+// A conversation that has read its fill must still be able to act: once the
+// tool-result budget is spent, only the acting tools stay on offer — and the
+// model is told so — instead of a tool-less last request.
+func TestStreamToolsKeepsActingToolsAfterReadBudget(t *testing.T) {
+	round1 := sseChunk(t, toolFragment(0, "call_1", "read_file", `{"path":"specs/a.md"}`)) + "data: [DONE]\n\n"
+	round2 := sseChunk(t, toolFragment(0, "call_2", "create_file", `{"path":"ideas/x.md"}`)) + "data: [DONE]\n\n"
+	round3 := sseChunk(t, map[string]any{"content": "Filed."}) + "data: [DONE]\n\n"
+	c, seen := fakeProvider(t, []string{round1, round2, round3})
+	c.toolBudget = 16 // the first read alone blows it
+
+	var ran []string
+	_, pending, err := c.StreamTools(context.Background(),
+		[]Message{{Role: "user", Content: "file it"}},
+		[]ToolSpec{
+			{Name: "read_file", Parameters: map[string]any{"type": "object"}},
+			{Name: "create_file", Parameters: map[string]any{"type": "object"}, Acts: true},
+		},
+		func(name, args string) (string, bool, error) {
+			ran = append(ran, name)
+			if name == "read_file" {
+				return strings.Repeat("x", 100), false, nil
+			}
+			return "created", false, nil
+		},
+		func(string) error { return nil },
+		nil,
+	)
+	if err != nil || pending != nil {
+		t.Fatalf("err %v pending %v", err, pending)
+	}
+	if len(ran) != 2 || ran[1] != "create_file" {
+		t.Fatalf("the model must still be able to act after reading: %v", ran)
+	}
+	tools := (*seen)[1]["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["function"].(map[string]any)["name"] != "create_file" {
+		t.Fatalf("second request should offer only the acting tools, got %v", tools)
+	}
+	msgs := (*seen)[1]["messages"].([]any)
+	if note := msgs[len(msgs)-1].(map[string]any)["content"]; !strings.Contains(note.(string), "budget") {
+		t.Fatalf("the model was not told the read budget is spent: %v", note)
+	}
+	if _, ok := (*seen)[2]["tools"]; !ok {
+		t.Fatalf("acting tools should stay for a few rounds, third request had none")
+	}
+}
