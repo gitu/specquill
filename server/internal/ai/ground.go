@@ -232,9 +232,12 @@ func writeWorkspace(b *strings.Builder, files map[string]string, focusPath strin
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		if strings.HasSuffix(p, ".excalidraw") || strings.HasPrefix(p, "uploads/") ||
+			strings.HasPrefix(p, "references/assets/") || strings.HasPrefix(p, "references/archive/") ||
 			strings.HasPrefix(p, ".specquill/skills/") || p == ".specquill/instructions.md" ||
 			strings.HasPrefix(p, ".specquill/memory/") {
-			continue // sketch JSON is noise; skills/instructions/memory are pinned above
+			// sketch JSON is noise; skills/instructions/memory are pinned above;
+			// archived attachments are read on demand (read_file), not stuffed
+			continue
 		}
 		paths = append(paths, p)
 	}

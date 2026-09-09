@@ -161,6 +161,15 @@ Key properties:
   messages are auto-drafted from the uncommitted diff on the quick tier
   (`POST /commit-message`) and prefill the commit dialog — editable, regenerable,
   never overwriting what you typed. `<think>…</think>` reasoning tags are stripped.
+- **Attachments in the chat.** Drop, paste or pick a file in the speccy panel — a
+  screenshot, a PDF, an HTML mock-up, a document — and it is archived on your
+  branch as uncommitted drafts: the original under `references/assets/`, its
+  extracted text as a `type: Source` page under `references/archive/` (text and
+  HTML reduced locally, images read through the model's vision input, everything
+  else through `ai.extract_url`). The message then tells the speccy what arrived:
+  images are embedded 1:1 in the documents they belong to, HTML mock-ups are
+  linked and shown inline in a sandboxed frame, documents are worked into the
+  pages they concern — `references/` itself is never rewritten.
 - **Speccy** (`ai:` config) talks to any **OpenAI-compatible** chat endpoint —
   OpenAI, Gemini (`…/v1beta/openai`), Azure, Ollama — with the branch snapshot as
   grounding (no index; the workspace is prompt-sized). Chat streams over SSE;

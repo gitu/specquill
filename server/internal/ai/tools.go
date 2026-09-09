@@ -32,6 +32,12 @@ type ToolSpec struct {
 	Name        string
 	Description string
 	Parameters  map[string]any // JSON schema for the arguments object
+	// Acts marks a tool that is still offered once the read budget is spent:
+	// the write tools and ask_user. Reading is in service of acting, so a
+	// conversation that has read its fill must still be able to file what it
+	// found (or ask) — a tool-less last request turned every long
+	// investigation into "I cannot edit in this run".
+	Acts bool
 }
 
 // ToolExec runs one tool call and returns its result text. halt=true stops
@@ -41,7 +47,8 @@ type ToolExec func(name, args string) (result string, halt bool, err error)
 
 const (
 	maxToolRounds     = 8         // model turns that may request tools
-	maxToolBytes      = 64 * 1024 // total tool-result budget per conversation
+	maxActRounds      = 3         // extra rounds with only the acting tools once reading is over
+	defaultToolBytes  = 64 * 1024 // total tool-result budget per conversation (ai.tool_budget)
 	maxToolResultSize = 24 * 1024 // single result cap (read_file of a big doc)
 )
 
@@ -82,13 +89,37 @@ func (c *Client) StreamTools(ctx context.Context, msgs []Message, tools []ToolSp
 		log.Printf("ai: %s%s tool loop in %s (%d round(s), %s, %s read, prompt %s)",
 			c.model, labelOf(ctx), since(started), rounds, what, size(used), size(msgLen(msgs)))
 	}()
+	// once the read budget is spent, only the acting tools stay on offer for a
+	// few more rounds; after those the last request goes out tool-less so the
+	// model must answer with what it has instead of looping forever
+	var acting []map[string]any
+	for i, t := range tools {
+		if t.Acts {
+			acting = append(acting, specs[i])
+		}
+	}
+	toolBudget := c.toolBudget
+	if toolBudget <= 0 {
+		toolBudget = defaultToolBytes
+	}
+	actRounds := 0
 	for round := 0; ; round++ {
 		rounds = round + 1
+		var offer []map[string]any
+		switch {
+		case round < maxToolRounds && used < toolBudget:
+			offer = specs
+		case len(acting) > 0 && actRounds < maxActRounds:
+			actRounds++
+			offer = acting
+			if actRounds == 1 {
+				conv = append(conv, Message{Role: "user", Content: "(The reading budget for this conversation is spent: the read tools are gone. " +
+					"Act on what you have read — file, edit, or ask — with the tools that remain.)"})
+			}
+		}
 		body := c.chatBody(c.model, conv, true)
-		// budget exhausted → last request goes out tool-less so the model
-		// must answer with what it has instead of looping forever
-		if round < maxToolRounds && used < maxToolBytes {
-			body["tools"] = specs
+		if offer != nil {
+			body["tools"] = offer
 		}
 		content, calls, finish, err := c.streamOnce(ctx, body, onDelta)
 		if err != nil {

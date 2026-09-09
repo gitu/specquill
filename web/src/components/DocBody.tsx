@@ -76,7 +76,34 @@ export function DocBody({ html, docPath }: { html: string; docPath: string }) {
 
     el.querySelectorAll('a[href]').forEach((a) => {
       const href = a.getAttribute('href') || '';
-      if (/^(https?:|#|mailto:)/.test(href) || !/\.(md|adoc|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
+      if (/^(https?:|#|mailto:)/.test(href)) return;
+      // an archived HTML mock-up (chat attachment): show it inline in a
+      // sandboxed frame — raw serving already pins the sandbox CSP — and let
+      // the link itself open the original in a new tab
+      if (/\.html?$/i.test(href) && !a.parentElement?.classList.contains('specquill-embed')) {
+        const resolved = resolveDocHref(dir, href);
+        const m = resolved.match(/^~([^/]+)\/(.*)$/);
+        const src = m ? rawUrl(m[1], '', m[2]) : rawUrl(app.repoId || '', app.branch, resolved);
+        const box = document.createElement('div');
+        box.className = 'specquill-embed';
+        box.style.cssText = 'margin:12px 0;';
+        const frame = document.createElement('iframe');
+        frame.src = src;
+        frame.title = a.textContent || 'mock-up';
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups');
+        frame.setAttribute('loading', 'lazy');
+        frame.style.cssText = 'display:block;width:100%;height:520px;border:1px solid var(--border);border-radius:8px;background:#fff';
+        a.replaceWith(box);
+        box.appendChild(frame);
+        box.appendChild(a);
+        (a as HTMLAnchorElement).href = src;
+        (a as HTMLAnchorElement).target = '_blank';
+        (a as HTMLAnchorElement).rel = 'noreferrer';
+        a.textContent = (a.textContent || 'mock-up') + ' ↗';
+        (a as HTMLElement).style.cssText = 'display:inline-block;margin-top:4px;font-size:11px';
+        return;
+      }
+      if (!/\.(md|adoc|excalidraw|mermaid|ya?ml)(#|$)/.test(href)) return;
       (a as HTMLElement).style.cursor = 'pointer';
       a.addEventListener('click', (e) => {
         e.preventDefault();

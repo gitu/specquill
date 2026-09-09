@@ -21,6 +21,13 @@ var assetTypes = map[string]string{
 	".gif":  "image/gif",
 	".webp": "image/webp",
 	".svg":  "image/svg+xml",
+	// chat attachments (references/assets/): served raw under the sandbox
+	// CSP below, so an uploaded HTML mock-up can be shown in a frame
+	".pdf":  "application/pdf",
+	".html": "text/html; charset=utf-8",
+	".htm":  "text/html; charset=utf-8",
+	".txt":  "text/plain; charset=utf-8",
+	".md":   "text/markdown; charset=utf-8",
 }
 
 const maxAssetSize = 10 << 20 // 10 MiB
@@ -78,7 +85,7 @@ func (s *Server) postAsset(w http.ResponseWriter, r *http.Request, repo *project
 	}
 	defer f.Close()
 	ext := strings.ToLower(path.Ext(hdr.Filename))
-	if _, ok := assetTypes[ext]; !ok {
+	if !strings.HasPrefix(assetTypes[ext], "image/") {
 		jsonError(w, http.StatusBadRequest, "unsupported image type: "+ext)
 		return
 	}

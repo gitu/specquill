@@ -84,10 +84,19 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		// AllowEdits opts the conversation into the write tools; the server
 		// still refuses protected branches regardless of what the client asks
 		AllowEdits bool `json:"allowEdits"`
+		// Attachments were archived by POST speccy/attach before this turn;
+		// the note about them rides on the last user message
+		Attachments []Attachment `json:"attachments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) == 0 {
 		jsonError(w, http.StatusBadRequest, "messages required")
 		return
+	}
+	if len(body.Attachments) > 0 {
+		last := &body.Messages[len(body.Messages)-1]
+		if last.Role == "user" {
+			last.Content = strings.TrimSpace(last.Content) + attachmentNote(body.Attachments)
+		}
 	}
 	branch := repo.ResolveRef(body.Branch)
 	files, err := repo.Snapshot(branch)
@@ -101,6 +110,10 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 		instructions = cfg.Speccy.Instructions
 	}
 	writable := body.AllowEdits && repo.Writable() && !repo.Repo.Cfg.IsProtected(branch)
+	// "the chat just would not write" is the question this answers, so say
+	// which gate closed — the client's flag, the project, or the branch
+	log.Printf("speccy chat [%s@%s]: writable=%v (allowEdits=%v project=%v protected=%v) attachments=%d",
+		repo.ID, branch, writable, body.AllowEdits, repo.Writable(), repo.Repo.Cfg.IsProtected(branch), len(body.Attachments))
 
 	system := ai.GroundingPrompt(files, grounded, body.FocusPath, s.ai.GroundingBudget(), instructions)
 	system += ai.ToolRules // read_file/ask_user are always registered
@@ -115,6 +128,15 @@ func (s *Server) speccyChat(w http.ResponseWriter, r *http.Request, repo *projec
 	}
 	if writable {
 		system += ai.EditingRules
+	}
+	// who is talking: attribution (raised_by, owner) needs a name, not "User"
+	if u := auth.UserFrom(r.Context()); u != nil && u.Name != "" {
+		system += "\nThe person in this conversation is " + u.Name + " <" + u.Email + ">. Attribute what they raise to them by name.\n"
+	}
+	if writable && len(body.Attachments) > 0 {
+		// an attachment is a request to file, and the write tools ARE here —
+		// leave no room for "I cannot edit in this run"
+		system += "\nThis conversation has the create_file and edit_file tools. File the attached material now; do not stop at a summary or claim that editing is unavailable.\n"
 	}
 	msgs := append([]ai.Message{{Role: "system", Content: system}}, body.Messages...)
 

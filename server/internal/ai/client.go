@@ -40,12 +40,13 @@ type Client struct {
 	quick   string // fast one-shot tier: commit messages, titles
 	// models a recipe may additionally name per stage (ai.models). NOT a
 	// fallback list — an id outside it fails recipe validation.
-	models   []string
-	maxCalls int // ceiling on model calls per alignment run (0 = package default)
-	key      string
-	budget   int    // grounding system-prompt cap in bytes (0 = package default)
-	effort   string // reasoning_effort passthrough ("" = omit from requests)
-	http     *http.Client
+	models     []string
+	maxCalls   int // ceiling on model calls per alignment run (0 = package default)
+	key        string
+	budget     int    // grounding system-prompt cap in bytes (0 = package default)
+	toolBudget int    // tool-result budget per conversation in bytes (0 = package default)
+	effort     string // reasoning_effort passthrough ("" = omit from requests)
+	http       *http.Client
 
 	// transient-failure retry: attempts total, with an exponentially growing
 	// pause from retryBase (fields, so tests don't sleep)
@@ -63,17 +64,18 @@ func New(cfg config.AIConfig) *Client {
 		quick = cfg.Model
 	}
 	return &Client{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		model:     cfg.Model,
-		quick:     quick,
-		models:    cfg.Models,
-		maxCalls:  cfg.MaxCallsPerRun,
-		key:       key,
-		budget:    cfg.GroundingBudget,
-		effort:    cfg.ReasoningEffort,
-		http:      &http.Client{Timeout: 5 * time.Minute},
-		attempts:  3,
-		retryBase: time.Second,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		model:      cfg.Model,
+		quick:      quick,
+		models:     cfg.Models,
+		maxCalls:   cfg.MaxCallsPerRun,
+		key:        key,
+		budget:     cfg.GroundingBudget,
+		toolBudget: cfg.ToolBudget,
+		effort:     cfg.ReasoningEffort,
+		http:       &http.Client{Timeout: 5 * time.Minute},
+		attempts:   3,
+		retryBase:  time.Second,
 	}
 }
 

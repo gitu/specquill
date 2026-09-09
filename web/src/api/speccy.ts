@@ -22,6 +22,21 @@ export interface PendingAsk { callId: string; question: string; options?: string
 
 export interface ChatResult { text: string; ask?: PendingAsk; edited: boolean }
 
+/** A file archived on the branch by POST speccy/attach — sent with the next message. */
+export interface Attachment { asset: string; sourcePage: string; kind: 'text' | 'html' | 'image' | 'document'; filename: string; textLength: number }
+
+/**
+ * Archive one file on the branch (original under references/assets/, extracted
+ * text under references/archive/) as uncommitted drafts. The chat that follows
+ * carries the result so the speccy knows what arrived and how to use it.
+ */
+export async function attachFile(repoId: string, branch: string, file: File, hint?: string): Promise<Attachment> {
+  const form = new FormData();
+  if (hint) form.append('hint', hint);
+  form.append('file', file, file.name || 'pasted-image.png');
+  return api<Attachment>(`/api/repos/${encodeURIComponent(repoId)}/speccy/attach?branch=${encodeURIComponent(branch)}`, { method: 'POST', body: form });
+}
+
 // info is per-project: grounded sources depend on the active project's
 // references, read from the selected branch. repoId scopes the probe (omit it
 // to fall back to the sole project); branch picks the config.yml revision.
@@ -43,7 +58,7 @@ export function useSpeccyInfo(repoId?: string, branch?: string) {
  */
 export async function streamChat(
   repoId: string | undefined,
-  body: { messages: ChatMessage[]; focusPath?: string; branch?: string; allowEdits?: boolean },
+  body: { messages: ChatMessage[]; focusPath?: string; branch?: string; allowEdits?: boolean; attachments?: Attachment[] },
   onDelta: (text: string) => void,
   onTool?: (t: ToolEvent) => void,
   signal?: AbortSignal,
