@@ -38,5 +38,15 @@ export function draftDocument(
   const fmMatch = template.match(/^---\n([\s\S]*?)\n---\n/);
   let fm = fmMatch ? fmMatch[1] : '';
   if (related.length && fm) fm = setFmValue(fm, 'related', related);
-  return assemble(fm, '\n' + draftBody(opts.title, sections));
+  return assemble(fm, '\n' + relativizeRootLinks(path, draftBody(opts.title, sections)));
+}
+
+/**
+ * The draft is written before its path is known, so attachments are linked
+ * root-absolute (`](/references/assets/…)`). Once the path is fixed they
+ * become relative to it — the form every other document in the repo uses.
+ */
+export function relativizeRootLinks(path: string, body: string): string {
+  const up = '../'.repeat(path.split('/').length - 1);
+  return body.replace(/\]\(\/(?!\/)/g, '](' + up);
 }
