@@ -118,3 +118,31 @@ test('a section can be redrafted on its own', async ({ page }) => {
   await expect(page.getByText('✓ rewrote it')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('wizard-sections').getByText('(mock) rewritten section body.')).toBeVisible();
 });
+
+test('files attached to the intent are archived on the branch and read by every stage', async ({ page, request }) => {
+  const stamp = Date.now().toString(36);
+  const text = `The login screen must lock after five failed attempts (${stamp}).`;
+  await page.goto(`/p/${REPO}/wizard`);
+  await page.getByTestId('wizard-family-spec').click();
+  await page.getByTestId('wizard-file-input').setInputFiles({ name: `wizard-note-${stamp}.txt`, mimeType: 'text/plain', buffer: Buffer.from(text) });
+  await expect(page.getByTestId('wizard-attachment')).toContainText(`wizard-note-${stamp}.txt`);
+
+  // an attachment alone is enough to start — and each stage call carries it
+  const related = page.waitForRequest((r) => r.url().endsWith('/speccy/related'));
+  await page.getByTestId('wizard-start').click();
+  const body = (await related).postDataJSON() as { intent: string; branch: string; attachments: { asset: string; sourcePage: string }[] };
+  expect(body.intent).toBe('(see the attached files)');
+  expect(body.attachments).toHaveLength(1);
+  await expect(page.getByTestId('wizard-related')).toBeVisible({ timeout: 20_000 });
+
+  // the original and its source page are uncommitted drafts on the workspace branch
+  const { asset, sourcePage } = body.attachments[0];
+  const page_ = await request.get(`/api/repos/${REPO}/files/${sourcePage}?ref=${encodeURIComponent(body.branch)}`);
+  expect(page_.ok()).toBe(true);
+  expect(JSON.stringify(await page_.json())).toContain(stamp);
+
+  const discarded = await request.post(`/api/repos/${REPO}/discard?branch=${encodeURIComponent(body.branch)}`, { headers: { 'X-SpecQuill': '1' }, data: { paths: [asset, sourcePage] } });
+  expect(discarded.ok()).toBe(true);
+  await page.getByRole('button', { name: 'Start over' }).click();
+  await expect(page.getByTestId('wizard-attachment')).toHaveCount(0);
+});

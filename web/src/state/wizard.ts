@@ -7,6 +7,7 @@
 // through the normal file endpoint, when the author accepts the draft — an
 // abandoned wizard leaves no debris in the changes drawer.
 import { useSyncExternalStore } from 'react';
+import type { Attachment } from '../api/speccy';
 import type { DraftSection, InterviewQuestion, RelatedMatch, RubricItem, WizardMessage } from '../api/wizard';
 
 export type WizardStage = 'intent' | 'related' | 'interview' | 'review';
@@ -15,6 +16,8 @@ export interface WizardState {
   stage: WizardStage;
   /** what the author typed on the intent step */
   intent: string;
+  /** screenshots and documents archived on the branch with the intent */
+  attachments: Attachment[];
   family: string;
   folder: string;            // subfolder under the family folder ('' = root)
   altitude: '' | 'business' | 'technical';
@@ -44,6 +47,7 @@ export interface WizardState {
 export const EMPTY: WizardState = {
   stage: 'intent',
   intent: '',
+  attachments: [],
   family: '',
   folder: '',
   altitude: '',

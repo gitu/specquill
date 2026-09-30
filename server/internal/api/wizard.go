@@ -44,6 +44,10 @@ type wizardRequest struct {
 	Section        string `json:"section"`
 	SectionContent string `json:"sectionContent"`
 	Instruction    string `json:"instruction"`
+
+	// archived by POST speccy/attach on the intent step; every stage is told
+	// about them so the interview and the draft both work from the material
+	Attachments []Attachment `json:"attachments"`
 }
 
 func (b wizardRequest) context() ai.WizardContext {
@@ -116,6 +120,7 @@ func (s *Server) wizardStage(
 		system += "\nSelected reference sources — explore them with list_files/search/read_file even when not excerpted above: " + strings.Join(names, ", ") + "\n"
 	}
 	system += rules
+	system += wizardAttachmentNote(body.Attachments)
 	msgs := append([]ai.Message{{Role: "system", Content: system}}, ai.TranscriptMessages(body.Intent, body.Messages, final)...)
 
 	stream, ok := startSSE(w)
@@ -151,6 +156,27 @@ func (s *Server) wizardStage(
 	}
 	stream.Send(map[string]any{"result": out})
 	stream.Send(map[string]bool{"done": true})
+}
+
+// wizardAttachmentNote is the wizard's counterpart to attachmentNote: the
+// chat is told to FILE attachments, the wizard only reads them — they are part
+// of the intent, and images belong in the draft. Links are root-absolute
+// because the target path is not known yet; the client relativizes them when
+// the document is created (lib/wizarddoc.relativizeRootLinks).
+func wizardAttachmentNote(atts []Attachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Attached material\n\nThe author attached these files to their intent. Each source page holds the text " +
+		"read from the file — read every one with read_file before you answer; they are part of what the author wants specified.\n")
+	for _, a := range atts {
+		b.WriteString("  " + a.SourcePage + "   (original: " + a.Asset + ", " + string(a.Kind) + ")\n")
+	}
+	b.WriteString("\nWhen you write document content, embed an attached image where it belongs as `![short alt](/" +
+		"<original path>)` and link an HTML mock-up as `[Mock-up: <title>](/<original path>)` — the leading slash " +
+		"is the repository root. Never paste an image's description in place of the image.\n")
+	return b.String()
 }
 
 // askText runs the same read-only tool loop as askJSON but returns the reply
