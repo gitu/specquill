@@ -442,3 +442,23 @@ func TestWizardInterviewAcceptsBothQuestionShapes(t *testing.T) {
 		t.Fatalf("options not capped at 5: %+v", opts)
 	}
 }
+
+func TestWizardStagesAreToldAboutAttachments(t *testing.T) {
+	reply := `{"reply":"Read the screenshot.","questions":[],"rubric":[],"readyToDraft":false}`
+	h, fake := testWizardServer(t, fakeTurn{content: reply})
+	cookie := login(t, h)
+
+	_, _, errMsg := wizardPost(t, h, cookie, "/api/repos/w/speccy/interview", map[string]any{
+		"intent": "spec the screen in the screenshot", "family": "spec",
+		"attachments": []map[string]string{{"asset": "references/assets/shot-1234abcd.png", "sourcePage": "references/archive/shot-1234abcd.md", "kind": "image"}},
+	})
+	if errMsg != "" {
+		t.Fatalf("interview errored: %s", errMsg)
+	}
+	sys := fake.systems[0]
+	for _, want := range []string{"references/archive/shot-1234abcd.md", "references/assets/shot-1234abcd.png", "![short alt](/"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+}

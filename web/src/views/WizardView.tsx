@@ -13,7 +13,7 @@ import { useApp } from '../state/AppContext';
 import { useNav } from '../state/nav';
 import { api } from '../api/client';
 import { useWorkspace } from '../hooks/useWorkspace';
-import { useSpeccyInfo } from '../api/speccy';
+import { attachFile, useSpeccyInfo, type Attachment } from '../api/speccy';
 import {
   compose, findRelated, interview, refineSection,
   type DraftSection, type InterviewQuestion, type RelatedMatch, type RubricItem, type WizardContext,
@@ -51,10 +51,13 @@ export function WizardView() {
   const info = useSpeccyInfo(app.repoId, app.branch);
   const enabled = info.data?.enabled === true;
 
-  const [busy, setBusy] = useState<'' | 'related' | 'interview' | 'compose' | 'create'>('');
+  const [busy, setBusy] = useState<'' | 'attach' | 'related' | 'interview' | 'compose' | 'create'>('');
   const [busySection, setBusySection] = useState('');
   const [error, setError] = useState('');
   const [activity, setActivity] = useState<string[]>([]);
+  // files dropped/pasted/picked on the intent step; archived on Start (same
+  // endpoint as the chat), so an unstarted wizard still writes nothing
+  const [pending, setPending] = useState<File[]>([]);
   const abort = useRef<AbortController | null>(null);
 
   const entities = app.entities;
@@ -66,12 +69,15 @@ export function WizardView() {
   const folderRoot = ent?.folder || 'requirements/';
   const outline = useMemo(() => sectionsFor(family, app.configYml), [family, app.configYml]);
 
+  // an intent of only attachments is still an intent; the server requires text
+  const NO_TEXT = '(see the attached files)';
   const ctx: WizardContext = {
     branch: app.branch,
-    intent: w.intent,
+    intent: w.intent.trim() || (w.attachments.length ? NO_TEXT : ''),
     family,
     folder: folderRoot + (w.folder ? w.folder + '/' : ''),
     altitude: w.altitude,
+    attachments: w.attachments,
   };
 
   const set = (patch: Partial<WizardState>) => updateWizard(repoKey, patch);
@@ -98,20 +104,38 @@ export function WizardView() {
   // --- stage transitions --------------------------------------------------
 
   const start = async () => {
-    if (!w.intent.trim()) return;
+    if (!w.intent.trim() && !w.attachments.length && !pending.length) return;
+    // attachments are drafts on the branch: move onto the workspace branch
+    // first and use it for this call — app.branch only catches up on rerender
+    let startCtx = ctx;
+    if (pending.length) {
+      const archived = await run('attach', async () => {
+        const branch = await ensureWritableBranch();
+        const out: Attachment[] = [];
+        for (const f of pending) out.push(await attachFile(app.repoId!, branch, f, w.intent.trim() || undefined));
+        return { branch, out };
+      });
+      if (!archived) return;
+      const attachments = [...w.attachments, ...archived.out];
+      setPending([]);
+      set({ attachments });
+      startCtx = { ...ctx, branch: archived.branch, attachments };
+      for (const key of ['status', 'snapshot']) qc.invalidateQueries({ queryKey: [key, app.repoId] });
+    }
+    if (!startCtx.intent.trim()) startCtx = { ...startCtx, intent: NO_TEXT };
     set({ family, related: [], recommendation: '', carriedLinks: [], transcript: [], rubric: [], questions: [], readyToDraft: false, sections: [], notes: {}, touched: [] });
-    const res = await run('related', (signal) => findRelated(app.repoId!, ctx, onNote, signal));
+    const res = await run('related', (signal) => findRelated(app.repoId!, startCtx, onNote, signal));
     // dedup is best-effort — a failure or an empty result goes straight on to
     // the interview rather than blocking the author on a nicety
     if (res && res.matches.length) {
       set({ stage: 'related', related: res.matches, recommendation: res.recommendation });
       return;
     }
-    await runInterview([]);
+    await runInterview([], startCtx);
   };
 
-  const runInterview = async (transcript: WizardState['transcript']) => {
-    const res = await run('interview', (signal) => interview(app.repoId!, ctx, transcript, outline, onNote, signal));
+  const runInterview = async (transcript: WizardState['transcript'], c: WizardContext = ctx) => {
+    const res = await run('interview', (signal) => interview(app.repoId!, c, transcript, outline, onNote, signal));
     if (!res) {
       // keep whatever stage we were on so the author can retry or edit
       if (w.stage === 'intent') set({ stage: 'interview' });
@@ -225,7 +249,11 @@ export function WizardView() {
       {w.stage === 'intent' && (
         <IntentStep
           state={w} entities={entities} family={family} folderRoot={folderRoot} outline={outline}
-          busy={busy === 'related' || busy === 'interview'} onChange={set} onStart={() => void start()}
+          busy={busy === 'attach' || busy === 'related' || busy === 'interview'} attaching={busy === 'attach'}
+          pending={pending} onFiles={(files) => setPending((prev) => [...prev, ...files.filter((f) => f.size > 0)])}
+          onRemovePending={(i) => setPending((prev) => prev.filter((_, j) => j !== i))}
+          onRemoveAttachment={(asset) => set({ attachments: w.attachments.filter((a) => a.asset !== asset) })}
+          onChange={set} onStart={() => void start()}
         />
       )}
 
@@ -334,24 +362,62 @@ function IntentStep(props: {
   folderRoot: string;
   outline: string[];
   busy: boolean;
+  attaching: boolean;
+  pending: File[];
+  onFiles: (files: File[]) => void;
+  onRemovePending: (index: number) => void;
+  onRemoveAttachment: (asset: string) => void;
   onChange: (patch: Partial<WizardState>) => void;
   onStart: () => void;
 }) {
-  const { state, entities, family, folderRoot, outline, busy, onChange, onStart } = props;
+  const { state, entities, family, folderRoot, outline, busy, attaching, pending, onFiles, onRemovePending, onRemoveAttachment, onChange, onStart } = props;
   const ent = entities.find((e) => e.kind === family);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const canStart = !busy && (!!state.intent.trim() || state.attachments.length > 0 || pending.length > 0);
+  const chips = [
+    ...state.attachments.map((a) => ({ key: a.asset, name: a.filename, title: a.asset + ' (archived)', remove: () => onRemoveAttachment(a.asset) })),
+    ...pending.map((f, i) => ({ key: 'p' + i + f.name, name: f.name, title: f.name, remove: () => onRemovePending(i) })),
+  ];
   return (
     <div style={sx(CARD)}>
       {label('What do you want to specify?')}
-      <textarea
-        data-testid="wizard-intent"
-        autoFocus
-        value={state.intent}
-        onChange={(e) => onChange({ intent: e.target.value })}
-        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onStart(); }}
-        placeholder="A rough idea is enough — Speccy will grill you on the rest. e.g. “records must be kept for seven years, not five”"
-        rows={4}
-        style={sx(INPUT + ';resize:vertical;line-height:1.6')}
-      />
+      <div
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+        onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); onFiles([...e.dataTransfer.files]); } }}
+      >
+        <textarea
+          data-testid="wizard-intent"
+          autoFocus
+          value={state.intent}
+          onChange={(e) => onChange({ intent: e.target.value })}
+          // pasted files (screenshots) attach; pasted text stays text
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files];
+            if (!files.length) return;
+            e.preventDefault();
+            onFiles(files.map((f, i) => (f.name ? f : new File([f], `pasted-${Date.now()}-${i}.png`, { type: f.type }))));
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canStart) onStart(); }}
+          placeholder="A rough idea is enough — Speccy will grill you on the rest. e.g. “records must be kept for seven years, not five”. Paste a screenshot or drop a document to add it."
+          rows={4}
+          style={sx(INPUT + ';resize:vertical;line-height:1.6')}
+        />
+        <div style={sx('display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px')}>
+          {chips.map((c) => (
+            <span key={c.key} title={c.title} data-testid="wizard-attachment" style={sx("display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-family:'JetBrains Mono',monospace;font-size:10.5px")}>
+              📎 {c.name}
+              {!busy && <span onClick={c.remove} style={sx('cursor:pointer;opacity:.7')} title="remove">✕</span>}
+            </span>
+          ))}
+          <button onClick={() => fileInput.current?.click()} disabled={busy}
+            title="Attach screenshots, PDFs, mock-ups — archived on your workspace branch when you start, and read by Speccy"
+            style={sx('height:24px;padding:0 9px;border-radius:6px;font-family:inherit;font-size:11.5px;cursor:pointer;border:1px solid var(--border-2);background:var(--surface);color:var(--text-2)' + (busy ? ';opacity:.5' : ''))}>
+            📎 Attach files
+          </button>
+          <input ref={fileInput} type="file" multiple hidden data-testid="wizard-file-input"
+            onChange={(e) => { if (e.target.files) onFiles([...e.target.files]); e.target.value = ''; }} />
+        </div>
+      </div>
 
       {label('Document type')}
       <div style={sx('display:flex;flex-wrap:wrap;gap:6px')}>
@@ -401,9 +467,9 @@ function IntentStep(props: {
       </div>
 
       <div style={sx('display:flex;justify-content:flex-end;margin-top:16px')}>
-        <button data-testid="wizard-start" onClick={onStart} disabled={busy || !state.intent.trim()}
-          style={sx(PRIMARY + (busy || !state.intent.trim() ? ';opacity:.5;cursor:default' : ''))}>
-          {busy ? 'Reading the workspace…' : 'Start →'}
+        <button data-testid="wizard-start" onClick={onStart} disabled={!canStart}
+          style={sx(PRIMARY + (!canStart ? ';opacity:.5;cursor:default' : ''))}>
+          {attaching ? 'Reading the attachments…' : busy ? 'Reading the workspace…' : 'Start →'}
         </button>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftBody, draftDocument } from './wizarddoc';
+import { draftBody, draftDocument, relativizeRootLinks } from './wizarddoc';
 import { sectionsFor, sectionSchemes } from './sections';
 
 describe('draftBody', () => {
@@ -69,5 +69,15 @@ describe('sections', () => {
     expect(sectionsFor('spec', yml)).toEqual(['Problem', 'Solution']);
     // a family the block does not mention keeps its built-in outline
     expect(sectionsFor('change', yml)[0]).toBe('Summary');
+  });
+});
+
+describe('relativizeRootLinks', () => {
+  it('rewrites root-absolute links relative to the document, leaving others alone', () => {
+    const body = '![shot](/references/assets/a.png) [x](other.md) [y](https://e.com) [z](//cdn/x)';
+    expect(relativizeRootLinks('specs/ui/login.md', body)).toBe(
+      '![shot](../../references/assets/a.png) [x](other.md) [y](https://e.com) [z](//cdn/x)',
+    );
+    expect(relativizeRootLinks('top.md', '![s](/references/assets/a.png)')).toBe('![s](references/assets/a.png)');
   });
 });

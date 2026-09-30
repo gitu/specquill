@@ -4,6 +4,7 @@
 // structured result, not a token stream, so each call resolves with one
 // object plus whatever tool activity happened on the way.
 import { postStream, readSSE } from './sse';
+import type { Attachment } from './speccy';
 
 export interface WizardMessage {
   role: 'user' | 'assistant';
@@ -63,6 +64,8 @@ export interface WizardContext {
   family: string;
   folder?: string;
   altitude?: '' | 'business' | 'technical';
+  /** files archived on the intent step (POST speccy/attach) */
+  attachments?: Attachment[];
 }
 
 type Frame<T> = { result?: T; note?: string; error?: string; done?: boolean };
