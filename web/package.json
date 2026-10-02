@@ -23,7 +23,7 @@
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.15",
     "marked": "^18.0.14",
-    "mermaid": "^11.17.2",
+    "mermaid": "^12.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
